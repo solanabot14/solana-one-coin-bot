@@ -19,147 +19,99 @@ function analyzeToken(data) {
 	const sells = Number(data.sells5m) || 0;
 
 	const totalTransactions = buys + sells;
+	const buyRatio = totalTransactions > 0 ? buys / totalTransactions : 0;
 
-	const buyRatio =
-		totalTransactions > 0
-			? buys / totalTransactions
-			: 0;
-
-	// -----------------------------------
-	// LIQUIDITY
-	// Scanner already requires $50K.
-	// Reward stronger liquidity.
-	// -----------------------------------
+	if (change5m > 8) {
+		return { score: 0, signal: "AVOID", reasons: ["ANTI-CHASE: 5m move already too high"] };
+	}
+	if (change1h > 40) {
+		return { score: 0, signal: "AVOID", reasons: ["ANTI-CHASE: 1h move already too extended"] };
+	}
+	if (change24h > 250) {
+		return { score: 0, signal: "AVOID", reasons: ["ANTI-CHASE: 24h move extremely extended"] };
+	}
 
 	if (liquidity >= 150000) {
 		score += 2;
 		reasons.push("Strong liquidity");
 	} else if (liquidity >= 75000) {
 		score += 1;
-		reasons.push("Good liquidity");
+		reasons.push("Healthy liquidity");
+	} else {
+		score -= 2;
+		reasons.push("Liquidity below preferred level");
 	}
-
-	// -----------------------------------
-	// VOLUME
-	// Scanner already requires $100K.
-	// -----------------------------------
 
 	if (volume24h >= 500000) {
 		score += 2;
-		reasons.push("Strong 24h volume");
+		reasons.push("Strong trading volume");
 	} else if (volume24h >= 150000) {
 		score += 1;
-		reasons.push("Good 24h volume");
+		reasons.push("Healthy trading volume");
 	}
 
-	// -----------------------------------
-	// 5 MINUTE MOMENTUM
-	// Most important short-term signal.
-	// -----------------------------------
-
-	if (change5m >= 1.5 && change5m <= 12) {
-		score += 3;
-		reasons.push("Strong healthy 5m momentum");
-	} else if (change5m > 0 && change5m < 1.5) {
+	if (change5m >= 0.5 && change5m <= 5) {
+		score += 4;
+		reasons.push("Early 5m momentum detected");
+	} else if (change5m > 5 && change5m <= 8) {
 		score += 1;
-		reasons.push("5m momentum positive");
-	} else if (change5m > 12 && change5m <= 20) {
-		score -= 1;
-		reasons.push("5m momentum extended");
-	} else if (change5m > 20) {
-		score -= 4;
-		reasons.push("5m pump dangerously extended");
-	} else if (change5m < -3) {
+		reasons.push("5m momentum becoming extended");
+	} else if (change5m > 0 && change5m < 0.5) {
+		score += 1;
+		reasons.push("5m momentum beginning");
+	} else {
 		score -= 3;
-		reasons.push("5m momentum falling");
+		reasons.push("No positive 5m momentum");
 	}
 
-	// -----------------------------------
-	// 1 HOUR TREND
-	// -----------------------------------
-
-	if (change1h >= 3 && change1h <= 35) {
-		score += 2;
-		reasons.push("Healthy 1h trend");
-	} else if (change1h > 0 && change1h < 3) {
-		score += 1;
-		reasons.push("1h trend positive");
-	} else if (change1h > 60) {
-		score -= 2;
-		reasons.push("1h move overextended");
-	} else if (change1h < -10) {
-		score -= 2;
-		reasons.push("1h trend weak");
-	}
-
-	// -----------------------------------
-	// BUY / SELL PRESSURE
-	// -----------------------------------
-
-	if (totalTransactions < 10) {
-		score -= 2;
-		reasons.push("Low recent transaction activity");
-	} else if (buyRatio >= 0.60) {
+	if (change1h >= 1 && change1h <= 20) {
 		score += 3;
-		reasons.push("Strong buy pressure");
-	} else if (buyRatio >= 0.55) {
-		score += 2;
-		reasons.push("Healthy buy pressure");
-	} else if (buyRatio >= 0.52) {
+		reasons.push("Healthy early 1h trend");
+	} else if (change1h > 20 && change1h <= 30) {
 		score += 1;
-		reasons.push("Buy pressure positive");
-	} else if (buyRatio < 0.45) {
+		reasons.push("1h trend becoming extended");
+	} else if (change1h > 30) {
+		score -= 2;
+		reasons.push("1h trend near overextended");
+	} else if (change1h < 0) {
+		score -= 2;
+		reasons.push("1h trend negative");
+	}
+
+	if (totalTransactions < 20) {
+		score -= 2;
+		reasons.push("Not enough recent transactions");
+	} else if (buyRatio >= 0.60 && buyRatio <= 0.75) {
+		score += 4;
+		reasons.push("Strong sustainable buy pressure");
+	} else if (buyRatio >= 0.55) {
+		score += 3;
+		reasons.push("Healthy buy pressure");
+	} else if (buyRatio >= 0.50) {
+		score += 1;
+		reasons.push("Slight buy pressure");
+	} else {
 		score -= 3;
 		reasons.push("Sell pressure dominant");
 	}
 
-	// -----------------------------------
-	// EXTREME 24H MOVE
-	// -----------------------------------
-
-	if (change24h > 500) {
-		score -= 2;
-		reasons.push("24h move extremely extended");
+	if (totalTransactions >= 20 && buyRatio > 0.80 && change5m > 4) {
+		score -= 4;
+		reasons.push("Possible late-stage buying frenzy");
 	}
 
-	// -----------------------------------
-	// HARD ENTRY PROTECTION
-	// These conditions prevent a high
-	// score from overriding bad momentum.
-	// -----------------------------------
-
-	const healthyEntry =
-		change5m > 0 &&
-		change5m <= 15 &&
-		buyRatio >= 0.52 &&
-		totalTransactions >= 10;
-
-	// -----------------------------------
-	// SIGNAL
-	// -----------------------------------
-
 	let signal = "WAIT";
+	const earlyEntryConditions = change5m >= 0.5 && change5m <= 6 && change1h > 0 && change1h <= 30 && buyRatio >= 0.55 && totalTransactions >= 20;
 
-	if (
-		score >= 6 &&
-		healthyEntry
-	) {
+	if (score >= 9 && earlyEntryConditions) {
 		signal = "STRONG BUY";
-	} else if (
-		score >= 5 &&
-		change5m > 0 &&
-		buyRatio >= 0.50
-	) {
+	} else if (score >= 6) {
 		signal = "BUY";
 	} else if (score <= 2) {
 		signal = "AVOID";
 	}
 
-	return {
-		score,
-		signal,
-		reasons
-	};
+	return { score, signal, reasons };
 }
 
 module.exports = { analyzeToken };
