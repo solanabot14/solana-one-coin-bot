@@ -293,7 +293,7 @@ async function startBot() {
 		if (botRunning) {
 			await runScanner();
 		}
-	}, 600000);
+	}, 120000);
 }
 
 
