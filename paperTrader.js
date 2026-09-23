@@ -27,12 +27,7 @@ if (fs.existsSync(DATA_FILE)) {
 }
 
 function buy(coin) {
-	if (position) {
-		return {
-			success: false,
-			message: "Ya existe una moneda activa."
-		};
-	}
+	
 
 	const price = Number(coin.priceUsd);
 
