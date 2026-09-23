@@ -21,10 +21,10 @@ const DISCOVERY_SOURCES = [
 	}
 ];
 
-async function fetchDiscoverySource(source) {
+async function fetchDiscoverySource(source, signal) {
 	try {
 		const response = await axios.get(source.url, {
-			timeout: 10000
+			timeout: 10000, signal
 		});
 
 		const tokens = Array.isArray(response.data)
@@ -45,12 +45,12 @@ async function fetchDiscoverySource(source) {
 	}
 }
 
-async function discoverCandidates() {
+async function discoverCandidates({ signal } = {}) {
 	console.log("\nScanning Solana for active tokens...");
 
 	try {
 		const results = await Promise.all(
-			DISCOVERY_SOURCES.map(fetchDiscoverySource)
+			DISCOVERY_SOURCES.map(source => fetchDiscoverySource(source, signal))
 		);
 
 		const allTokens = results.flat();
@@ -72,7 +72,8 @@ async function discoverCandidates() {
 		const candidates = [];
 
 		for (const token of solanaTokens) {
-			const data = await getTokenData(token.tokenAddress);
+			if (signal?.aborted) return [];
+			const data = await getTokenData(token.tokenAddress, { signal });
 
 			if (!data) {
 				continue;
