@@ -24,7 +24,8 @@ const DISCOVERY_SOURCES = [
 async function fetchDiscoverySource(source, signal) {
 	try {
 		const response = await axios.get(source.url, {
-			timeout: 10000, signal
+			timeout: 10000,
+			signal
 		});
 
 		const tokens = Array.isArray(response.data)
@@ -50,30 +51,48 @@ async function discoverCandidates({ signal } = {}) {
 
 	try {
 		const results = await Promise.all(
-			DISCOVERY_SOURCES.map(source => fetchDiscoverySource(source, signal))
+			DISCOVERY_SOURCES.map(source =>
+				fetchDiscoverySource(source, signal)
+			)
 		);
 
 		const allTokens = results.flat();
 		const uniqueSolanaTokens = new Map();
 
 		for (const token of allTokens) {
-			if (token.chainId !== "solana" || !token.tokenAddress) {
+			if (
+				token.chainId !== "solana" ||
+				!token.tokenAddress
+			) {
 				continue;
 			}
 
 			if (!uniqueSolanaTokens.has(token.tokenAddress)) {
-				uniqueSolanaTokens.set(token.tokenAddress, token);
+				uniqueSolanaTokens.set(
+					token.tokenAddress,
+					token
+				);
 			}
 		}
 
-		const solanaTokens = Array.from(uniqueSolanaTokens.values());
-		console.log(`Unique Solana candidates: ${solanaTokens.length}`);
+		const solanaTokens =
+			Array.from(uniqueSolanaTokens.values());
+
+		console.log(
+			`Unique Solana candidates: ${solanaTokens.length}`
+		);
 
 		const candidates = [];
 
 		for (const token of solanaTokens) {
-			if (signal?.aborted) return [];
-			const data = await getTokenData(token.tokenAddress, { signal });
+			if (signal?.aborted) {
+				return [];
+			}
+
+			const data = await getTokenData(
+				token.tokenAddress,
+				{ signal }
+			);
 
 			if (!data) {
 				continue;
@@ -85,9 +104,11 @@ async function discoverCandidates({ signal } = {}) {
 				`Volume24h: $${data.volume24h || 0}`
 			);
 
-			// Keep existing safety filters unchanged
-			if ((data.liquidityUsd || 0) < 50000 ||
-				(data.volume24h || 0) < 100000) {
+			// Safety filters
+			if (
+				(data.liquidityUsd || 0) < 50000 ||
+				(data.volume24h || 0) < 100000
+			) {
 				continue;
 			}
 
@@ -109,11 +130,18 @@ async function discoverCandidates({ signal } = {}) {
 		}
 
 		candidates.sort((a, b) => b.score - a.score);
-		console.log(`Candidates after safety filters: ${candidates.length}`);
+
+		console.log(
+			`Candidates after safety filters: ${candidates.length}`
+		);
 
 		return candidates;
 	} catch (error) {
-		console.error("Scanner error:", error.message);
+		console.error(
+			"Scanner error:",
+			error.message
+		);
+
 		return [];
 	}
 }
