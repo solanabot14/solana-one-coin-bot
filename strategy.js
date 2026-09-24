@@ -143,7 +143,7 @@ function analyzeToken(data) {
 		change5m <= 6 &&
 		change1h > 0 &&
 		change1h <= 30 &&
-		buyRatio >= 0.55 &&
+		buyRatio >= 0.52 &&
 		totalTransactions >= 20;
 
 	if (
@@ -165,3 +165,4 @@ function analyzeToken(data) {
 }
 
 module.exports = { analyzeToken };
+
