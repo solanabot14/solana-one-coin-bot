@@ -323,7 +323,7 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 
 			exitPrice: currentPrice,
 
-			percentSold,
+			percentSold: percentToSell,
 			quantitySold,
 			amountInvested: costBasisSold,
 
