@@ -176,6 +176,7 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 			entryTransactions5m:
 				totalTransactions5m,
 
+			entryBuyRatio: buyRatio5m,
 			entryBuyRatio5m:
 				buyRatio5m
 		};
@@ -184,6 +185,7 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 
 		const trade = {
 			type: "BUY",
+			positionId: next.position.id,
 			...next.position
 		};
 
@@ -316,6 +318,8 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 
 			entryBuyRatio5m:
 				p.entryBuyRatio5m ?? null,
+			entryBuyRatio:
+				p.entryBuyRatio ?? p.entryBuyRatio5m ?? null,
 
 			entryPrice: p.entryPrice,
 			highestPrice:

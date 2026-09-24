@@ -3,6 +3,10 @@ const $ = id => document.getElementById(id);
 const money = value => value == null ? "—" : "$" + Number(value || 0).toFixed(2);
 const price = value => Number(value) > 0 ? "$" + Number(value).toFixed(8) : "—";
 const pct = value => value == null ? "—" : Number(value || 0).toFixed(2) + "%";
+const entryRatio = trade => {
+	const value = trade.entryBuyRatio ?? trade.entryBuyRatio5m;
+	return pct(value == null ? null : Number(value) * 100);
+};
 const number = value => value == null ? "—" : Number(value).toLocaleString();
 const cls = value => value == null ? "" : Number(value) >= 0 ? "green" : "red";
 const escapeHtml = value => String(value ?? "-").replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[char]);
@@ -67,7 +71,7 @@ function renderLiveTrade(d) {
 			Entry 5m: ${pct(position.entryPriceChange5m)} &nbsp; | &nbsp;
 			Entry 1h: ${pct(position.entryPriceChange1h)} &nbsp; | &nbsp;
 			Entry 24h: ${pct(position.entryPriceChange24h)}<br>
-			Entry Buy Ratio: ${pct(Number(position.entryBuyRatio5m || 0) * 100)} &nbsp; | &nbsp;
+			Entry Buy Ratio: ${entryRatio(position)} &nbsp; | &nbsp;
 			Transactions: ${number(position.entryTransactions5m)}<br>
 			Entry Liquidity: ${money(position.entryLiquidityUsd)} &nbsp; | &nbsp;
 			Entry Volume: ${money(position.entryVolume24h)}<br><br>
@@ -93,11 +97,13 @@ function renderHistory(d) {
 		const reason = Array.isArray(t.exitReasons) ? t.exitReasons.join(" / ") : "—";
 		const chartAddress = t.pairAddress || t.tokenAddress || "";
 		return `<tr><td><strong>${escapeHtml(t.symbol)}</strong></td><td>${escapeHtml(t.entryScore ?? "—")}</td>
+			<td>${pct(t.entryPriceChange5m)}</td><td>${pct(t.entryPriceChange1h)}</td><td>${entryRatio(t)}</td>
 			<td>${price(t.entryPrice)}</td><td>${price(t.exitPrice)}</td><td>${money(t.amountInvested)}</td>
+			<td>${money(t.tp1SaleValue)}</td><td>${money(t.tp2SaleValue)}</td><td>${money(t.trailingSaleValue)}</td><td>${money(t.otherExitSaleValue)}</td><td>${money(t.saleValue)}</td>
 			<td class="${cls(t.pnl)}">${money(t.pnl)}</td><td class="${cls(t.pnlPercent)}">${pct(t.pnlPercent)}</td>
 			<td class="${cls(t.maxGainPercent)}">${pct(t.maxGainPercent)}</td><td>${duration(t.holdTimeMs)}</td><td>${escapeHtml(reason)}</td>
 			<td><a class="small-link" target="_blank" rel="noopener noreferrer" href="https://dexscreener.com/solana/${encodeURIComponent(chartAddress)}">DexScreener</a></td></tr>`;
-	}).join("") || `<tr><td colspan="11">No completed positions yet.</td></tr>`;
+	}).join("") || `<tr><td colspan="19">No completed positions yet.</td></tr>`;
 }
 
 function renderData(d) {

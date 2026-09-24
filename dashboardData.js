@@ -4,14 +4,30 @@ function tradeKey(trade) {
 
 function groupCompletedTrades(history = [], position = null) {
 	const groups = new Map();
+	// Bridge legacy rows only when their token/time identifies one known position.
+	const legacyIds = new Map();
+	const positionId = trade => trade.positionId || (trade.type !== "SELL" ? trade.id : null);
+	for (const trade of [...history, ...(position ? [position] : [])]) {
+		const id = positionId(trade);
+		if (!id || !trade.entryTime) continue;
+		const key = tradeKey(trade);
+		if (!legacyIds.has(key)) legacyIds.set(key, new Set());
+		legacyIds.get(key).add(id);
+	}
+	const groupKey = trade => {
+		const ids = legacyIds.get(tradeKey(trade));
+		const id = positionId(trade) || (ids?.size === 1 ? [...ids][0] : null);
+		return id ? `position:${id}` : `legacy:${tradeKey(trade)}`;
+	};
 
 	for (const trade of history) {
-		if (!trade.entryTime) continue;
+		if (!trade.entryTime && !positionId(trade)) continue;
 
-		const id = tradeKey(trade);
+		const id = groupKey(trade);
 
 		if (!groups.has(id)) {
 			groups.set(id, {
+				positionId: positionId(trade) || null,
 				symbol: trade.symbol || "-",
 				name: trade.name || "-",
 				tokenAddress: trade.tokenAddress || "",
@@ -32,11 +48,16 @@ function groupCompletedTrades(history = [], position = null) {
 				entrySells5m: trade.entrySells5m ?? null,
 				entryTransactions5m: trade.entryTransactions5m ?? null,
 				entryBuyRatio5m: trade.entryBuyRatio5m ?? null,
+				entryBuyRatio: trade.entryBuyRatio ?? trade.entryBuyRatio5m ?? null,
 				highestPrice: Number(trade.highestPrice || trade.entryPrice || 0),
 				amountInvested: 0,
 				quantityBought: 0,
 				quantitySold: 0,
 				saleValue: 0,
+				tp1SaleValue: 0,
+				tp2SaleValue: 0,
+				trailingSaleValue: 0,
+				otherExitSaleValue: 0,
 				pnl: 0,
 				sells: []
 			});
@@ -53,6 +74,11 @@ function groupCompletedTrades(history = [], position = null) {
 
 		if (trade.type === "SELL") {
 			group.saleValue += Number(trade.saleValue || 0);
+			const reason = String(trade.reason || "").trim().toUpperCase();
+			const stage = reason === "TAKE PROFIT 1" ? "tp1SaleValue"
+				: reason === "TAKE PROFIT 2" ? "tp2SaleValue"
+					: reason === "TRAILING STOP" ? "trailingSaleValue" : "otherExitSaleValue";
+			group[stage] += Number(trade.saleValue || 0);
 			group.pnl += Number(trade.pnl || 0);
 			group.quantitySold += Number(trade.quantitySold || 0);
 			group.exitTime = trade.exitTime || group.exitTime;
@@ -64,7 +90,7 @@ function groupCompletedTrades(history = [], position = null) {
 
 	return [...groups.entries()]
 		.filter(([id, group]) => {
-			if (position && id === tradeKey(position)) return false;
+			if (position && id === groupKey(position)) return false;
 			return group.quantityBought > 0 && group.sells.length > 0 &&
 				(group.sells.some(sell => Number(sell.percentSold) === 100) ||
 					group.quantitySold >= group.quantityBought * (1 - 1e-10));
@@ -90,6 +116,7 @@ function average(values) {
 function buildScoreStats(completedTrades) {
 	const buckets = new Map();
 	for (const trade of completedTrades) {
+		if (trade.entryScore == null) continue;
 		const score = Number(trade.entryScore);
 		if (!Number.isFinite(score)) continue;
 		const label = score >= 10 ? "10+" : String(score);

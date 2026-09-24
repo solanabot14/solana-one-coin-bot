@@ -394,9 +394,17 @@ th,td{
 <tr>
   <th>Coin</th>
   <th>Score</th>
+  <th>Entry 5m</th>
+  <th>Entry 1h</th>
+  <th>Entry Buy Ratio</th>
   <th>Entry</th>
   <th>Average Exit</th>
   <th>Invested</th>
+  <th>TP1 $</th>
+  <th>TP2 $</th>
+  <th>Trailing $</th>
+  <th>Other Exit $</th>
+  <th>Total Sold $</th>
   <th>P/L</th>
   <th>Return</th>
   <th>Max Gain</th>
