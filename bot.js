@@ -1,6 +1,7 @@
 const market = require("./dexscreener");
 const scanner = require("./scanner");
 const paperTrader = require("./paperTrader");
+const telegram = require("./telegram");
 
 const POSITION_MONITOR_MS = 2000;
 const SCANNER_INTERVAL_MS = 120000;
@@ -19,7 +20,8 @@ const MOMENTUM_EXIT_BUY_RATIO = 0.45;
 const MOMENTUM_EXIT_MIN_TRANSACTIONS = 10;
 
 function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
-  discoverCandidates = scanner.discoverCandidates, timers = globalThis } = {}) {
+  discoverCandidates = scanner.discoverCandidates, timers = globalThis,
+  notifier = telegram } = {}) {
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
   let activeSession = null;
   let scannerInterval = null;
@@ -80,6 +82,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     console.log(`5m Buys/Sells: ${bestCoin.buys5m}/${bestCoin.sells5m}`);
 
     const trade = buy(bestCoin);
+    if (trade.success) void notifier.notifyTrade("BUY", trade.trade);
     console.log("\nPAPER TRADE:", trade);
     console.log("\nPORTFOLIO:", getPortfolio());
     console.log("\nTOP SOLANA CANDIDATES:\n");
@@ -127,7 +130,10 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     const exit = (reason, percent = 100) => {
       console.log(`EXIT | ${position.symbol} | ${reason}`);
       const result = sell(currentPrice, percent, { expectedPosition, reason });
-      if (result.success) startCooldown(tokenAddress, position.symbol, reason);
+      if (result.success) {
+        startCooldown(tokenAddress, position.symbol, reason);
+        void notifier.notifyTrade(reason, result.trade);
+      }
       return result;
     };
     if (profitPercent <= HARD_STOP_PERCENT) return void exit("HARD STOP");
@@ -139,11 +145,13 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     if (momentumExitA || momentumExitB) return void exit("MOMENTUM EXIT");
 
     if (profitPercent >= TAKE_PROFIT_1_PERCENT && !position.firstTakeProfitDone) {
-      sell(currentPrice, TAKE_PROFIT_1_SELL_PERCENT, { expectedPosition, takeProfit: "firstTakeProfitDone", reason: "TAKE PROFIT 1" });
+      const result = sell(currentPrice, TAKE_PROFIT_1_SELL_PERCENT, { expectedPosition, takeProfit: "firstTakeProfitDone", reason: "TAKE PROFIT 1" });
+      if (result.success) void notifier.notifyTrade("TAKE PROFIT 1", result.trade);
       return;
     }
     if (profitPercent >= TAKE_PROFIT_2_PERCENT && position.firstTakeProfitDone && !position.secondTakeProfitDone) {
-      sell(currentPrice, TAKE_PROFIT_2_SELL_PERCENT, { expectedPosition, takeProfit: "secondTakeProfitDone", reason: "TAKE PROFIT 2" });
+      const result = sell(currentPrice, TAKE_PROFIT_2_SELL_PERCENT, { expectedPosition, takeProfit: "secondTakeProfitDone", reason: "TAKE PROFIT 2" });
+      if (result.success) void notifier.notifyTrade("TAKE PROFIT 2", result.trade);
       return;
     }
     if (position.secondTakeProfitDone && dropFromHigh >= TRAILING_STOP_PERCENT) exit("TRAILING STOP");
@@ -159,6 +167,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
       if (isActive(session)) {
         lastError = error.message;
         console.error("Trading paused:", error.message);
+        void notifier.notifyCritical(`Trading paused: ${error.message}`);
         stopBot();
       }
     } finally {
