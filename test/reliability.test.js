@@ -198,7 +198,7 @@ test("hard stop and both momentum exits keep their original behavior", async t =
   }
 });
 
-test("V3.3 profit lock protects gains after a 10 percent peak", async t => {
+test("V3.4 profit lock protects gains after a 10 percent peak", async t => {
   const { trader } = account(t);
   trader.buy(coin);
   let quote = 1.14;
@@ -218,6 +218,38 @@ test("V3.3 profit lock protects gains after a 10 percent peak", async t => {
   assert.equal(trader.getPortfolio().position, null);
   assert.equal(trader.getPortfolio().history.at(-1).reason, "PROFIT LOCK");
   assert.ok(trader.getPortfolio().history.at(-1).pnlPercent > 5);
+});
+
+test("V3.4 hands the runner to the 8 percent trailing stop after TP2", async t => {
+  const { trader } = account(t);
+  trader.buy(coin);
+  let quote = 1.16;
+  const timers = fakeTimers();
+  const bot = createBot({ trader, timers, discoverCandidates: async () => [],
+    getTokenData: async () => ({ priceUsd: quote }) });
+  t.after(() => bot.stopBot());
+
+  bot.startBot();
+  await settle();
+  await timers.run(2000);
+  assert.equal(trader.getPortfolio().position.firstTakeProfitDone, true);
+
+  quote = 1.31;
+  await timers.run(2000);
+  assert.equal(trader.getPortfolio().position.secondTakeProfitDone, true);
+
+  quote = 2.00;
+  await timers.run(2000);
+  assert.notEqual(trader.getPortfolio().position, null);
+
+  quote = 1.85;
+  await timers.run(2000);
+  assert.notEqual(trader.getPortfolio().position, null);
+
+  quote = 1.83;
+  await timers.run(2000);
+  assert.equal(trader.getPortfolio().position, null);
+  assert.equal(trader.getPortfolio().history.at(-1).reason, "TRAILING STOP");
 });
 
 test("storage errors pause the bot and remove timers", async t => {
