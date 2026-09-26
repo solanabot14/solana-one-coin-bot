@@ -24,7 +24,7 @@ const MOMENTUM_EXIT_MIN_TRANSACTIONS = 10;
 function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
   discoverCandidates = scanner.discoverCandidates, timers = globalThis,
   notifier = telegram } = {}) {
-  const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
+  const { buy, sell, getPortfolio, enableRiskManagement, updateHigh, positionKey } = trader;
   let activeSession = null;
   let scannerInterval = null;
   let positionInterval = null;
@@ -149,6 +149,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     if (momentumExitA || momentumExitB) return void exit("MOMENTUM EXIT");
 
     const profitLockEligible =
+      position.riskManagementVersion === "V3.4" ||
       position.strategyVersion === "V3.3" ||
       position.strategyVersion === "V3.4";
     const profitLockActive =
@@ -192,7 +193,19 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
   function startBot() {
     if (activeSession) return;
     // Validate/load the account before announcing that trading is running.
-    getPortfolio();
+    const portfolio = getPortfolio();
+    if (
+      portfolio.position &&
+      typeof enableRiskManagement === "function" &&
+      portfolio.position.riskManagementVersion !== "V3.4"
+    ) {
+      const expectedPosition = positionKey(portfolio.position);
+      const migrated = enableRiskManagement(expectedPosition, "V3.4");
+      if (!migrated.success) throw new Error(migrated.message);
+      if (migrated.changed) {
+        console.log(`RISK MANAGEMENT MIGRATED | ${portfolio.position.symbol} | Entry strategy ${portfolio.position.strategyVersion || "legacy"} -> Risk V3.4`);
+      }
+    }
     lastError = null;
     const session = new AbortController();
     activeSession = session;
