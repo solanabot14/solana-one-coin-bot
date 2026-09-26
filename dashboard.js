@@ -6,6 +6,7 @@ const bot = require("./bot");
 const { getPortfolio } = require("./paperTrader");
 const { getTokenData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
+const janSlotEngine = require("./janSlotEngine");
 
 function getConfig(env = process.env) {
   const railway = !!env.RAILWAY_ENVIRONMENT_ID;
@@ -470,8 +471,8 @@ th,td{
 <div class="card section">
   <h2>Slot Compounding Lab</h2>
   <p class="muted">
-    Read-only simulation. It replays completed trades through 5 independent slots starting at $2 each.
-    Targets progress from $10 to $50, $100 and $150 per slot. This does not change the live paper bot.
+    Automatic shadow paper system. Completed trades from the original bot are assigned to independent
+    slots and compounded separately. Slot state is stored separately and never changes the original bot.
   </p>
 
   <div class="grid">
@@ -488,8 +489,8 @@ th,td{
       <div class="metric-value" id="slotPnl">$0.00</div>
     </div>
     <div class="metric">
-      <div class="metric-label">Current Target / Slot</div>
-      <div class="metric-value" id="slotTarget">$10.00</div>
+      <div class="metric-label">Milestones</div>
+      <div class="metric-value" id="slotTarget">$10 → $50 → $100 → $150</div>
     </div>
     <div class="metric">
       <div class="metric-label">Trades Replayed</div>
@@ -537,7 +538,7 @@ th,td{
 </html>`;
 
 function createDashboardServer({ config = getConfig(), controls = bot,
-  portfolio = getPortfolio, marketData = getTokenData } = {}) {
+  portfolio = getPortfolio, marketData = getTokenData, slotEngine = null } = {}) {
   const client = fs.readFileSync(path.join(__dirname, "dashboard-client.js"));
   return http.createServer(async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
@@ -560,7 +561,11 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       }
       if (req.method !== "GET") return json(res, { error: "Method not allowed" }, 405);
       if (route === "/api/status") return json(res, { running: controls.getBotStatus(), error: controls.getLastError() });
-      if (route === "/api/data") return json(res, await buildDashboardData(portfolio(), marketData));
+      if (route === "/api/data") {
+        const data = await buildDashboardData(portfolio(), marketData);
+        if (slotEngine?.getDashboardState) data.slotSimulation = slotEngine.getDashboardState();
+        return json(res, data);
+      }
       if (route === "/dashboard-client.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(client); }
       if (route !== "/") return json(res, { error: "Not found" }, 404);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); res.end(page);
@@ -575,10 +580,19 @@ function json(res, value, status = 200) {
 }
 if (require.main === module) {
   const config = getConfig();
-  getPortfolio();
-  const server = createDashboardServer({ config });
+  const portfolio = getPortfolio();
+  janSlotEngine.initializeFromPortfolio(portfolio).catch(error =>
+    console.error("Jan slot initialization failed:", error.message)
+  );
+  const slotSyncInterval = setInterval(() => {
+    janSlotEngine.syncFromPortfolio(getPortfolio()).catch(error =>
+      console.error("Jan slot sync failed:", error.message)
+    );
+  }, 5000);
+  const server = createDashboardServer({ config, slotEngine: janSlotEngine });
   server.listen(config.port, config.host, () => console.log("Dashboard listening on " + config.host + ":" + config.port));
   const shutdown = () => {
+    clearInterval(slotSyncInterval);
     bot.stopBot();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 12000).unref();
