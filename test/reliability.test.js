@@ -198,6 +198,28 @@ test("hard stop and both momentum exits keep their original behavior", async t =
   }
 });
 
+test("V3.3 profit lock protects gains after a 10 percent peak", async t => {
+  const { trader } = account(t);
+  trader.buy(coin);
+  let quote = 1.14;
+  const timers = fakeTimers();
+  const bot = createBot({ trader, timers, discoverCandidates: async () => [],
+    getTokenData: async () => ({ priceUsd: quote }) });
+  t.after(() => bot.stopBot());
+
+  bot.startBot();
+  await settle();
+  assert.notEqual(trader.getPortfolio().position, null);
+  assert.ok(trader.getPortfolio().position.highestPrice >= 1.14);
+
+  quote = 1.059;
+  await timers.run(2000);
+
+  assert.equal(trader.getPortfolio().position, null);
+  assert.equal(trader.getPortfolio().history.at(-1).reason, "PROFIT LOCK");
+  assert.ok(trader.getPortfolio().history.at(-1).pnlPercent > 5);
+});
+
 test("storage errors pause the bot and remove timers", async t => {
   const { trader } = account(t);
   trader.buy(coin);

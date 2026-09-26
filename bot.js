@@ -12,6 +12,8 @@ const TAKE_PROFIT_1_SELL_PERCENT = 15;
 const TAKE_PROFIT_2_PERCENT = 30;
 const TAKE_PROFIT_2_SELL_PERCENT = 35;
 const TRAILING_STOP_PERCENT = 8;
+const PROFIT_LOCK_TRIGGER_PERCENT = 10;
+const PROFIT_LOCK_TRAIL_POINTS = 8;
 const MOMENTUM_EXIT_MIN_LOSS = -2;
 const MOMENTUM_EXIT_5M = -3;
 const MOMENTUM_EXIT_STRONG_LOSS = -5;
@@ -119,6 +121,8 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     position = getPortfolio().position;
     const entryPrice = Number(position.entryPrice);
     const profitPercent = ((currentPrice - entryPrice) / entryPrice) * 100;
+    const highestProfitPercent = ((position.highestPrice - entryPrice) / entryPrice) * 100;
+    const profitLockFloor = highestProfitPercent - PROFIT_LOCK_TRAIL_POINTS;
     const dropFromHigh = ((position.highestPrice - currentPrice) / position.highestPrice) * 100;
     const momentum5m = Number(freshData.priceChange5m) || 0;
     const buys5m = Number(freshData.buys5m) || 0;
@@ -143,6 +147,13 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     const momentumExitA = profitPercent <= MOMENTUM_EXIT_MIN_LOSS && momentum5m <= MOMENTUM_EXIT_5M && sellPressure;
     const momentumExitB = profitPercent <= MOMENTUM_EXIT_STRONG_LOSS && momentum5m <= MOMENTUM_EXIT_STRONG_5M;
     if (momentumExitA || momentumExitB) return void exit("MOMENTUM EXIT");
+
+    const profitLockActive =
+      position.strategyVersion === "V3.3" &&
+      highestProfitPercent >= PROFIT_LOCK_TRIGGER_PERCENT;
+    if (profitLockActive && profitPercent <= profitLockFloor) {
+      return void exit("PROFIT LOCK");
+    }
 
     if (profitPercent >= TAKE_PROFIT_1_PERCENT && !position.firstTakeProfitDone) {
       const result = sell(currentPrice, TAKE_PROFIT_1_SELL_PERCENT, { expectedPosition, takeProfit: "firstTakeProfitDone", reason: "TAKE PROFIT 1" });
@@ -181,7 +192,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("BOT STARTED | Risk Management V2");
+    console.log("BOT STARTED | Strategy V3.3 Profit Lock");
     positionInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
     scannerInterval = timers.setInterval(() => tick("scanner", session), SCANNER_INTERVAL_MS);
     void tick("monitor", session);
