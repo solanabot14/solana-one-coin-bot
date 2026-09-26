@@ -7,6 +7,7 @@ const { getPortfolio } = require("./paperTrader");
 const { getTokenData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
 const janSlotEngine = require("./janSlotEngine");
+const janMvpBot = require("./janMvpBot");
 
 function getConfig(env = process.env) {
   const railway = !!env.RAILWAY_ENVIRONMENT_ID;
@@ -471,9 +472,16 @@ th,td{
 <div class="card section">
   <h2>Slot Compounding Lab</h2>
   <p class="muted">
-    Automatic shadow paper system. Completed trades from the original bot are assigned to independent
-    slots and compounded separately. Slot state is stored separately and never changes the original bot.
+    Independent live paper simulation. Each slot scans, opens, manages and closes its own simulated
+    positions. This account is completely separate from the original bot.
   </p>
+
+  <div class="controls" style="margin-bottom:16px">
+    <div id="janStatus" class="status">JAN MVP OFFLINE</div>
+    <button class="start" id="janStartButton" type="button">START JAN MVP</button>
+    <button class="stop" id="janStopButton" type="button">STOP JAN MVP</button>
+  </div>
+  <p id="janNotice" class="muted">Jan MVP controls only the slot simulator.</p>
 
   <div class="grid">
     <div class="metric">
@@ -506,18 +514,18 @@ th,td{
       <thead>
         <tr>
           <th>Slot</th>
-          <th>Balance</th>
-          <th>Target</th>
+          <th>Cash</th>
+          <th>Open Position</th>
+          <th>Invested</th>
+          <th>Next Target</th>
           <th>Progress</th>
-          <th>Trades</th>
+          <th>Completed</th>
           <th>Wins</th>
           <th>Losses</th>
-          <th>Last Coin</th>
-          <th>Last Return</th>
         </tr>
       </thead>
       <tbody id="slotRows">
-        <tr><td colspan="9">Waiting for completed trades...</td></tr>
+        <tr><td colspan="9">Waiting for Jan MVP activity...</td></tr>
       </tbody>
     </table>
   </div>
@@ -535,12 +543,12 @@ th,td{
       <thead>
         <tr>
           <th>Time</th>
+          <th>Type</th>
           <th>Slot</th>
           <th>Coin</th>
-          <th>Return</th>
-          <th>Before</th>
-          <th>After</th>
-          <th>Milestone</th>
+          <th>Price</th>
+          <th>Amount</th>
+          <th>Reason / P&L</th>
         </tr>
       </thead>
       <tbody id="slotExecutions">
@@ -560,7 +568,8 @@ th,td{
 </html>`;
 
 function createDashboardServer({ config = getConfig(), controls = bot,
-  portfolio = getPortfolio, marketData = getTokenData, slotEngine = null } = {}) {
+  portfolio = getPortfolio, marketData = getTokenData, slotEngine = null,
+  janControls = janMvpBot } = {}) {
   const client = fs.readFileSync(path.join(__dirname, "dashboard-client.js"));
   return http.createServer(async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
@@ -581,11 +590,19 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         if (route === "/api/start") controls.startBot(); else controls.stopBot();
         return json(res, { running: controls.getBotStatus() });
       }
+      if (route === "/api/jan/start" || route === "/api/jan/stop") {
+        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        if (route === "/api/jan/start") janControls.start(); else janControls.stop();
+        return json(res, { running: janControls.getStatus() });
+      }
       if (req.method !== "GET") return json(res, { error: "Method not allowed" }, 405);
       if (route === "/api/status") return json(res, { running: controls.getBotStatus(), error: controls.getLastError() });
+      if (route === "/api/jan/status") return json(res, { running: janControls.getStatus(), error: janControls.getLastError() });
       if (route === "/api/data") {
         const data = await buildDashboardData(portfolio(), marketData);
-        if (slotEngine?.getDashboardState) data.slotSimulation = slotEngine.getDashboardState();
+        if (janControls?.getDashboardState) data.slotSimulation = janControls.getDashboardState();
+        else if (slotEngine?.getDashboardState) data.slotSimulation = slotEngine.getDashboardState();
         return json(res, data);
       }
       if (route === "/dashboard-client.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(client); }
@@ -602,19 +619,12 @@ function json(res, value, status = 200) {
 }
 if (require.main === module) {
   const config = getConfig();
-  const portfolio = getPortfolio();
-  janSlotEngine.initializeFromPortfolio(portfolio).catch(error =>
-    console.error("Jan slot initialization failed:", error.message)
-  );
-  const slotSyncInterval = setInterval(() => {
-    janSlotEngine.syncFromPortfolio(getPortfolio()).catch(error =>
-      console.error("Jan slot sync failed:", error.message)
-    );
-  }, 5000);
-  const server = createDashboardServer({ config, slotEngine: janSlotEngine });
+  getPortfolio();
+  janMvpBot.start();
+  const server = createDashboardServer({ config, janControls: janMvpBot });
   server.listen(config.port, config.host, () => console.log("Dashboard listening on " + config.host + ":" + config.port));
   const shutdown = () => {
-    clearInterval(slotSyncInterval);
+    janMvpBot.stop();
     bot.stopBot();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 12000).unref();
