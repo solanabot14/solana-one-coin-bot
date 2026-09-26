@@ -117,7 +117,7 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 		}
 
 		const next = structuredClone(state);
-		const amountInvested = Math.min(10, next.cashBalance);
+		const amountInvested = next.cashBalance * 0.10;
 
 		const buys5m = Number(coin.buys5m) || 0;
 		const sells5m = Number(coin.sells5m) || 0;
@@ -146,7 +146,7 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 			highestPrice: price,
 			entryTime: new Date().toISOString(),
 
-			strategyVersion: "V3.1",
+			strategyVersion: "V3.2",
 
 			entryScore: Number(coin.score) || 0,
 			entrySignal: coin.signal || null,
