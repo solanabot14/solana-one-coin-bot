@@ -155,6 +155,28 @@ test("unchanged profit targets and trailing exit execute once and restore across
   assert.equal(restarted.getPortfolio().history.at(-1).reason, "TRAILING STOP");
 });
 
+test("dashboard reports V3.4 profit lock and runner modes", async t => {
+  const { trader } = account(t);
+  trader.buy(coin);
+  const key = trader.positionKey(trader.getPortfolio().position);
+  trader.updateHigh(key, 1.14);
+
+  let data = await buildDashboardData(trader.getPortfolio(), async () => ({ priceUsd: 1.11 }));
+  assert.equal(data.live.mode, "PROFIT LOCK");
+  assert.equal(data.live.profitLockActive, true);
+  assert.ok(Math.abs(data.live.protectedFloorPercent - 6) < 1e-10);
+
+  trader.sell(1.16, 15, { expectedPosition: key, takeProfit: "firstTakeProfitDone", reason: "TAKE PROFIT 1" });
+  trader.sell(1.31, 35, { expectedPosition: key, takeProfit: "secondTakeProfitDone", reason: "TAKE PROFIT 2" });
+
+  const runnerKey = trader.positionKey(trader.getPortfolio().position);
+  trader.updateHigh(runnerKey, 2);
+  data = await buildDashboardData(trader.getPortfolio(), async () => ({ priceUsd: 1.9 }));
+  assert.equal(data.live.mode, "RUNNER");
+  assert.equal(data.live.profitLockActive, false);
+  assert.ok(Math.abs(data.live.trailingExitPrice - 1.84) < 1e-10);
+});
+
 test("dashboard excludes partial positions, averages exit prices and marks missing equity", async t => {
   const { trader } = account(t);
   trader.buy(coin);

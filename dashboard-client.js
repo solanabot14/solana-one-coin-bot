@@ -41,6 +41,11 @@ function renderLiveTrade(d) {
 	const reasons = Array.isArray(position.entryReasons) && position.entryReasons.length ? position.entryReasons.map(escapeHtml).join(" • ") : "No entry reasons recorded.";
 	const tp1 = position.firstTakeProfitDone ? "DONE" : "Waiting +15%";
 	const tp2 = position.secondTakeProfitDone ? "DONE" : "Waiting +30%";
+	const profitLock = live.profitLockActive ? "ACTIVE" : "OFF";
+	const protectedFloor = live.protectedFloorPercent == null ? "—" : pct(live.protectedFloorPercent);
+	const trailingLevel = live.trailingExitPrice == null
+		? "—"
+		: `${price(live.trailingExitPrice)} (${pct(live.trailingExitPercent)})`;
 	$("live").innerHTML = `
 		<div class="live-title"><span class="coin-name">${escapeHtml(position.symbol)}</span>
 			<span class="badge">${escapeHtml(position.strategyVersion || "V3.1")}</span>
@@ -56,6 +61,10 @@ function renderLiveTrade(d) {
 			<div class="metric"><div class="metric-label">Current Value</div><div class="metric-value">${money(live.currentValue)}</div></div>
 			<div class="metric"><div class="metric-label">Live P/L</div><div class="metric-value ${cls(live.pnl)}">${money(live.pnl)} (${pct(live.pnlPercent)})</div></div>
 			<div class="metric"><div class="metric-label">Max Gain</div><div class="metric-value ${cls(live.maxGainPercent)}">${pct(live.maxGainPercent)}</div></div>
+			<div class="metric"><div class="metric-label">Mode</div><div class="metric-value">${escapeHtml(live.mode || "NORMAL")}</div></div>
+			<div class="metric"><div class="metric-label">Profit Lock</div><div class="metric-value">${profitLock}</div></div>
+			<div class="metric"><div class="metric-label">Protected Floor</div><div class="metric-value ${cls(live.protectedFloorPercent)}">${protectedFloor}</div></div>
+			<div class="metric"><div class="metric-label">Runner Trailing Exit</div><div class="metric-value">${trailingLevel}</div></div>
 			<div class="metric"><div class="metric-label">Time in Trade</div><div class="metric-value">${duration(live.holdTimeMs)}</div></div>
 			<div class="metric"><div class="metric-label">Current 5m</div><div class="metric-value ${cls(live.priceChange5m)}">${pct(live.priceChange5m)}</div></div>
 			<div class="metric"><div class="metric-label">Current 1h</div><div class="metric-value ${cls(live.priceChange1h)}">${pct(live.priceChange1h)}</div></div>
@@ -84,7 +93,7 @@ function renderScoreStats(d) {
 	$("scoreStats").innerHTML = rows.map(row => `<tr>
 		<td><strong>${escapeHtml(row.score)}</strong></td><td>${row.trades}</td><td class="green">${row.winners}</td><td class="red">${row.losers}</td>
 		<td>${pct(row.winRate)}</td><td class="${cls(row.averageReturn)}">${pct(row.averageReturn)}</td>
-		<td class="${cls(row.averageMaxGain)}">${pct(row.averageMaxGain)}</td><td class="${cls(row.netPnl)}">${money(row.netPnl)}</td></tr>`).join("") || `<tr><td colspan="8">No V3.1 trades yet.</td></tr>`;
+		<td class="${cls(row.averageMaxGain)}">${pct(row.averageMaxGain)}</td><td class="${cls(row.netPnl)}">${money(row.netPnl)}</td></tr>`).join("") || `<tr><td colspan="8">No completed trades yet.</td></tr>`;
 }
 
 function renderExitReasons(d) {

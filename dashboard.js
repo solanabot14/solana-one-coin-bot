@@ -210,7 +210,7 @@ th,td{
   <div>
     <h1>Solana One Coin Bot</h1>
     <div class="subtitle">
-      Strategy V3.1 • Early Momentum • Paper Trading
+      Strategy V3.4 • Profit Lock + Runner • Paper Trading
     </div>
   </div>
 
@@ -279,7 +279,7 @@ th,td{
 
 <div class="card section">
 
-<h2>V3.1 Performance</h2>
+<h2>Overall Performance</h2>
 
 <div class="grid">
 
@@ -360,7 +360,7 @@ th,td{
 <tbody id="scoreStats">
 <tr>
 <td colspan="8">
-  No V3.1 trades yet.
+  No completed trades yet.
 </td>
 </tr>
 </tbody>
