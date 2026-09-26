@@ -108,6 +108,72 @@ function groupCompletedTrades(history = [], position = null) {
 		.sort((a, b) => new Date(b.exitTime) - new Date(a.exitTime));
 }
 
+
+const SLOT_TARGETS = [10, 50, 100, 150];
+
+function buildSlotSimulation(completedTrades, slotCount = 5, startingSlotValue = 2) {
+	const slots = Array.from({ length: slotCount }, (_, index) => ({
+		id: index + 1,
+		startingValue: startingSlotValue,
+		balance: startingSlotValue,
+		trades: 0,
+		winners: 0,
+		losers: 0,
+		lastSymbol: null,
+		lastReturnPercent: null
+	}));
+
+	const chronological = [...completedTrades]
+		.filter(trade => Number.isFinite(Number(trade.pnlPercent)))
+		.sort((a, b) => new Date(a.exitTime || a.entryTime) - new Date(b.exitTime || b.entryTime));
+
+	let replayed = 0;
+	for (const trade of chronological) {
+		const slot = slots[replayed % slotCount];
+		const returnPercent = Number(trade.pnlPercent);
+		const factor = Math.max(0, 1 + returnPercent / 100);
+		slot.balance *= factor;
+		slot.trades++;
+		if (returnPercent > 0) slot.winners++;
+		else if (returnPercent < 0) slot.losers++;
+		slot.lastSymbol = trade.symbol || "-";
+		slot.lastReturnPercent = returnPercent;
+		replayed++;
+	}
+
+	const completedTargets = SLOT_TARGETS.filter(target =>
+		slots.every(slot => slot.balance >= target)
+	);
+	const currentTarget = SLOT_TARGETS.find(target =>
+		!slots.every(slot => slot.balance >= target)
+	) || SLOT_TARGETS.at(-1);
+	const totalCapital = slots.reduce((sum, slot) => sum + slot.balance, 0);
+	const startingCapital = slotCount * startingSlotValue;
+
+	return {
+		mode: "SIMULATION_ONLY",
+		slotCount,
+		startingSlotValue,
+		startingCapital,
+		totalCapital,
+		totalPnl: totalCapital - startingCapital,
+		totalReturnPercent: startingCapital > 0
+			? (totalCapital - startingCapital) / startingCapital * 100
+			: 0,
+		targets: [...SLOT_TARGETS],
+		completedTargets,
+		currentTarget,
+		allTargetsComplete: slots.every(slot => slot.balance >= SLOT_TARGETS.at(-1)),
+		tradesReplayed: replayed,
+		slots: slots.map(slot => ({
+			...slot,
+			progressPercent: currentTarget > 0
+				? Math.min(100, slot.balance / currentTarget * 100)
+				: 0
+		}))
+	};
+}
+
 function average(values) {
 	const valid = values.filter(Number.isFinite);
 	return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
@@ -187,6 +253,7 @@ async function buildDashboardData(data, getTokenData) {
 	return {
 		...data, live, equity, totalPnl: equity === null ? null : equity - data.startingBalance,
 		priceUnavailable: !!data.position && !live, completedTrades, scoreStats: buildScoreStats(completedTrades), exitReasonCounts,
+		slotSimulation: buildSlotSimulation(completedTrades),
 		stats: {
 			completedTrades: completedTrades.length, winners, losers,
 			winRate: completedTrades.length ? winners / completedTrades.length * 100 : 0,
@@ -198,4 +265,4 @@ async function buildDashboardData(data, getTokenData) {
 	};
 }
 
-module.exports = { groupCompletedTrades, buildDashboardData };
+module.exports = { groupCompletedTrades, buildDashboardData, buildSlotSimulation };

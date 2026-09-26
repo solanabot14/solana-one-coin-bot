@@ -115,13 +115,57 @@ function renderHistory(d) {
 	}).join("") || `<tr><td colspan="19">No completed positions yet.</td></tr>`;
 }
 
+
+function renderSlotSimulation(d) {
+	const sim = d.slotSimulation;
+	if (!sim) return;
+	$("slotStarting").textContent = money(sim.startingCapital);
+	$("slotTotal").textContent = money(sim.totalCapital);
+	$("slotPnl").textContent = money(sim.totalPnl);
+	$("slotPnl").className = "metric-value " + cls(sim.totalPnl);
+	$("slotTarget").textContent = money(sim.currentTarget);
+	$("slotTrades").textContent = number(sim.tradesReplayed);
+
+	$("slotRows").innerHTML = (sim.slots || []).map(slot => `<tr>
+		<td><strong>Slot ${escapeHtml(slot.id)}</strong></td>
+		<td class="${cls(slot.balance - slot.startingValue)}">${money(slot.balance)}</td>
+		<td>${money(sim.currentTarget)}</td>
+		<td style="min-width:160px">
+			${pct(slot.progressPercent)}
+			<div class="progress"><div class="progress-fill" style="width:${Math.max(0, Math.min(100, Number(slot.progressPercent) || 0))}%"></div></div>
+		</td>
+		<td>${number(slot.trades)}</td>
+		<td class="green">${number(slot.winners)}</td>
+		<td class="red">${number(slot.losers)}</td>
+		<td>${escapeHtml(slot.lastSymbol || "—")}</td>
+		<td class="${cls(slot.lastReturnPercent)}">${pct(slot.lastReturnPercent)}</td>
+	</tr>`).join("") || `<tr><td colspan="9">Waiting for completed trades...</td></tr>`;
+
+	const completed = new Set(sim.completedTargets || []);
+	$("slotTargets").innerHTML = (sim.targets || []).map(target => {
+		const done = completed.has(target);
+		return `<div class="metric">
+			<div class="metric-label">${done ? "Completed Target" : target === sim.currentTarget ? "Current Target" : "Future Target"}</div>
+			<div class="metric-value ${done ? "green" : ""}">${money(target)} / slot</div>
+		</div>`;
+	}).join("");
+}
+
+function showTab(name) {
+	const botActive = name === "bot";
+	$("botPanel").className = "tab-panel" + (botActive ? " active" : "");
+	$("slotPanel").className = "tab-panel" + (!botActive ? " active" : "");
+	$("botTab").className = "tab-button" + (botActive ? " active" : "");
+	$("slotTab").className = "tab-button" + (!botActive ? " active" : "");
+}
+
 function renderData(d) {
 	const s = d.stats;
 	const values = {starting:money(d.startingBalance), cash:money(d.cashBalance), equity:money(d.equity), pnl:money(d.totalPnl), count:s.completedTrades, winrate:pct(s.winRate), winners:s.winners, losers:s.losers, profit:money(s.grossProfit), loss:"-" + money(s.grossLoss), net:money(s.netPnl), factor:s.profitFactorLabel, avgWinner:pct(s.averageWinnerPercent), avgLoser:pct(s.averageLoserPercent), avgHold:duration(s.averageHoldTimeMs), avgMaxGain:pct(s.averageMaxGainPercent)};
 	for (const [id, value] of Object.entries(values)) $(id).textContent = value;
 	$("pnl").className = "value " + cls(d.totalPnl);
 	$("net").className = "metric-value " + cls(s.netPnl);
-	renderLiveTrade(d); renderScoreStats(d); renderExitReasons(d); renderHistory(d);
+	renderLiveTrade(d); renderScoreStats(d); renderExitReasons(d); renderHistory(d); renderSlotSimulation(d);
 }
 
 async function refreshStatus() {
@@ -150,6 +194,8 @@ async function control(action) {
 
 $("startButton").addEventListener("click", () => control("start"));
 $("stopButton").addEventListener("click", () => control("stop"));
+$("botTab").addEventListener("click", () => showTab("bot"));
+$("slotTab").addEventListener("click", () => showTab("slot"));
 
 async function pollStatus() { await refreshStatus(); setTimeout(pollStatus, 2000); }
 async function pollData() { await refreshData(); setTimeout(pollData, 5000); }
