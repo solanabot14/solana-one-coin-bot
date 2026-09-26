@@ -214,6 +214,7 @@ function createJanSlotEngine({
 	return {
 		initializeFromPortfolio,
 		syncFromPortfolio,
+		applyCompletedTrade: applyTrade,
 		getState: () => structuredClone(load()),
 		getDashboardState: () => dashboardState(load()),
 		getDataFile: () => dataFile
