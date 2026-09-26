@@ -148,8 +148,12 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     const momentumExitB = profitPercent <= MOMENTUM_EXIT_STRONG_LOSS && momentum5m <= MOMENTUM_EXIT_STRONG_5M;
     if (momentumExitA || momentumExitB) return void exit("MOMENTUM EXIT");
 
+    const profitLockEligible =
+      position.strategyVersion === "V3.3" ||
+      position.strategyVersion === "V3.4";
     const profitLockActive =
-      position.strategyVersion === "V3.3" &&
+      profitLockEligible &&
+      !position.secondTakeProfitDone &&
       highestProfitPercent >= PROFIT_LOCK_TRIGGER_PERCENT;
     if (profitLockActive && profitPercent <= profitLockFloor) {
       return void exit("PROFIT LOCK");
@@ -192,7 +196,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("BOT STARTED | Strategy V3.3 Profit Lock");
+    console.log("BOT STARTED | Strategy V3.4 Profit Lock + Runner");
     positionInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
     scannerInterval = timers.setInterval(() => tick("scanner", session), SCANNER_INTERVAL_MS);
     void tick("monitor", session);
