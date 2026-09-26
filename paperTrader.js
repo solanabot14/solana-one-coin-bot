@@ -282,6 +282,9 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 			strategyVersion:
 				p.strategyVersion || null,
 
+			riskManagementVersion:
+				p.riskManagementVersion || null,
+
 			entryScore:
 				p.entryScore ?? null,
 
