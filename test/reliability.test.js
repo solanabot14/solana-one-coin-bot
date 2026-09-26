@@ -220,6 +220,44 @@ test("hard stop and both momentum exits keep their original behavior", async t =
   }
 });
 
+test("restored legacy position keeps entry strategy and adopts V3.4 risk management", async t => {
+  const { file, trader } = account(t);
+  trader.buy(coin);
+
+  const legacy = JSON.parse(fs.readFileSync(file, "utf8"));
+  legacy.position.strategyVersion = "V3.2";
+  delete legacy.position.riskManagementVersion;
+  legacy.history[0].strategyVersion = "V3.2";
+  delete legacy.history[0].riskManagementVersion;
+  fs.writeFileSync(file, JSON.stringify(legacy, null, 2));
+
+  const restored = createPaperTrader(file);
+  const key = restored.positionKey(restored.getPortfolio().position);
+  restored.updateHigh(key, 1.14);
+
+  let quote = 1.059;
+  const timers = fakeTimers();
+  const bot = createBot({
+    trader: restored,
+    timers,
+    discoverCandidates: async () => [],
+    getTokenData: async () => ({ priceUsd: quote })
+  });
+  t.after(() => bot.stopBot());
+
+  bot.startBot();
+  await settle();
+
+  const migrated = restored.getPortfolio().position;
+  assert.equal(migrated, null);
+  const buyTrade = restored.getPortfolio().history[0];
+  const sellTrade = restored.getPortfolio().history.at(-1);
+  assert.equal(buyTrade.strategyVersion, "V3.2");
+  assert.equal(sellTrade.strategyVersion, "V3.2");
+  assert.equal(sellTrade.riskManagementVersion, "V3.4");
+  assert.equal(sellTrade.reason, "PROFIT LOCK");
+});
+
 test("V3.4 profit lock protects gains after a 10 percent peak", async t => {
   const { trader } = account(t);
   trader.buy(coin);
