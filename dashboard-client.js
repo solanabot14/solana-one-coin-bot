@@ -126,20 +126,23 @@ function renderSlotSimulation(d) {
 	$("slotTarget").textContent = (sim.targets || []).map(target => money(target)).join(" → ");
 	$("slotTrades").textContent = number(sim.tradesReplayed);
 
-	$("slotRows").innerHTML = (sim.slots || []).map(slot => `<tr>
-		<td><strong>Slot ${escapeHtml(slot.id)}</strong></td>
-		<td class="${cls(slot.balance - slot.startingValue)}">${money(slot.balance)}</td>
-		<td>${slot.currentTarget == null ? "COMPLETE" : money(slot.currentTarget)}</td>
-		<td style="min-width:160px">
-			${pct(slot.progressPercent)}
-			<div class="progress"><div class="progress-fill" style="width:${Math.max(0, Math.min(100, Number(slot.progressPercent) || 0))}%"></div></div>
-		</td>
-		<td>${number(slot.trades)}</td>
-		<td class="green">${number(slot.winners)}</td>
-		<td class="red">${number(slot.losers)}</td>
-		<td>${escapeHtml(slot.lastSymbol || "—")}</td>
-		<td class="${cls(slot.lastReturnPercent)}">${pct(slot.lastReturnPercent)}</td>
-	</tr>`).join("") || `<tr><td colspan="9">Waiting for completed trades...</td></tr>`;
+	$("slotRows").innerHTML = (sim.slots || []).map(slot => {
+		const p = slot.position;
+		return `<tr>
+			<td><strong>Slot ${escapeHtml(slot.id)}</strong></td>
+			<td>${money(slot.cashBalance)}</td>
+			<td>${p ? `<strong>${escapeHtml(p.symbol)}</strong>` : "—"}</td>
+			<td>${p ? money(p.originalAmountInvested || p.amountInvested) : "—"}</td>
+			<td>${slot.currentTarget == null ? "COMPLETE" : money(slot.currentTarget)}</td>
+			<td style="min-width:160px">
+				${pct(slot.progressPercent)}
+				<div class="progress"><div class="progress-fill" style="width:${Math.max(0, Math.min(100, Number(slot.progressPercent) || 0))}%"></div></div>
+			</td>
+			<td>${number(slot.completedTrades)}</td>
+			<td class="green">${number(slot.winners)}</td>
+			<td class="red">${number(slot.losers)}</td>
+		</tr>`;
+	}).join("") || `<tr><td colspan="9">Waiting for Jan MVP activity...</td></tr>`;
 
 	const progress = Array.isArray(sim.targetProgress) ? sim.targetProgress : [];
 	$("slotTargets").innerHTML = (sim.targets || []).map(target => {
@@ -155,20 +158,23 @@ function renderSlotSimulation(d) {
 
 	const executions = Array.isArray(sim.executions) ? sim.executions : [];
 	$("slotExecutions").innerHTML = executions.map(execution => {
-		const milestones = Array.isArray(execution.milestonesReached) && execution.milestonesReached.length
-			? execution.milestonesReached.map(money).join(", ")
-			: "—";
-		const time = execution.executedAt ? new Date(execution.executedAt).toLocaleString() : "—";
+		const time = execution.time ? new Date(execution.time).toLocaleString() : "—";
+		const amount = execution.type === "BUY"
+			? money(execution.amount)
+			: execution.saleValue == null ? "—" : money(execution.saleValue);
+		const details = execution.type === "SELL"
+			? `${escapeHtml(execution.reason || "SELL")} ${execution.pnl == null ? "" : " | " + money(execution.pnl)}`
+			: "BUY";
 		return `<tr>
 			<td>${escapeHtml(time)}</td>
+			<td>${escapeHtml(execution.type || "—")}</td>
 			<td>Slot ${escapeHtml(execution.slotId)}</td>
 			<td><strong>${escapeHtml(execution.symbol)}</strong></td>
-			<td class="${cls(execution.returnPercent)}">${pct(execution.returnPercent)}</td>
-			<td>${money(execution.balanceBefore)}</td>
-			<td class="${cls(execution.balanceAfter - execution.balanceBefore)}">${money(execution.balanceAfter)}</td>
-			<td>${escapeHtml(milestones)}</td>
+			<td>${price(execution.price)}</td>
+			<td>${amount}</td>
+			<td class="${execution.pnl == null ? "" : cls(execution.pnl)}">${details}</td>
 		</tr>`;
-	}).join("") || `<tr><td colspan="7">Waiting for slot executions...</td></tr>`;
+	}).join("") || `<tr><td colspan="7">Waiting for Jan MVP executions...</td></tr>`;
 }
 
 function showTab(name) {
@@ -202,6 +208,35 @@ async function refreshData() {
 	catch (error) { $("equity").textContent = "Unavailable"; $("pnl").textContent = "Unavailable"; $("live").textContent = "Account update unavailable. Other displayed figures may be out of date."; }
 }
 
+async function refreshJanStatus() {
+	try {
+		const d = await request("/api/jan/status");
+		$("janStatus").textContent = d.running ? "JAN MVP ONLINE" : "JAN MVP OFFLINE";
+		$("janStatus").className = "status" + (d.running ? " online" : "");
+		if (d.error) $("janNotice").textContent = "Jan MVP error: " + d.error;
+	} catch (error) {
+		$("janStatus").textContent = "JAN MVP UNAVAILABLE";
+		$("janStatus").className = "status";
+	}
+}
+
+async function janControl(action) {
+	$("janStartButton").disabled = true;
+	$("janStopButton").disabled = true;
+	try {
+		await request("/api/jan/" + action, {method:"POST", headers:{"X-Bot-Control":"1"}});
+		$("janNotice").textContent = action === "stop"
+			? "Jan MVP paused. Its simulated positions remain saved."
+			: "Jan MVP running independently from the original bot.";
+		await refreshJanStatus();
+	} catch (error) {
+		$("janNotice").textContent = error.message;
+	} finally {
+		$("janStartButton").disabled = false;
+		$("janStopButton").disabled = false;
+	}
+}
+
 async function control(action) {
 	$("startButton").disabled = true; $("stopButton").disabled = true;
 	try {
@@ -216,8 +251,10 @@ $("startButton").addEventListener("click", () => control("start"));
 $("stopButton").addEventListener("click", () => control("stop"));
 $("botTab").addEventListener("click", () => showTab("bot"));
 $("slotTab").addEventListener("click", () => showTab("slot"));
+$("janStartButton").addEventListener("click", () => janControl("start"));
+$("janStopButton").addEventListener("click", () => janControl("stop"));
 
-async function pollStatus() { await refreshStatus(); setTimeout(pollStatus, 2000); }
+async function pollStatus() { await refreshStatus(); await refreshJanStatus(); setTimeout(pollStatus, 2000); }
 async function pollData() { await refreshData(); setTimeout(pollData, 5000); }
 pollStatus();
 pollData();
