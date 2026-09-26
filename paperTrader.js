@@ -147,6 +147,7 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 			entryTime: new Date().toISOString(),
 
 			strategyVersion: "V3.4",
+			riskManagementVersion: "V3.4",
 
 			entryScore: Number(coin.score) || 0,
 			entrySignal: coin.signal || null,
@@ -369,6 +370,32 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 		};
 	}
 
+
+	function enableRiskManagement(expectedPosition, version = "V3.4") {
+		const p = state.position;
+
+		if (!p) {
+			return fail("No position is open.");
+		}
+
+		if (
+			expectedPosition &&
+			expectedPosition !== positionKey(p)
+		) {
+			return fail("Position changed.");
+		}
+
+		if (p.riskManagementVersion === version) {
+			return { success: true, changed: false };
+		}
+
+		const next = structuredClone(state);
+		next.position.riskManagementVersion = version;
+		commit(next);
+
+		return { success: true, changed: true };
+	}
+
 	function updateHigh(expectedPosition, price) {
 		if (
 			positionKey(state.position) !== expectedPosition ||
@@ -399,6 +426,7 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 	return {
 		buy,
 		sell,
+		enableRiskManagement,
 		updateHigh,
 		positionKey,
 		getPortfolio: () => structuredClone(state)
@@ -419,6 +447,7 @@ module.exports = {
 for (const method of [
 	"buy",
 	"sell",
+	"enableRiskManagement",
 	"updateHigh",
 	"positionKey",
 	"getPortfolio"
