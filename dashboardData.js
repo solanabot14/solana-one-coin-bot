@@ -146,7 +146,16 @@ async function buildDashboardData(data, getTokenData) {
 			const currentValue = p.quantity * currentPrice;
 			const pnl = currentValue - p.amountInvested;
 			const highestPrice = Number(p.highestPrice || p.entryPrice);
-			const maxGainPercent = Number(p.entryPrice) > 0 ? (highestPrice - Number(p.entryPrice)) / Number(p.entryPrice) * 100 : null;
+			const entryPrice = Number(p.entryPrice);
+			const maxGainPercent = entryPrice > 0 ? (highestPrice - entryPrice) / entryPrice * 100 : null;
+			const profitLockEligible = p.strategyVersion === "V3.3" || p.strategyVersion === "V3.4";
+			const profitLockActive = profitLockEligible && !p.secondTakeProfitDone && maxGainPercent >= 10;
+			const protectedFloorPercent = profitLockActive ? maxGainPercent - 8 : null;
+			const runnerMode = !!p.secondTakeProfitDone;
+			const trailingExitPrice = runnerMode ? highestPrice * 0.92 : null;
+			const trailingExitPercent = runnerMode && entryPrice > 0
+				? (trailingExitPrice - entryPrice) / entryPrice * 100 : null;
+			const mode = runnerMode ? "RUNNER" : profitLockActive ? "PROFIT LOCK" : "NORMAL";
 			const holdTimeMs = Math.max(0, Date.now() - new Date(p.entryTime).getTime());
 			const buys5m = Number(fresh.buys5m) || 0;
 			const sells5m = Number(fresh.sells5m) || 0;
@@ -154,6 +163,7 @@ async function buildDashboardData(data, getTokenData) {
 			live = {
 				currentPrice, currentValue, pnl, pnlPercent: p.amountInvested > 0 ? pnl / p.amountInvested * 100 : 0,
 				highestPrice, maxGainPercent, holdTimeMs,
+				mode, profitLockActive, protectedFloorPercent, trailingExitPrice, trailingExitPercent,
 				priceChange5m: fresh.priceChange5m, priceChange1h: fresh.priceChange1h, priceChange24h: fresh.priceChange24h,
 				liquidityUsd: fresh.liquidityUsd, volume24h: fresh.volume24h, buys5m, sells5m, transactions5m,
 				buyRatio5m: transactions5m > 0 ? buys5m / transactions5m : 0,
