@@ -83,7 +83,7 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
     return position?.id || null;
   }
 
-  function buy(slotId, coin) {
+  function buy(slotId, coin, options = {}) {
     load();
     const next = structuredClone(state);
     const slot = slotById(next, slotId);
@@ -126,11 +126,15 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
       entryVolume24h: Number(coin.volume24h) || 0,
       entryBuys5m: buys5m,
       entrySells5m: sells5m,
-      entryBuyRatio: buyRatio
+      entryBuyRatio: buyRatio,
+      source: options.source || null,
+      sourceOgPositionId: options.sourceOgPositionId || null
     };
     next.executions.push({
       type:"BUY", slotId:slot.id, positionId:slot.position.id, symbol:slot.position.symbol,
-      price, amount, time:slot.position.entryTime
+      price, amount, time:slot.position.entryTime,
+      source: options.source || null,
+      sourceOgPositionId: options.sourceOgPositionId || null
     });
     if (next.executions.length > 2000) next.executions = next.executions.slice(-2000);
     save(next);

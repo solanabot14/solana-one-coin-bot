@@ -1,10 +1,10 @@
 const market = require("./dexscreener");
-const scanner = require("./scanner");
 const telegram = require("./telegram");
 const { createJanMvpTrader } = require("./janMvpTrader");
+const paperTrader = require("./paperTrader");
 
 const POSITION_MONITOR_MS = 5000;
-const SCANNER_INTERVAL_MS = 120000;
+const OG_FOLLOW_INTERVAL_MS = 2000;
 const TOKEN_COOLDOWN_MS = 60 * 60 * 1000;
 
 const HARD_STOP_PERCENT = -10;
@@ -25,33 +25,17 @@ const MOMENTUM_EXIT_MIN_TRANSACTIONS = 10;
 function createJanMvpBot({
   trader = createJanMvpTrader(),
   getTokenData = market.getTokenData,
-  discoverCandidates = scanner.discoverCandidates,
+  getOgPortfolio = paperTrader.getPortfolio,
   timers = globalThis,
   notifier = telegram
 } = {}) {
   let activeSession = null;
-  let scannerInterval = null;
+  let followInterval = null;
   let monitorInterval = null;
-  let scannerBusy = false;
+  let followBusy = false;
   let monitorBusy = false;
   let lastError = null;
-  const tokenCooldowns = new Map();
-
   const isActive = session => activeSession === session && !session.signal.aborted;
-
-  function startCooldown(tokenAddress) {
-    tokenCooldowns.set(tokenAddress, Date.now());
-  }
-
-  function availableByCooldown(tokenAddress) {
-    const started = tokenCooldowns.get(tokenAddress);
-    if (!started) return true;
-    if (Date.now() - started >= TOKEN_COOLDOWN_MS) {
-      tokenCooldowns.delete(tokenAddress);
-      return true;
-    }
-    return false;
-  }
 
   async function notifyMilestones(closedTrade, milestones) {
     for (const milestone of milestones || []) {
@@ -70,33 +54,64 @@ function createJanMvpBot({
     }
   }
 
-  async function runScanner(session) {
+  function ogPositionId(position) {
+    return String(position?.id || [position?.tokenAddress, position?.entryTime].join("|"));
+  }
+
+  function alreadyMirrored(sourceOgPositionId) {
     const state = trader.getState();
-    const freeSlots = state.slots.filter(slot => !slot.position && Number(slot.cashBalance) > 0);
-    if (!freeSlots.length) return;
+    return state.slots.some(slot => slot.position?.sourceOgPositionId === sourceOgPositionId) ||
+      state.executions.some(execution =>
+        execution.type === "BUY" && execution.sourceOgPositionId === sourceOgPositionId
+      );
+  }
 
-    const candidates = await discoverCandidates({ signal: session.signal });
-    if (!isActive(session)) return;
+  function chooseFreeSlot() {
+    return trader.getState().slots
+      .filter(slot => !slot.position && Number(slot.cashBalance) > 0)
+      .sort((a, b) =>
+        Number(a.completedTrades || 0) - Number(b.completedTrades || 0) ||
+        Number(a.id) - Number(b.id)
+      )[0] || null;
+  }
 
-    const occupiedTokens = new Set(
-      trader.getState().slots.map(slot => slot.position?.tokenAddress).filter(Boolean)
-    );
-    const strong = candidates.filter(coin =>
-      coin.signal === "STRONG BUY" &&
-      !occupiedTokens.has(coin.tokenAddress) &&
-      availableByCooldown(coin.tokenAddress)
-    );
+  async function followOgEntry(session) {
+    const og = getOgPortfolio();
+    const position = og?.position;
+    if (!position || !isActive(session)) return;
 
-    let candidateIndex = 0;
-    for (const slot of freeSlots) {
-      if (!isActive(session)) return;
-      const coin = strong[candidateIndex++];
-      if (!coin) break;
-      const result = trader.buy(slot.id, coin);
-      if (result.success) {
-        occupiedTokens.add(coin.tokenAddress);
-        console.log(`JAN MVP BUY | Slot ${slot.id} | ${coin.symbol} | $${Number(result.trade.amountInvested).toFixed(2)}`);
-      }
+    const sourceOgPositionId = ogPositionId(position);
+    if (alreadyMirrored(sourceOgPositionId)) return;
+
+    const slot = chooseFreeSlot();
+    if (!slot) return;
+
+    const coin = {
+      symbol: position.symbol,
+      name: position.name,
+      tokenAddress: position.tokenAddress,
+      pairAddress: position.pairAddress || null,
+      priceUsd: Number(position.entryPrice),
+      signal: position.entrySignal || "STRONG BUY",
+      score: Number(position.entryScore) || 0,
+      priceChange5m: Number(position.entryPriceChange5m) || 0,
+      priceChange1h: Number(position.entryPriceChange1h) || 0,
+      priceChange24h: Number(position.entryPriceChange24h) || 0,
+      liquidityUsd: Number(position.entryLiquidityUsd) || 0,
+      volume24h: Number(position.entryVolume24h) || 0,
+      buys5m: Number(position.entryBuys5m) || 0,
+      sells5m: Number(position.entrySells5m) || 0
+    };
+
+    const result = trader.buy(slot.id, coin, {
+      source: "OG_MIRROR",
+      sourceOgPositionId
+    });
+
+    if (result.success) {
+      console.log(
+        `JAN MVP MIRROR BUY | Slot ${slot.id} | ${coin.symbol} | OG entry $${Number(position.entryPrice).toFixed(10)} | Slot $${Number(result.trade.amountInvested).toFixed(2)}`
+      );
     }
   }
 
@@ -132,7 +147,6 @@ function createJanMvpBot({
     const exit = async (reason, percent = 100) => {
       const result = trader.sell(slot.id, currentPrice, percent, { expectedPosition, reason });
       if (result.success && result.closedTrade) {
-        startCooldown(position.tokenAddress);
         await notifyMilestones(result.closedTrade, result.newlyReached);
       }
       return result;
@@ -176,12 +190,12 @@ function createJanMvpBot({
 
   async function tick(kind, session = activeSession) {
     if (!session || !isActive(session)) return;
-    if (kind === "scanner" ? scannerBusy : monitorBusy) return;
-    if (kind === "scanner") scannerBusy = true;
+    if (kind === "follow" ? followBusy : monitorBusy) return;
+    if (kind === "follow") followBusy = true;
     else monitorBusy = true;
 
     try {
-      if (kind === "scanner") await runScanner(session);
+      if (kind === "follow") await followOgEntry(session);
       else await monitorPositions(session);
     } catch (error) {
       if (isActive(session)) {
@@ -189,7 +203,7 @@ function createJanMvpBot({
         console.error("JAN MVP error:", error.message);
       }
     } finally {
-      if (kind === "scanner") scannerBusy = false;
+      if (kind === "follow") followBusy = false;
       else monitorBusy = false;
     }
   }
@@ -199,20 +213,20 @@ function createJanMvpBot({
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("JAN MVP STARTED | Independent 5-slot paper simulation");
+    console.log("JAN MVP STARTED | Mirroring OG coin entries into independent slots");
     monitorInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
-    scannerInterval = timers.setInterval(() => tick("scanner", session), SCANNER_INTERVAL_MS);
+    followInterval = timers.setInterval(() => tick("follow", session), OG_FOLLOW_INTERVAL_MS);
     void tick("monitor", session);
-    void tick("scanner", session);
+    void tick("follow", session);
   }
 
   function stop() {
     if (!activeSession) return;
     activeSession.abort();
     activeSession = null;
-    timers.clearInterval(scannerInterval);
+    timers.clearInterval(followInterval);
     timers.clearInterval(monitorInterval);
-    scannerInterval = monitorInterval = null;
+    followInterval = monitorInterval = null;
     console.log("JAN MVP STOPPED");
   }
 

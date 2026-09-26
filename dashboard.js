@@ -472,8 +472,8 @@ th,td{
 <div class="card section">
   <h2>Slot Compounding Lab</h2>
   <p class="muted">
-    Independent live paper simulation. Each slot scans, opens, manages and closes its own simulated
-    positions. This account is completely separate from the original bot.
+    Independent paper simulation using the same coin entries as the OG bot. When the OG bot buys,
+    Jan mirrors that coin into the next available slot, then manages the slot independently.
   </p>
 
   <div class="controls" style="margin-bottom:16px">
