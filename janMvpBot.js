@@ -138,16 +138,16 @@ function createJanMvpBot({
       return result;
     };
 
-    if (profitPercent <= HARD_STOP_PERCENT) return void await exit("HARD STOP");
+    if (profitPercent <= HARD_STOP_PERCENT) { await exit("HARD STOP"); return; }
 
     const enoughActivity = totalTransactions >= MOMENTUM_EXIT_MIN_TRANSACTIONS;
     const sellPressure = enoughActivity && buyRatio < MOMENTUM_EXIT_BUY_RATIO;
     const momentumExitA = profitPercent <= MOMENTUM_EXIT_MIN_LOSS && momentum5m <= MOMENTUM_EXIT_5M && sellPressure;
     const momentumExitB = profitPercent <= MOMENTUM_EXIT_STRONG_LOSS && momentum5m <= MOMENTUM_EXIT_STRONG_5M;
-    if (momentumExitA || momentumExitB) return void await exit("MOMENTUM EXIT");
+    if (momentumExitA || momentumExitB) { await exit("MOMENTUM EXIT"); return; }
 
     const profitLockActive = !p.secondTakeProfitDone && highestProfitPercent >= PROFIT_LOCK_TRIGGER_PERCENT;
-    if (profitLockActive && profitPercent <= profitLockFloor) return void await exit("PROFIT LOCK");
+    if (profitLockActive && profitPercent <= profitLockFloor) { await exit("PROFIT LOCK"); return; }
 
     if (profitPercent >= TAKE_PROFIT_1_PERCENT && !p.firstTakeProfitDone) {
       return void trader.sell(slot.id, currentPrice, TAKE_PROFIT_1_SELL_PERCENT, {
@@ -162,7 +162,7 @@ function createJanMvpBot({
     }
 
     if (p.secondTakeProfitDone && dropFromHigh >= TRAILING_STOP_PERCENT) {
-      return void await exit("TRAILING STOP");
+      await exit("TRAILING STOP"); return;
     }
   }
 
