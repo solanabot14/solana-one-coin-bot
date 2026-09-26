@@ -37,6 +37,7 @@ function createInitialState(config = getConfig()) {
 		nextSlotIndex: 0,
 		tradesReplayed: 0,
 		processedTradeKeys: [],
+		executions: [],
 		slots: Array.from({ length: config.slotCount }, (_, index) => ({
 			id: index + 1,
 			startingValue: config.startingSlotValue,
@@ -76,6 +77,7 @@ function dashboardState(state) {
 		totalReturnPercent: startingCapital > 0 ? (totalCapital - startingCapital) / startingCapital * 100 : 0,
 		targets: [...state.targets],
 		tradesReplayed: state.tradesReplayed,
+		executions: [...(state.executions || [])].slice(-100).reverse(),
 		slots: state.slots.map(slot => {
 			const target = currentTarget(slot, state.targets);
 			const previousTarget = [...state.targets].reverse().find(t => slot.milestonesReached.includes(t)) || 0;
@@ -117,6 +119,7 @@ function createJanSlotEngine({
 		if (state) return state;
 		if (existed) {
 			state = validate(JSON.parse(io.readFileSync(dataFile, "utf8")));
+			if (!Array.isArray(state.executions)) state.executions = [];
 		} else {
 			state = createInitialState(config);
 		}
@@ -175,6 +178,19 @@ function createJanSlotEngine({
 		);
 		slot.milestonesReached.push(...newlyReached);
 		slot.milestonesReached.sort((a, b) => a - b);
+
+		next.executions = next.executions || [];
+		next.executions.push({
+			tradeKey: key,
+			slotId: slot.id,
+			symbol: trade.symbol || "-",
+			returnPercent,
+			balanceBefore: before,
+			balanceAfter: slot.balance,
+			milestonesReached: [...newlyReached],
+			executedAt: trade.exitTime || trade.entryTime || new Date().toISOString()
+		});
+		if (next.executions.length > 1000) next.executions = next.executions.slice(-1000);
 
 		next.processedTradeKeys.push(key);
 		if (next.processedTradeKeys.length > 10000) {
