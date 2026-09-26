@@ -500,7 +500,7 @@ th,td{
 </div>
 
 <div class="card section">
-  <h2>Five Independent Slots</h2>
+  <h2>Independent Slots</h2>
   <div style="overflow-x:auto">
     <table>
       <thead>
@@ -526,6 +526,28 @@ th,td{
 <div class="card section">
   <h2>Target Ladder</h2>
   <div id="slotTargets" class="grid"></div>
+</div>
+
+<div class="card section">
+  <h2>Slot Executions</h2>
+  <div style="overflow-x:auto">
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Slot</th>
+          <th>Coin</th>
+          <th>Return</th>
+          <th>Before</th>
+          <th>After</th>
+          <th>Milestone</th>
+        </tr>
+      </thead>
+      <tbody id="slotExecutions">
+        <tr><td colspan="7">Waiting for slot executions...</td></tr>
+      </tbody>
+    </table>
+  </div>
 </div>
 
 </div>
