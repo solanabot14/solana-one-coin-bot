@@ -30,7 +30,7 @@ test("V3.2 STRONG BUY requires the new entry floors", () => {
 	assert.notEqual(analyzeToken(strongCandidate({ buys5m: 54, sells5m: 46 })).signal, "STRONG BUY");
 });
 
-test("V3.2 paper trader compounds at 10 percent of current cash balance", t => {
+test("V3.3 paper trader compounds at 10 percent of current cash balance", t => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bot-v32-"));
 	t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 	const file = path.join(dir, "tradingData.json");
@@ -39,7 +39,7 @@ test("V3.2 paper trader compounds at 10 percent of current cash balance", t => {
 	const first = { ...strongCandidate(), signal: "STRONG BUY", score: 12 };
 	assert.equal(trader.buy(first).success, true);
 	assert.equal(trader.getPortfolio().position.amountInvested, 10);
-	assert.equal(trader.getPortfolio().position.strategyVersion, "V3.2");
+	assert.equal(trader.getPortfolio().position.strategyVersion, "V3.3");
 
 	trader.sell(2, 100);
 	assert.equal(trader.getPortfolio().cashBalance, 110);
