@@ -46,6 +46,41 @@ body{
   flex-wrap:wrap
 }
 
+.tabs{
+  display:flex;
+  gap:8px;
+  margin:18px 0;
+  flex-wrap:wrap
+}
+
+.tab-button{
+  background:#111722;
+  color:#8792a5;
+  border:1px solid #222b3a;
+}
+
+.tab-button.active{
+  background:#172033;
+  color:#fff;
+  border-color:#3a4964
+}
+
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+
+.progress{
+  height:9px;
+  background:#0b1018;
+  border-radius:8px;
+  overflow:hidden;
+  margin-top:8px
+}
+
+.progress-fill{
+  height:100%;
+  background:#4cff9a
+}
+
 .header{
   justify-content:space-between;
   margin-bottom:20px
@@ -233,6 +268,13 @@ th,td{
   Stopping pauses automatic exits and keeps your open position.
 </p>
 
+<div class="tabs" role="tablist" aria-label="Dashboard views">
+  <button class="tab-button active" id="botTab" type="button">Current Bot</button>
+  <button class="tab-button" id="slotTab" type="button">Slot Compounding Lab</button>
+</div>
+
+<div id="botPanel" class="tab-panel active">
+
 <div class="grid">
 
   <div class="card">
@@ -419,6 +461,72 @@ th,td{
 </table>
 
 </div>
+</div>
+
+</div>
+
+<div id="slotPanel" class="tab-panel">
+
+<div class="card section">
+  <h2>Slot Compounding Lab</h2>
+  <p class="muted">
+    Read-only simulation. It replays completed trades through 5 independent slots starting at $2 each.
+    Targets progress from $10 to $50, $100 and $150 per slot. This does not change the live paper bot.
+  </p>
+
+  <div class="grid">
+    <div class="metric">
+      <div class="metric-label">Lab Starting Capital</div>
+      <div class="metric-value" id="slotStarting">$10.00</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Simulated Slot Capital</div>
+      <div class="metric-value" id="slotTotal">$10.00</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Simulated P/L</div>
+      <div class="metric-value" id="slotPnl">$0.00</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Current Target / Slot</div>
+      <div class="metric-value" id="slotTarget">$10.00</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Trades Replayed</div>
+      <div class="metric-value" id="slotTrades">0</div>
+    </div>
+  </div>
+</div>
+
+<div class="card section">
+  <h2>Five Independent Slots</h2>
+  <div style="overflow-x:auto">
+    <table>
+      <thead>
+        <tr>
+          <th>Slot</th>
+          <th>Balance</th>
+          <th>Target</th>
+          <th>Progress</th>
+          <th>Trades</th>
+          <th>Wins</th>
+          <th>Losses</th>
+          <th>Last Coin</th>
+          <th>Last Return</th>
+        </tr>
+      </thead>
+      <tbody id="slotRows">
+        <tr><td colspan="9">Waiting for completed trades...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card section">
+  <h2>Target Ladder</h2>
+  <div id="slotTargets" class="grid"></div>
+</div>
+
 </div>
 
 </div>
