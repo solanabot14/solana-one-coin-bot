@@ -123,13 +123,13 @@ function renderSlotSimulation(d) {
 	$("slotTotal").textContent = money(sim.totalCapital);
 	$("slotPnl").textContent = money(sim.totalPnl);
 	$("slotPnl").className = "metric-value " + cls(sim.totalPnl);
-	$("slotTarget").textContent = money(sim.currentTarget);
+	$("slotTarget").textContent = (sim.targets || []).map(target => money(target)).join(" → ");
 	$("slotTrades").textContent = number(sim.tradesReplayed);
 
 	$("slotRows").innerHTML = (sim.slots || []).map(slot => `<tr>
 		<td><strong>Slot ${escapeHtml(slot.id)}</strong></td>
 		<td class="${cls(slot.balance - slot.startingValue)}">${money(slot.balance)}</td>
-		<td>${money(sim.currentTarget)}</td>
+		<td>${slot.currentTarget == null ? "COMPLETE" : money(slot.currentTarget)}</td>
 		<td style="min-width:160px">
 			${pct(slot.progressPercent)}
 			<div class="progress"><div class="progress-fill" style="width:${Math.max(0, Math.min(100, Number(slot.progressPercent) || 0))}%"></div></div>
@@ -141,12 +141,15 @@ function renderSlotSimulation(d) {
 		<td class="${cls(slot.lastReturnPercent)}">${pct(slot.lastReturnPercent)}</td>
 	</tr>`).join("") || `<tr><td colspan="9">Waiting for completed trades...</td></tr>`;
 
-	const completed = new Set(sim.completedTargets || []);
+	const progress = Array.isArray(sim.targetProgress) ? sim.targetProgress : [];
 	$("slotTargets").innerHTML = (sim.targets || []).map(target => {
-		const done = completed.has(target);
+		const row = progress.find(item => Number(item.target) === Number(target));
+		const reached = row?.reachedBy ?? 0;
+		const total = row?.totalSlots ?? sim.slotCount ?? 0;
 		return `<div class="metric">
-			<div class="metric-label">${done ? "Completed Target" : target === sim.currentTarget ? "Current Target" : "Future Target"}</div>
-			<div class="metric-value ${done ? "green" : ""}">${money(target)} / slot</div>
+			<div class="metric-label">Milestone Progress</div>
+			<div class="metric-value">${money(target)} / slot</div>
+			<div class="muted">${reached} of ${total} slots reached</div>
 		</div>`;
 	}).join("");
 }
