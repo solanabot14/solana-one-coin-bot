@@ -146,7 +146,7 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 			highestPrice: price,
 			entryTime: new Date().toISOString(),
 
-			strategyVersion: "V3.3",
+			strategyVersion: "V3.4",
 
 			entryScore: Number(coin.score) || 0,
 			entrySignal: coin.signal || null,
