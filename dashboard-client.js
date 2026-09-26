@@ -152,6 +152,23 @@ function renderSlotSimulation(d) {
 			<div class="muted">${reached} of ${total} slots reached</div>
 		</div>`;
 	}).join("");
+
+	const executions = Array.isArray(sim.executions) ? sim.executions : [];
+	$("slotExecutions").innerHTML = executions.map(execution => {
+		const milestones = Array.isArray(execution.milestonesReached) && execution.milestonesReached.length
+			? execution.milestonesReached.map(money).join(", ")
+			: "—";
+		const time = execution.executedAt ? new Date(execution.executedAt).toLocaleString() : "—";
+		return `<tr>
+			<td>${escapeHtml(time)}</td>
+			<td>Slot ${escapeHtml(execution.slotId)}</td>
+			<td><strong>${escapeHtml(execution.symbol)}</strong></td>
+			<td class="${cls(execution.returnPercent)}">${pct(execution.returnPercent)}</td>
+			<td>${money(execution.balanceBefore)}</td>
+			<td class="${cls(execution.balanceAfter - execution.balanceBefore)}">${money(execution.balanceAfter)}</td>
+			<td>${escapeHtml(milestones)}</td>
+		</tr>`;
+	}).join("") || `<tr><td colspan="7">Waiting for slot executions...</td></tr>`;
 }
 
 function showTab(name) {
