@@ -387,7 +387,7 @@ th,td{
 <h2>Discovery Mix</h2>
 
 <p class="muted">
-  Read-only view of the latest DexScreener discovery scan. Boosted tokens remain eligible, but they are now one source among broader organic discovery feeds.
+  Latest discovery scan across DexScreener and Birdeye sources. All tokens are deduplicated before validation.
 </p>
 
 <div class="grid">
@@ -448,7 +448,7 @@ th,td{
 
 <p class="muted">
   Latest OG scan only. Counts can overlap because one token may fail more than one STRONG BUY confirmation.
-  This is read-only telemetry and does not change trading decisions.
+  Volume and Smart Money fields are observational. Post-Pump Guard is an active late-entry protection.
 </p>
 
 <div class="grid">
