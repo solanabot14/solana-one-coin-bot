@@ -492,7 +492,7 @@ async function buildDashboardData(data, getTokenData) {
 
 	const stats = summarizeTrades(completedTrades, data.startingBalance);
 	const cleanV35Trades = completedTrades.filter(trade => trade.strategyVersion === "V3.5");
-	const v35Baseline = data.strategyDatasets?.V3.5 || null;
+	const v35Baseline = data.strategyDatasets?.["V3.5"] || null;
 	const v35Research = {
 		strategyVersion: "V3.5",
 		startedAt: v35Baseline?.startedAt || null,
