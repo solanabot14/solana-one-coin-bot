@@ -174,6 +174,107 @@ function buildSlotSimulation(completedTrades, slotCount = 5, startingSlotValue =
 	};
 }
 
+
+const DIVERSITY_WINDOW_MS = 24 * 60 * 60 * 1000;
+const DIVERSITY_RUNNER_GAIN_PERCENT = 30;
+const DIVERSITY_MAX_LOSS_ENTRIES = 2;
+
+function buildTokenDiversityView(completedTrades = [], openPosition = null, now = Date.now()) {
+	const cutoff = now - DIVERSITY_WINDOW_MS;
+	const rows = new Map();
+
+	for (const trade of completedTrades) {
+		const entryMs = Date.parse(trade.entryTime);
+		const exitMs = Date.parse(trade.exitTime);
+		const recent = (Number.isFinite(entryMs) && entryMs >= cutoff) ||
+			(Number.isFinite(exitMs) && exitMs >= cutoff);
+		if (!recent || !trade.tokenAddress) continue;
+
+		if (!rows.has(trade.tokenAddress)) {
+			rows.set(trade.tokenAddress, {
+				tokenAddress: trade.tokenAddress,
+				symbol: trade.symbol || "-",
+				entries24h: 0,
+				wins24h: 0,
+				losses24h: 0,
+				maxGainPercent: null,
+				lastExitAt: null,
+				lastPnl: null
+			});
+		}
+
+		const row = rows.get(trade.tokenAddress);
+		if (Number.isFinite(entryMs) && entryMs >= cutoff) row.entries24h++;
+		if (Number.isFinite(exitMs) && exitMs >= cutoff) {
+			row.lastExitAt = Math.max(row.lastExitAt || 0, exitMs);
+			row.lastPnl = Number(trade.pnl);
+			if (Number(trade.pnl) > 0) row.wins24h++;
+			else if (Number(trade.pnl) < 0) row.losses24h++;
+		}
+		if (Number.isFinite(Number(trade.maxGainPercent))) {
+			row.maxGainPercent = row.maxGainPercent == null
+				? Number(trade.maxGainPercent)
+				: Math.max(row.maxGainPercent, Number(trade.maxGainPercent));
+		}
+	}
+
+	if (openPosition?.tokenAddress) {
+		if (!rows.has(openPosition.tokenAddress)) {
+			rows.set(openPosition.tokenAddress, {
+				tokenAddress: openPosition.tokenAddress,
+				symbol: openPosition.symbol || "-",
+				entries24h: 1,
+				wins24h: 0,
+				losses24h: 0,
+				maxGainPercent: null,
+				lastExitAt: null,
+				lastPnl: null
+			});
+		}
+		const row = rows.get(openPosition.tokenAddress);
+		row.openNow = true;
+		row.symbol = openPosition.symbol || row.symbol;
+	}
+
+	const result = [...rows.values()].map(row => {
+		let status;
+		let detail;
+		let availableAt = null;
+
+		if (row.openNow) {
+			status = "OPEN NOW";
+			detail = "Currently held by OG bot";
+		} else if (Number(row.maxGainPercent) >= DIVERSITY_RUNNER_GAIN_PERCENT) {
+			status = "RUNNER WATCH";
+			detail = "Reentry only on exceptional confirmation";
+		} else if (row.wins24h > 0) {
+			status = "RESTING 24H";
+			availableAt = row.lastExitAt ? row.lastExitAt + DIVERSITY_WINDOW_MS : null;
+			detail = "Normal winner; new tokens get priority";
+		} else if (row.entries24h >= DIVERSITY_MAX_LOSS_ENTRIES) {
+			status = "REENTRY LIMIT";
+			detail = "Already used two entries in the 24h window";
+		} else if (row.losses24h > 0 || row.entries24h > 0) {
+			status = "SECOND CHANCE";
+			detail = "Can reenter if it becomes STRONG BUY again";
+		} else {
+			status = "AVAILABLE";
+			detail = "No active diversity restriction";
+		}
+
+		return { ...row, status, detail, availableAt };
+	}).sort((a, b) =>
+		Number(Boolean(b.openNow)) - Number(Boolean(a.openNow)) ||
+		Number(b.lastExitAt || 0) - Number(a.lastExitAt || 0)
+	);
+
+	return {
+		windowHours: 24,
+		runnerThresholdPercent: DIVERSITY_RUNNER_GAIN_PERCENT,
+		rows: result
+	};
+}
+
 function average(values) {
 	const valid = values.filter(Number.isFinite);
 	return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
@@ -254,6 +355,7 @@ async function buildDashboardData(data, getTokenData) {
 		...data, live, equity, totalPnl: equity === null ? null : equity - data.startingBalance,
 		priceUnavailable: !!data.position && !live, completedTrades, scoreStats: buildScoreStats(completedTrades), exitReasonCounts,
 		slotSimulation: buildSlotSimulation(completedTrades),
+		tokenDiversity: buildTokenDiversityView(completedTrades, data.position),
 		stats: {
 			completedTrades: completedTrades.length, winners, losers,
 			winRate: completedTrades.length ? winners / completedTrades.length * 100 : 0,
@@ -265,4 +367,4 @@ async function buildDashboardData(data, getTokenData) {
 	};
 }
 
-module.exports = { groupCompletedTrades, buildDashboardData, buildSlotSimulation };
+module.exports = { groupCompletedTrades, buildDashboardData, buildSlotSimulation, buildTokenDiversityView };
