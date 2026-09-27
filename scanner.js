@@ -34,6 +34,11 @@ const BIRDEYE_TRENDING_URL = "https://public-api.birdeye.so/defi/token_trending"
 const BIRDEYE_TRENDING_LIMIT = 20;
 const SMART_MONEY_URL = "https://public-api.birdeye.so/smart-money/v1/token/list";
 const BIRDEYE_OHLCV_URL = "https://public-api.birdeye.so/defi/v3/ohlcv";
+const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
+const TOKEN_SECURITY_CACHE_MS = Math.max(
+	5 * 60 * 1000,
+	(Number.parseInt(process.env.TOKEN_SECURITY_CACHE_MINUTES || "30", 10) || 30) * 60 * 1000
+);
 const SMART_MONEY_LIMIT = 20;
 const SMART_MONEY_REFRESH_MS = Math.max(
 	60 * 60 * 1000,
@@ -104,6 +109,7 @@ let lastDiscoveryTelemetry = {
 		marketDataIntegrity: 0,
 		preDiscoveryPump: 0,
 		postPumpRebound: 0,
+		tokenSecurity: 0,
 		nearEntries: []
 	}
 };
@@ -115,6 +121,7 @@ let lastCandidateCache = {
 
 const rollingPriceHistory = new Map();
 const birdeyeOhlcvCache = new Map();
+const tokenSecurityCache = new Map();
 let birdeyeOhlcvRequestChain = Promise.resolve();
 let birdeyeOhlcvLastRequestAt = 0;
 let birdeyeOhlcvUsage = {
@@ -752,6 +759,90 @@ async function mapWithConcurrency(items, concurrency, worker, signal) {
 }
 
 
+
+async function tokenSecuritySnapshot(tokenAddress, signal) {
+	const now = Date.now();
+	const cached = tokenSecurityCache.get(tokenAddress);
+	if (cached && now - cached.updatedAt < TOKEN_SECURITY_CACHE_MS) {
+		return { ...structuredClone(cached.snapshot), cached: true };
+	}
+
+	const base = {
+		source: "Solana RPC getAccountInfo",
+		status: "NOT_CHECKED",
+		tokenAddress,
+		mintAuthority: null,
+		freezeAuthority: null,
+		mintable: null,
+		freezable: null,
+		blocked: false,
+		reasons: [],
+		cached: false
+	};
+
+	try {
+		const response = await axios.post(
+			SOLANA_RPC_URL,
+			{
+				jsonrpc: "2.0",
+				id: 1,
+				method: "getAccountInfo",
+				params: [
+					tokenAddress,
+					{ encoding: "jsonParsed", commitment: "confirmed" }
+				]
+			},
+			{ timeout: 10000, signal }
+		);
+
+		if (response.data?.error) {
+			throw new Error(response.data.error.message || "Solana RPC returned an error");
+		}
+
+		const account = response.data?.result?.value;
+		const parsed = account?.data?.parsed;
+		const info = parsed?.info;
+
+		if (!account || !info || parsed?.type !== "mint") {
+			const snapshot = {
+				...base,
+				status: account ? "UNPARSEABLE_MINT" : "ACCOUNT_NOT_FOUND"
+			};
+			tokenSecurityCache.set(tokenAddress, { updatedAt: now, snapshot });
+			return snapshot;
+		}
+
+		const mintAuthority = info.mintAuthority ?? null;
+		const freezeAuthority = info.freezeAuthority ?? null;
+		const mintable = mintAuthority !== null;
+		const freezable = freezeAuthority !== null;
+		const reasons = [];
+		if (mintable) reasons.push("MINT_AUTHORITY_ACTIVE");
+		if (freezable) reasons.push("FREEZE_AUTHORITY_ACTIVE");
+
+		const snapshot = {
+			...base,
+			status: "OK",
+			mintAuthority,
+			freezeAuthority,
+			mintable,
+			freezable,
+			blocked: reasons.length > 0,
+			reasons
+		};
+		tokenSecurityCache.set(tokenAddress, { updatedAt: now, snapshot });
+		return snapshot;
+	} catch (error) {
+		console.log(
+			"TOKEN SECURITY CHECK UNAVAILABLE | " + tokenAddress + " | " + error.message
+		);
+		return {
+			...base,
+			status: String(error?.response?.status || "ERROR")
+		};
+	}
+}
+
 function marketDataIntegritySnapshot(data, expectedTokenAddress = null) {
 	const price = Number(data?.priceUsd);
 	const liquidity = Number(data?.liquidityUsd);
@@ -840,6 +931,7 @@ function entryDiagnostics(data, analysis) {
 	if (reasons.some(reason => reason.includes("MARKET DATA INTEGRITY"))) blockers.push("MARKET_DATA_INTEGRITY");
 	if (reasons.some(reason => reason.includes("PRE-DISCOVERY PUMP"))) blockers.push("PRE_DISCOVERY_PUMP");
 	if (reasons.some(reason => reason.includes("POST-PUMP REBOUND"))) blockers.push("POST_PUMP_REBOUND");
+	if (reasons.some(reason => reason.includes("TOKEN SECURITY"))) blockers.push("TOKEN_SECURITY");
 
 	if (!blockers.length && analysis?.signal !== "STRONG BUY") {
 		if (Number(analysis?.score) < 8) blockers.push("SCORE_BELOW_8");
@@ -876,6 +968,7 @@ function buildRejectionTelemetry(candidates = []) {
 		marketDataIntegrity: 0,
 		preDiscoveryPump: 0,
 		postPumpRebound: 0,
+		tokenSecurity: 0,
 		nearEntries: []
 	};
 
@@ -897,6 +990,7 @@ function buildRejectionTelemetry(candidates = []) {
 		if (blockers.includes("MARKET_DATA_INTEGRITY")) telemetry.marketDataIntegrity++;
 		if (blockers.includes("PRE_DISCOVERY_PUMP")) telemetry.preDiscoveryPump++;
 		if (blockers.includes("POST_PUMP_REBOUND")) telemetry.postPumpRebound++;
+		if (blockers.includes("TOKEN_SECURITY")) telemetry.tokenSecurity++;
 
 		if (Number(candidate.score) >= 6 || candidate.signal === "BUY") {
 			telemetry.nearEntries.push({
@@ -913,6 +1007,7 @@ function buildRejectionTelemetry(candidates = []) {
 				postPumpExtensionPercent: Number(candidate.postPump?.extensionPercent) || 0,
 				postPumpObservations: Number(candidate.postPump?.observations) || 0,
 				preDiscoveryPump: candidate.preDiscoveryPump ? structuredClone(candidate.preDiscoveryPump) : null,
+				tokenSecurity: candidate.tokenSecurity ? structuredClone(candidate.tokenSecurity) : null,
 				smartMoney: candidate.smartMoney ? { ...candidate.smartMoney } : null,
 				discoverySources: [...(candidate.discoverySources || [])]
 			});
@@ -1072,6 +1167,37 @@ async function analyzeDiscoveredToken(token, signal) {
 		}
 	}
 
+	let tokenSecurity = {
+		source: "Solana RPC getAccountInfo",
+		status: "NOT_CHECKED",
+		tokenAddress: token.tokenAddress,
+		mintAuthority: null,
+		freezeAuthority: null,
+		mintable: null,
+		freezable: null,
+		blocked: false,
+		reasons: [],
+		cached: false
+	};
+
+	if (analysis.signal === "STRONG BUY") {
+		tokenSecurity = await tokenSecuritySnapshot(token.tokenAddress, signal);
+		if (tokenSecurity.blocked) {
+			console.log(
+				"TOKEN SECURITY BLOCK | " + (data.symbol || token.tokenAddress) +
+				" | " + tokenSecurity.reasons.join(", ")
+			);
+			analysis = {
+				...analysis,
+				signal: "AVOID",
+				reasons: [
+					...(analysis.reasons || []),
+					"TOKEN SECURITY: " + tokenSecurity.reasons.join(", ")
+				]
+			};
+		}
+	}
+
 	const diagnostics = entryDiagnostics(data, analysis);
 
 	console.log(
@@ -1091,6 +1217,7 @@ async function analyzeDiscoveredToken(token, signal) {
 		currentActivity,
 		postPump,
 		preDiscoveryPump,
+		tokenSecurity,
 		marketDataIntegrity,
 		smartMoney: null,
 		birdeyeRank: Number.isFinite(Number(token.birdeyeRank)) ? Number(token.birdeyeRank) : null
@@ -1190,6 +1317,12 @@ async function discoverCandidates({ signal } = {}) {
 				},
 				usage: { ...birdeyeOhlcvUsage }
 			},
+			tokenSecurityGate: {
+				source: "Solana RPC getAccountInfo",
+				cacheMinutes: Math.round(TOKEN_SECURITY_CACHE_MS / 60000),
+				blockedCandidates: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("TOKEN_SECURITY")).length,
+				failMode: "OPEN_ON_RPC_ERROR"
+			},
 			marketDataIntegrityGate: {
 				maxMcapFdvRatio: MARKET_DATA_MAX_MCAP_FDV_RATIO,
 				maxLiquidityFdvRatio: MARKET_DATA_MAX_LIQUIDITY_FDV_RATIO,
@@ -1234,6 +1367,7 @@ module.exports = {
 	buildRejectionTelemetry,
 	entryQualitySnapshot,
 	marketDataIntegritySnapshot,
+	tokenSecuritySnapshot,
 	preDiscoveryPumpSnapshot,
 	failedStructureSnapshot,
 	birdeyeOhlcvItems,
