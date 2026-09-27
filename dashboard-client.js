@@ -228,24 +228,24 @@ function renderScoreStats(d) {
 		<td class="${cls(row.averageMaxGain)}">${pct(row.averageMaxGain)}</td><td class="${cls(row.netPnl)}">${money(row.netPnl)}</td></tr>`).join("") || `<tr><td colspan="8">No completed trades yet.</td></tr>`;
 }
 
-function renderV35Research(d) {
-	const research = d.v35Research || {};
+function renderCurrentResearch(d) {
+	const research = d.v36Research || {};
 	const s = research.stats || {};
 	const values = {
-		v35Trades: s.completedTrades || 0,
-		v35WinRate: pct(s.winRate || 0),
-		v35Net: money(s.netPnl || 0),
-		v35Factor: s.profitFactorLabel || "—",
-		v35Expectancy: pct(s.expectancyPercent),
-		v35Payoff: s.payoffRatio == null ? "—" : Number(s.payoffRatio).toFixed(2) + "x",
-		v35Drawdown: pct(s.maxDrawdownPercent),
-		v35LossStreak: number(s.maxConsecutiveLosses || 0),
-		v35Started: research.startedAt ? new Date(research.startedAt).toLocaleString() : "Waiting for first V3.5 trade",
-		v35StartBalance: money(research.startingBalance)
+		v36Trades: s.completedTrades || 0,
+		v36WinRate: pct(s.winRate || 0),
+		v36Net: money(s.netPnl || 0),
+		v36Factor: s.profitFactorLabel || "—",
+		v36Expectancy: pct(s.expectancyPercent),
+		v36Payoff: s.payoffRatio == null ? "—" : Number(s.payoffRatio).toFixed(2) + "x",
+		v36Drawdown: pct(s.maxDrawdownPercent),
+		v36LossStreak: number(s.maxConsecutiveLosses || 0),
+		v36Started: research.startedAt ? new Date(research.startedAt).toLocaleString() : "Waiting for first V3.6 trade",
+		v36StartBalance: money(research.startingBalance)
 	};
 	for (const [id, value] of Object.entries(values)) $(id).textContent = value;
-	$("v35Net").className = "metric-value " + cls(s.netPnl);
-	$("v35Expectancy").className = "metric-value " + cls(s.expectancyPercent);
+	$("v36Net").className = "metric-value " + cls(s.netPnl);
+	$("v36Expectancy").className = "metric-value " + cls(s.expectancyPercent);
 
 	const versionRows = Array.isArray(d.strategyVersionStats) ? d.strategyVersionStats : [];
 	$("strategyVersionStats").innerHTML = versionRows.map(row => `<tr>
@@ -255,18 +255,28 @@ function renderV35Research(d) {
 	</tr>`).join("") || `<tr><td colspan="6">No completed strategy data yet.</td></tr>`;
 
 	const sourceRows = Array.isArray(research.sourceStats) ? research.sourceStats : [];
-	$("v35SourceStats").innerHTML = sourceRows.map(row => `<tr>
+	$("v36SourceStats").innerHTML = sourceRows.map(row => `<tr>
 		<td><strong>${escapeHtml(row.source)}</strong></td><td>${number(row.trades)}</td><td>${pct(row.winRate)}</td>
 		<td class="${cls(row.expectancyPercent)}">${pct(row.expectancyPercent)}</td><td>${escapeHtml(row.profitFactorLabel || "—")}</td>
 		<td class="${cls(row.netPnl)}">${money(row.netPnl)}</td>
-	</tr>`).join("") || `<tr><td colspan="6">Waiting for V3.5 trades.</td></tr>`;
+	</tr>`).join("") || `<tr><td colspan="6">Waiting for V3.6 trades.</td></tr>`;
 
 	const rankRows = Array.isArray(research.birdeyeRankStats) ? research.birdeyeRankStats : [];
-	$("v35RankStats").innerHTML = rankRows.map(row => `<tr>
+	$("v36RankStats").innerHTML = rankRows.map(row => `<tr>
 		<td><strong>${escapeHtml(row.rank)}</strong></td><td>${number(row.trades)}</td><td>${pct(row.winRate)}</td>
 		<td class="${cls(row.expectancyPercent)}">${pct(row.expectancyPercent)}</td><td>${escapeHtml(row.profitFactorLabel || "—")}</td>
 		<td class="${cls(row.netPnl)}">${money(row.netPnl)}</td>
-	</tr>`).join("") || `<tr><td colspan="6">Waiting for Birdeye-ranked V3.5 trades.</td></tr>`;
+	</tr>`).join("") || `<tr><td colspan="6">Waiting for Birdeye-ranked V3.6 trades.</td></tr>`;
+
+	const archived = d.v35Research?.stats || {};
+	$("v35ArchiveStats").innerHTML = `<tr>
+		<td><strong>V3.5 Clean Research</strong></td>
+		<td>${number(archived.completedTrades || 0)}</td>
+		<td>${pct(archived.winRate || 0)}</td>
+		<td class="${cls(archived.expectancyPercent)}">${pct(archived.expectancyPercent)}</td>
+		<td>${escapeHtml(archived.profitFactorLabel || "—")}</td>
+		<td class="${cls(archived.netPnl)}">${money(archived.netPnl || 0)}</td>
+	</tr>`;
 }
 
 function renderExitReasons(d) {
@@ -370,7 +380,7 @@ function renderData(d) {
 	for (const [id, value] of Object.entries(values)) $(id).textContent = value;
 	$("pnl").className = "value " + cls(d.totalPnl);
 	$("net").className = "metric-value " + cls(s.netPnl);
-	renderLiveTrade(d); renderV35Research(d); renderDiscoveryTelemetry(d); renderRejectionTelemetry(d); renderTokenDiversity(d); renderScoreStats(d); renderExitReasons(d); renderHistory(d); renderSlotSimulation(d);
+	renderLiveTrade(d); renderCurrentResearch(d); renderDiscoveryTelemetry(d); renderRejectionTelemetry(d); renderTokenDiversity(d); renderScoreStats(d); renderExitReasons(d); renderHistory(d); renderSlotSimulation(d);
 }
 
 async function refreshStatus() {
