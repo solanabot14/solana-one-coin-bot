@@ -50,6 +50,7 @@ function initialState(config = getConfig()) {
 }
 
 function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = getConfig() } = {}) {
+  config = { ...getConfig(), ...config };
   let state = null;
 
   function validate(data) {
