@@ -188,7 +188,7 @@ function createJanMvpBot({
     const position = slotSnapshot.position;
     if (!position) return;
     const expectedPosition = trader.positionKey(position);
-    const fresh = await getTokenData(position.tokenAddress, { signal: session.signal });
+    const fresh = await getTokenData(position.tokenAddress, { signal: session.signal, pairAddress: position.pairAddress || undefined });
     if (!isActive(session) || !fresh) return;
 
     const latestSlot = trader.getState().slots.find(s => s.id === slotSnapshot.id);

@@ -315,7 +315,7 @@ async function buildDashboardData(data, getTokenData) {
 	const completedTrades = groupCompletedTrades(data.history, data.position);
 	let live = null;
 	if (data.position) {
-		const fresh = await getTokenData(data.position.tokenAddress);
+		const fresh = await getTokenData(data.position.tokenAddress, { pairAddress: data.position.pairAddress || undefined });
 		const currentPrice = Number(fresh?.priceUsd);
 		if (Number.isFinite(currentPrice) && currentPrice > 0) {
 			const p = data.position;

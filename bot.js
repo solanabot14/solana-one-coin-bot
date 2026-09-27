@@ -288,10 +288,10 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     let position = portfolio.position;
     const expectedPosition = positionKey(position);
     const tokenAddress = position.tokenAddress;
-    const freshData = await getTokenData(tokenAddress, { signal: session.signal });
+    const freshData = await getTokenData(tokenAddress, { signal: session.signal, pairAddress: position.pairAddress || undefined });
     if (!isActive(session) || positionKey(getPortfolio().position) !== expectedPosition) return;
     if (!freshData) {
-      console.log(`POSITION DATA UNAVAILABLE | ${position.symbol}`);
+      console.log(`POSITION DATA UNAVAILABLE | ${position.symbol} | Pair lock: ${position.pairAddress || "legacy/unlocked"}`);
       return;
     }
 
