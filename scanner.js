@@ -33,7 +33,7 @@ const TRENDING_TOTAL_TOKEN_LIMIT = 8;
 const BIRDEYE_TRENDING_URL = "https://public-api.birdeye.so/defi/token_trending";
 const BIRDEYE_TRENDING_LIMIT = 20;
 const SMART_MONEY_URL = "https://public-api.birdeye.so/smart-money/v1/token/list";
-const BIRDEYE_OHLCV_URL = "https://public-api.birdeye.so/defi/ohlcv";
+const BIRDEYE_OHLCV_URL = "https://public-api.birdeye.so/defi/v3/ohlcv";
 const SMART_MONEY_LIMIT = 20;
 const SMART_MONEY_REFRESH_MS = Math.max(
 	60 * 60 * 1000,
@@ -57,7 +57,7 @@ const PRE_ENTRY_PUMP_MAX_5M_PERCENT = Number.parseFloat(process.env.PRE_ENTRY_PU
 const PRE_ENTRY_PUMP_MAX_RETRACE_PERCENT = Number.parseFloat(process.env.PRE_ENTRY_PUMP_MAX_RETRACE_PERCENT || "6") || 6;
 const BIRDEYE_OHLCV_MAX_REQUESTS_PER_DAY = Math.max(
 	10,
-	Number.parseInt(process.env.BIRDEYE_OHLCV_MAX_REQUESTS_PER_DAY || "120", 10) || 120
+	Number.parseInt(process.env.BIRDEYE_OHLCV_MAX_REQUESTS_PER_DAY || "60", 10) || 60
 );
 const MARKET_DATA_MAX_MCAP_FDV_RATIO = Math.max(
 	10,
@@ -327,7 +327,12 @@ function preDiscoveryPumpSnapshot(candles = [], currentPrice, current5mChange, n
 
 async function rateLimitedBirdeyeOhlcvRequest(task) {
 	const run = birdeyeOhlcvRequestChain.then(async () => {
-		const waitMs = Math.max(0, 1100 - (Date.now() - birdeyeOhlcvLastRequestAt));
+		const lastBirdeyeRequestAt = Math.max(
+			birdeyeOhlcvLastRequestAt,
+			Number(birdeyeTrendingCache.updatedAt) || 0,
+			Number(smartMoneyCache.updatedAt) || 0
+		);
+		const waitMs = Math.max(0, 1100 - (Date.now() - lastBirdeyeRequestAt));
 		if (waitMs) await new Promise(resolve => setTimeout(resolve, waitMs));
 		birdeyeOhlcvLastRequestAt = Date.now();
 		return task();
@@ -369,8 +374,11 @@ async function fetchBirdeyeOhlcvCandles(tokenAddress, signal) {
 				params: {
 					address: tokenAddress,
 					type: "1m",
+					currency: "usd",
 					time_from: nowSeconds - 35 * 60,
-					time_to: nowSeconds
+					time_to: nowSeconds,
+					mode: "range",
+					padding: false
 				},
 				headers: { Accept: "application/json", "X-API-KEY": apiKey, "x-chain": "solana" }
 			});
@@ -492,9 +500,13 @@ async function refreshSmartMoney(signal) {
 	}
 
 	try {
-		const sinceTrendingRefresh = Date.now() - birdeyeTrendingCache.updatedAt;
-		if (birdeyeTrendingCache.updatedAt && sinceTrendingRefresh >= 0 && sinceTrendingRefresh < 1100) {
-			await new Promise(resolve => setTimeout(resolve, 1100 - sinceTrendingRefresh));
+		const lastBirdeyeRequestAt = Math.max(
+			Number(birdeyeTrendingCache.updatedAt) || 0,
+			Number(birdeyeOhlcvLastRequestAt) || 0
+		);
+		const sinceLastBirdeyeRequest = Date.now() - lastBirdeyeRequestAt;
+		if (lastBirdeyeRequestAt && sinceLastBirdeyeRequest >= 0 && sinceLastBirdeyeRequest < 1100) {
+			await new Promise(resolve => setTimeout(resolve, 1100 - sinceLastBirdeyeRequest));
 			if (signal?.aborted) return smartMoneyCache;
 		}
 
