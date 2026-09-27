@@ -30,7 +30,8 @@ function initialState(config = getConfig()) {
     mode: "JAN_MVP_LIVE_PAPER",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    targets: [...config.targets],
+    targets: [config.splitThreshold, config.postSplitTarget],
+    initialCapital: config.slotCount * config.startingSlotValue,
     slots: Array.from({ length: config.slotCount }, (_, i) => ({
       id: i + 1,
       startingValue: config.startingSlotValue,
@@ -66,6 +67,12 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
     if (io.existsSync(dataFile)) state = validate(JSON.parse(io.readFileSync(dataFile, "utf8")));
     else state = initialState(config);
 
+    state.targets = [config.splitThreshold, config.postSplitTarget];
+    if (!Number.isFinite(Number(state.initialCapital)) || Number(state.initialCapital) <= 0) {
+      const rootSlots = state.slots.filter(slot => slot.parentSlotId == null);
+      state.initialCapital = rootSlots.reduce((sum, slot) => sum + Number(slot.startingValue || 0), 0) ||
+        config.slotCount * config.startingSlotValue;
+    }
     for (const slot of state.slots) {
       if (typeof slot.splitDone !== "boolean") slot.splitDone = false;
       if (slot.parentSlotId === undefined) slot.parentSlotId = null;
@@ -285,7 +292,7 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
     const data = structuredClone(load());
     let totalEquity = 0;
     for (const slot of data.slots) totalEquity += Number(slot.cashBalance || 0) + Number(slot.position?.amountInvested || 0);
-    const startingCapital = data.slots.reduce((sum,s)=>sum+Number(s.startingValue||0),0);
+    const startingCapital = Number(data.initialCapital) || config.slotCount * config.startingSlotValue;
     return {
       mode:data.mode,
       targets:[config.splitThreshold, config.postSplitTarget],
