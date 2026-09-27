@@ -554,6 +554,47 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 
 		commit(next);
 
+		if (percentToSell === 100) {
+			const highest = Number(p.highestPrice || p.entryPrice);
+			const entry = Number(p.entryPrice);
+			const audit = {
+				event: "TRADE_AUDIT_CLOSED",
+				mode: "OG",
+				positionId: p.id,
+				symbol: p.symbol,
+				strategyVersion: p.strategyVersion || null,
+				riskManagementVersion: p.riskManagementVersion || null,
+				entryTime: p.entryTime,
+				exitTime: trade.exitTime,
+				entryPrice: entry,
+				exitPrice: currentPrice,
+				highestPrice: highest,
+				maxGainPercent: entry > 0 ? (highest - entry) / entry * 100 : null,
+				exitPnlPercent: trade.pnlPercent,
+				exitReason: trade.reason,
+				entryScore: p.entryScore ?? null,
+				entrySignal: p.entrySignal || null,
+				entry5mPercent: p.entryPriceChange5m ?? null,
+				entry1hPercent: p.entryPriceChange1h ?? null,
+				entry24hPercent: p.entryPriceChange24h ?? null,
+				entryLiquidityUsd: p.entryLiquidityUsd ?? null,
+				entryVolume5m: p.entryVolume5m ?? null,
+				entryVolume1h: p.entryVolume1h ?? null,
+				entryVolume24h: p.entryVolume24h ?? null,
+				entryVolumeLiquidity5mPercent: p.entryCurrentActivity?.volumeLiquidity5mPercent ?? null,
+				entryTransactions5m: p.entryTransactions5m ?? null,
+				entryBuyRatio: p.entryBuyRatio ?? p.entryBuyRatio5m ?? null,
+				discoverySources: Array.isArray(p.entryDiscoverySources) ? [...p.entryDiscoverySources] : [],
+				birdeyeRank: p.entryBirdeyeRank ?? null,
+				smartMoney: p.entrySmartMoney ? structuredClone(p.entrySmartMoney) : null,
+				postPump: p.entryPostPump ? structuredClone(p.entryPostPump) : null,
+				preDiscoveryPump: p.entryPreDiscoveryPump ? structuredClone(p.entryPreDiscoveryPump) : null,
+				marketDataIntegrity: p.entryMarketDataIntegrity ? structuredClone(p.entryMarketDataIntegrity) : null,
+				entryReasons: Array.isArray(p.entryReasons) ? [...p.entryReasons] : []
+			};
+			console.log("TRADE_AUDIT " + JSON.stringify(audit));
+		}
+
 		return {
 			success: true,
 			trade: structuredClone(trade)
