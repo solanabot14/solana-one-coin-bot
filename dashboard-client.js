@@ -8,6 +8,12 @@ const entryRatio = trade => {
 	return pct(value == null ? null : Number(value) * 100);
 };
 const number = value => value == null ? "—" : Number(value).toLocaleString();
+const smartMoneyLabel = value => {
+	if (!value) return "—";
+	const flow = Number(value.netFlow) || 0;
+	const traders = Number(value.smartTraders) || 0;
+	return (flow >= 0 ? "+" : "") + money(flow) + " / " + traders + " wallets";
+};
 const cls = value => value == null ? "" : Number(value) >= 0 ? "green" : "red";
 const escapeHtml = value => String(value ?? "-").replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[char]);
 
@@ -72,6 +78,7 @@ function renderLiveTrade(d) {
 			<div class="metric"><div class="metric-label">Current Buy Ratio</div><div class="metric-value">${pct(Number(live.buyRatio5m || 0) * 100)}</div></div>
 			<div class="metric"><div class="metric-label">5m Buys / Sells</div><div class="metric-value">${number(live.buys5m)} / ${number(live.sells5m)}</div></div>
 			<div class="metric"><div class="metric-label">Liquidity</div><div class="metric-value">${money(live.liquidityUsd)}</div></div>
+			<div class="metric"><div class="metric-label">Current 5m Volume</div><div class="metric-value">${money(live.volume5m)}</div></div>
 			<div class="metric"><div class="metric-label">24h Volume</div><div class="metric-value">${money(live.volume24h)}</div></div>
 			<div class="metric"><div class="metric-label">TP1</div><div class="metric-value">${tp1}</div></div>
 			<div class="metric"><div class="metric-label">TP2</div><div class="metric-value">${tp2}</div></div>
@@ -83,7 +90,11 @@ function renderLiveTrade(d) {
 			Entry Buy Ratio: ${entryRatio(position)} &nbsp; | &nbsp;
 			Transactions: ${number(position.entryTransactions5m)}<br>
 			Entry Liquidity: ${money(position.entryLiquidityUsd)} &nbsp; | &nbsp;
-			Entry Volume: ${money(position.entryVolume24h)}<br><br>
+			Entry 5m Volume: ${money(position.entryVolume5m)} &nbsp; | &nbsp;
+			Entry 24h Volume: ${money(position.entryVolume24h)}<br>
+			15m Observed Extension: ${pct(position.entryPostPump?.extensionPercent)} &nbsp; | &nbsp;
+			Smart Money: ${escapeHtml(smartMoneyLabel(position.entrySmartMoney))}<br>
+			Source: ${escapeHtml((position.entryDiscoverySources || []).join(", ") || "—")}<br><br>
 			<strong>Strategy Reasons:</strong> ${reasons}
 		</div>`;
 }
@@ -127,8 +138,12 @@ function renderRejectionTelemetry(d) {
 		rejectTx: r.transactions || 0,
 		rejectAnti5m: r.antiChase5m || 0,
 		rejectAnti1h: r.antiChase1h || 0,
-		rejectAnti24h: r.antiChase24h || 0
+		rejectAnti24h: r.antiChase24h || 0,
+		rejectPostPump: r.postPump || 0
 	};
+	const sm = d.discoveryTelemetry?.smartMoney || {};
+	$("smartMoneyStatus").textContent = escapeHtml(sm.status || "—");
+	$("smartMoneyMatches").textContent = number(sm.matchedCandidates || 0);
 	for (const [id, value] of Object.entries(counts)) $(id).textContent = number(value);
 
 	const blockerLabel = blocker => ({
@@ -139,7 +154,8 @@ function renderRejectionTelemetry(d) {
 		TRANSACTIONS: "5m tx < 20",
 		ANTI_CHASE_5M: "Anti-chase 5m",
 		ANTI_CHASE_1H: "Anti-chase 1h",
-		ANTI_CHASE_24H: "Anti-chase 24h"
+		ANTI_CHASE_24H: "Anti-chase 24h",
+		POST_PUMP: "Post-pump guard"
 	}[blocker] || blocker);
 
 	const near = Array.isArray(r.nearEntries) ? r.nearEntries : [];
@@ -151,9 +167,13 @@ function renderRejectionTelemetry(d) {
 		<td>${pct(item.priceChange1h)}</td>
 		<td>${item.buyRatio == null ? "—" : pct(Number(item.buyRatio) * 100)}</td>
 		<td>${number(item.transactions5m)}</td>
+		<td>${money(item.volume5m)}</td>
+		<td>${pct(item.volumeLiquidity5mPercent)}</td>
+		<td>${pct(item.postPumpExtensionPercent)}</td>
+		<td>${escapeHtml(smartMoneyLabel(item.smartMoney))}</td>
 		<td>${escapeHtml((item.blockers || []).map(blockerLabel).join(", ") || "—")}</td>
 		<td>${escapeHtml((item.discoverySources || []).join(", ") || "—")}</td>
-	</tr>`).join("") || `<tr><td colspan="9">No near-entry BUY candidates in the latest scan.</td></tr>`;
+	</tr>`).join("") || `<tr><td colspan="13">No near-entry BUY candidates in the latest scan.</td></tr>`;
 }
 
 function renderTokenDiversity(d) {
@@ -194,12 +214,15 @@ function renderHistory(d) {
 		const chartAddress = t.pairAddress || t.tokenAddress || "";
 		return `<tr><td><strong>${escapeHtml(t.symbol)}</strong></td><td>${escapeHtml(t.entryScore ?? "—")}</td>
 			<td>${pct(t.entryPriceChange5m)}</td><td>${pct(t.entryPriceChange1h)}</td><td>${entryRatio(t)}</td>
+			<td>${money(t.entryVolume5m)}</td><td>${pct(t.entryPostPump?.extensionPercent)}</td>
+			<td>${escapeHtml(smartMoneyLabel(t.entrySmartMoney))}</td>
+			<td>${escapeHtml((t.entryDiscoverySources || []).join(", ") || "—")}</td>
 			<td>${price(t.entryPrice)}</td><td>${price(t.exitPrice)}</td><td>${money(t.amountInvested)}</td>
 			<td>${money(t.tp1SaleValue)}</td><td>${money(t.tp2SaleValue)}</td><td>${money(t.trailingSaleValue)}</td><td>${money(t.otherExitSaleValue)}</td><td>${money(t.saleValue)}</td>
 			<td class="${cls(t.pnl)}">${money(t.pnl)}</td><td class="${cls(t.pnlPercent)}">${pct(t.pnlPercent)}</td>
 			<td class="${cls(t.maxGainPercent)}">${pct(t.maxGainPercent)}</td><td>${duration(t.holdTimeMs)}</td><td>${escapeHtml(reason)}</td>
 			<td><a class="small-link" target="_blank" rel="noopener noreferrer" href="https://dexscreener.com/solana/${encodeURIComponent(chartAddress)}">DexScreener</a></td></tr>`;
-	}).join("") || `<tr><td colspan="19">No completed positions yet.</td></tr>`;
+	}).join("") || `<tr><td colspan="23">No completed positions yet.</td></tr>`;
 }
 
 
