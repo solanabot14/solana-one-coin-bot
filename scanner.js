@@ -55,6 +55,10 @@ const PRE_ENTRY_PUMP_15M_PERCENT = Number.parseFloat(process.env.PRE_ENTRY_PUMP_
 const PRE_ENTRY_PUMP_30M_PERCENT = Number.parseFloat(process.env.PRE_ENTRY_PUMP_30M_PERCENT || "12") || 12;
 const PRE_ENTRY_PUMP_MAX_5M_PERCENT = Number.parseFloat(process.env.PRE_ENTRY_PUMP_MAX_5M_PERCENT || "2") || 2;
 const PRE_ENTRY_PUMP_MAX_RETRACE_PERCENT = Number.parseFloat(process.env.PRE_ENTRY_PUMP_MAX_RETRACE_PERCENT || "6") || 6;
+const BIRDEYE_OHLCV_MAX_REQUESTS_PER_DAY = Math.max(
+	10,
+	Number.parseInt(process.env.BIRDEYE_OHLCV_MAX_REQUESTS_PER_DAY || "120", 10) || 120
+);
 const MARKET_DATA_MAX_MCAP_FDV_RATIO = Math.max(
 	10,
 	Number.parseFloat(process.env.MARKET_DATA_MAX_MCAP_FDV_RATIO || "100") || 100
@@ -108,13 +112,32 @@ const birdeyeOhlcvCache = new Map();
 let birdeyeOhlcvRequestChain = Promise.resolve();
 let birdeyeOhlcvLastRequestAt = 0;
 let birdeyeOhlcvUsage = {
+	day: new Date().toISOString().slice(0, 10),
 	requests: 0,
 	cacheHits: 0,
 	successes: 0,
 	failures: 0,
+	budgetSkips: 0,
+	maxRequestsPerDay: BIRDEYE_OHLCV_MAX_REQUESTS_PER_DAY,
 	lastStatus: "NOT_FETCHED",
 	lastRequestAt: null
 };
+
+function refreshBirdeyeOhlcvUsageDay() {
+	const day = new Date().toISOString().slice(0, 10);
+	if (birdeyeOhlcvUsage.day === day) return;
+	birdeyeOhlcvUsage = {
+		day,
+		requests: 0,
+		cacheHits: 0,
+		successes: 0,
+		failures: 0,
+		budgetSkips: 0,
+		maxRequestsPerDay: BIRDEYE_OHLCV_MAX_REQUESTS_PER_DAY,
+		lastStatus: "NOT_FETCHED",
+		lastRequestAt: null
+	};
+}
 
 let smartMoneyCache = {
 	updatedAt: 0,
@@ -188,6 +211,12 @@ async function fetchBirdeyeTrendingTokens(signal) {
 	if (birdeyeTrendingCache.updatedAt && ageMs < BIRDEYE_TRENDING_REFRESH_MS) {
 		console.log("Birdeye Trending 1H: " + birdeyeTrendingCache.tokens.length + " cached tokens | cache age " + Math.round(ageMs / 60000) + "m | status " + birdeyeTrendingCache.lastStatus);
 		return { name: "Birdeye Trending 1H", type: "organic", tokens: structuredClone(birdeyeTrendingCache.tokens) };
+	}
+
+	if (birdeyeOhlcvUsage.requests >= BIRDEYE_OHLCV_MAX_REQUESTS_PER_DAY) {
+		birdeyeOhlcvUsage.budgetSkips++;
+		birdeyeOhlcvUsage.lastStatus = "DAILY_BUDGET_CAP";
+		return { status: "DAILY_BUDGET_CAP", candles: [], cached: false };
 	}
 
 	const apiKey = process.env.BIRDEYE_API_KEY;
@@ -314,6 +343,7 @@ async function rateLimitedBirdeyeOhlcvRequest(task) {
 }
 
 async function fetchBirdeyeOhlcvCandles(tokenAddress, signal) {
+	refreshBirdeyeOhlcvUsageDay();
 	const now = Date.now();
 	const cached = birdeyeOhlcvCache.get(tokenAddress);
 	if (cached && now - cached.updatedAt < BIRDEYE_OHLCV_CACHE_MS) {
