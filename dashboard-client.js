@@ -93,6 +93,9 @@ function renderLiveTrade(d) {
 			Entry 5m Volume: ${money(position.entryVolume5m)} &nbsp; | &nbsp;
 			Entry 24h Volume: ${money(position.entryVolume24h)}<br>
 			15m Observed Extension: ${pct(position.entryPostPump?.extensionPercent)} &nbsp; | &nbsp;
+			Historical 15m: ${pct(position.entryPreDiscoveryPump?.window15m?.extensionPercent)} &nbsp; | &nbsp;
+			Historical 30m: ${pct(position.entryPreDiscoveryPump?.window30m?.extensionPercent)}<br>
+			Pre-Discovery Check: ${escapeHtml(position.entryPreDiscoveryPump?.status || "—")} &nbsp; | &nbsp;
 			Smart Money: ${escapeHtml(smartMoneyLabel(position.entrySmartMoney))}<br>
 			Source: ${escapeHtml((position.entryDiscoverySources || []).join(", ") || "—")}<br><br>
 			<strong>Strategy Reasons:</strong> ${reasons}
