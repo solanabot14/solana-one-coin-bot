@@ -1,10 +1,12 @@
 const market = require("./dexscreener");
 const telegram = require("./telegram");
+const scanner = require("./scanner");
 const { createJanMvpTrader } = require("./janMvpTrader");
 const paperTrader = require("./paperTrader");
 
 const POSITION_MONITOR_MS = 5000;
 const OG_FOLLOW_INTERVAL_MS = 2000;
+const SWARM_SCAN_INTERVAL_MS = 120000;
 const TOKEN_COOLDOWN_MS = 60 * 60 * 1000;
 
 const HARD_STOP_PERCENT = -10;
@@ -26,13 +28,16 @@ function createJanMvpBot({
   trader = createJanMvpTrader(),
   getTokenData = market.getTokenData,
   getOgPortfolio = paperTrader.getPortfolio,
+  discoverCandidates = scanner.discoverCandidates,
   timers = globalThis,
   notifier = telegram
 } = {}) {
   let activeSession = null;
   let followInterval = null;
+  let scanInterval = null;
   let monitorInterval = null;
   let followBusy = false;
+  let scanBusy = false;
   let monitorBusy = false;
   let lastError = null;
   const isActive = session => activeSession === session && !session.signal.aborted;
@@ -115,6 +120,61 @@ function createJanMvpBot({
     }
   }
 
+  function occupiedTokenAddresses() {
+    return new Set(
+      trader.getState().slots
+        .map(slot => slot.position?.tokenAddress)
+        .filter(Boolean)
+    );
+  }
+
+  function freeSlots() {
+    return trader.getState().slots
+      .filter(slot => !slot.position && Number(slot.cashBalance) > 0)
+      .sort((a, b) =>
+        Number(a.completedTrades || 0) - Number(b.completedTrades || 0) ||
+        Number(a.id) - Number(b.id)
+      );
+  }
+
+  async function runSwarmScan(session) {
+    const slots = freeSlots();
+    if (!slots.length) return;
+
+    const candidates = await discoverCandidates({ signal: session.signal });
+    if (!isActive(session)) return;
+
+    const occupied = occupiedTokenAddresses();
+    const usable = candidates.filter(coin =>
+      coin.signal === "STRONG BUY" &&
+      coin.tokenAddress &&
+      !occupied.has(coin.tokenAddress)
+    );
+
+    let candidateIndex = 0;
+    for (const slot of slots) {
+      if (!isActive(session)) return;
+
+      let coin = null;
+      while (candidateIndex < usable.length) {
+        const candidate = usable[candidateIndex++];
+        if (!occupied.has(candidate.tokenAddress)) {
+          coin = candidate;
+          break;
+        }
+      }
+      if (!coin) break;
+
+      const result = trader.buy(slot.id, coin, { source: "SWARM_SCAN" });
+      if (result.success) {
+        occupied.add(coin.tokenAddress);
+        console.log(
+          `SWARM BUY | Slot ${slot.id} | ${coin.symbol} | ${Number(result.trade.amountInvested).toFixed(2)} | Source SWARM_SCAN`
+        );
+      }
+    }
+  }
+
   async function monitorSlot(session, slotSnapshot) {
     const position = slotSnapshot.position;
     if (!position) return;
@@ -190,12 +250,16 @@ function createJanMvpBot({
 
   async function tick(kind, session = activeSession) {
     if (!session || !isActive(session)) return;
-    if (kind === "follow" ? followBusy : monitorBusy) return;
+    if (kind === "follow" && followBusy) return;
+    if (kind === "scan" && scanBusy) return;
+    if (kind === "monitor" && monitorBusy) return;
     if (kind === "follow") followBusy = true;
+    else if (kind === "scan") scanBusy = true;
     else monitorBusy = true;
 
     try {
       if (kind === "follow") await followOgEntry(session);
+      else if (kind === "scan") await runSwarmScan(session);
       else await monitorPositions(session);
     } catch (error) {
       if (isActive(session)) {
@@ -204,6 +268,7 @@ function createJanMvpBot({
       }
     } finally {
       if (kind === "follow") followBusy = false;
+      else if (kind === "scan") scanBusy = false;
       else monitorBusy = false;
     }
   }
@@ -213,11 +278,13 @@ function createJanMvpBot({
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("JAN MVP STARTED | Mirroring OG coin entries into independent slots");
+    console.log("SWARM STARTED | Concurrent independent slots with shared market scan");
     monitorInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
     followInterval = timers.setInterval(() => tick("follow", session), OG_FOLLOW_INTERVAL_MS);
+    scanInterval = timers.setInterval(() => tick("scan", session), SWARM_SCAN_INTERVAL_MS);
     void tick("monitor", session);
     void tick("follow", session);
+    void tick("scan", session);
   }
 
   function stop() {
@@ -225,9 +292,10 @@ function createJanMvpBot({
     activeSession.abort();
     activeSession = null;
     timers.clearInterval(followInterval);
+    timers.clearInterval(scanInterval);
     timers.clearInterval(monitorInterval);
-    followInterval = monitorInterval = null;
-    console.log("JAN MVP STOPPED");
+    followInterval = scanInterval = monitorInterval = null;
+    console.log("SWARM STOPPED");
   }
 
   return {
