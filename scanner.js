@@ -143,7 +143,8 @@ function birdeyeTrendingToTokens(items = [], limit = BIRDEYE_TRENDING_LIMIT) {
 			chainId: "solana",
 			tokenAddress,
 			discoverySource: "Birdeye Trending 1H",
-			discoveryType: "organic"
+			discoveryType: "organic",
+			birdeyeRank: Number(item?.rank) || (tokens.length + 1)
 		});
 		if (tokens.length >= limit) break;
 	}
@@ -384,6 +385,12 @@ function mergeDiscoveryTokens(sourceResults = []) {
 			const type = token.discoveryType || result.type;
 			if (source && !existing.discoverySources.includes(source)) existing.discoverySources.push(source);
 			if (type && !existing.discoveryTypes.includes(type)) existing.discoveryTypes.push(type);
+			if (Number.isFinite(Number(token.birdeyeRank))) {
+				const rank = Number(token.birdeyeRank);
+				existing.birdeyeRank = Number.isFinite(Number(existing.birdeyeRank))
+					? Math.min(Number(existing.birdeyeRank), rank)
+					: rank;
+			}
 		}
 	}
 
@@ -628,7 +635,8 @@ async function analyzeDiscoveredToken(token, signal) {
 		entryDiagnostics: diagnostics,
 		currentActivity,
 		postPump,
-		smartMoney: null
+		smartMoney: null,
+		birdeyeRank: Number.isFinite(Number(token.birdeyeRank)) ? Number(token.birdeyeRank) : null
 	};
 }
 
