@@ -488,6 +488,18 @@ th,td{
     <div class="metric-label">Anti-Chase 24h</div>
     <div class="metric-value" id="rejectAnti24h">0</div>
   </div>
+  <div class="metric">
+    <div class="metric-label">Post-Pump Guard</div>
+    <div class="metric-value" id="rejectPostPump">0</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Smart Money Status</div>
+    <div class="metric-value" id="smartMoneyStatus">—</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Smart Money Matches</div>
+    <div class="metric-value" id="smartMoneyMatches">0</div>
+  </div>
 </div>
 
 <div style="overflow-x:auto; margin-top:16px">
@@ -501,12 +513,16 @@ th,td{
   <th>1h</th>
   <th>Buy Ratio</th>
   <th>5m Tx</th>
+  <th>5m Volume</th>
+  <th>5m Vol/Liq</th>
+  <th>15m Extension</th>
+  <th>Smart Money</th>
   <th>Blocked By</th>
   <th>Source</th>
 </tr>
 </thead>
 <tbody id="rejectionNearEntries">
-<tr><td colspan="9">Waiting for scan data...</td></tr>
+<tr><td colspan="13">Waiting for scan data...</td></tr>
 </tbody>
 </table>
 </div>
@@ -606,6 +622,10 @@ th,td{
   <th>Entry 5m</th>
   <th>Entry 1h</th>
   <th>Entry Buy Ratio</th>
+  <th>Entry 5m Vol</th>
+  <th>15m Extension</th>
+  <th>Smart Money</th>
+  <th>Source</th>
   <th>Entry</th>
   <th>Average Exit</th>
   <th>Invested</th>
