@@ -513,6 +513,11 @@ async function analyzeDiscoveredToken(token, signal) {
 	let analysis = analyzeToken(data);
 	const postPump = postPumpSnapshot(token.tokenAddress, data.priceUsd);
 	if (analysis.signal === "STRONG BUY" && postPump.blocked) {
+		console.log(
+			"POST-PUMP BLOCK | " + (data.symbol || token.tokenAddress) +
+			" | 15m observed extension: " + postPump.extensionPercent.toFixed(2) +
+			"% | observations: " + postPump.observations
+		);
 		analysis = {
 			...analysis,
 			signal: "AVOID",
