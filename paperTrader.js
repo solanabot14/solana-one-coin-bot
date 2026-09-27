@@ -168,8 +168,34 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 			entryLiquidityUsd:
 				Number(coin.liquidityUsd) || 0,
 
+			entryVolume5m:
+				Number(coin.volume5m) || 0,
+
+			entryVolume1h:
+				Number(coin.volume1h) || 0,
+
 			entryVolume24h:
 				Number(coin.volume24h) || 0,
+
+			entryDiscoverySources:
+				Array.isArray(coin.discoverySources)
+					? [...coin.discoverySources]
+					: [],
+
+			entryCurrentActivity:
+				coin.currentActivity
+					? structuredClone(coin.currentActivity)
+					: null,
+
+			entryPostPump:
+				coin.postPump
+					? structuredClone(coin.postPump)
+					: null,
+
+			entrySmartMoney:
+				coin.smartMoney
+					? structuredClone(coin.smartMoney)
+					: null,
 
 			entryBuys5m: buys5m,
 			entrySells5m: sells5m,
@@ -308,8 +334,34 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 			entryLiquidityUsd:
 				p.entryLiquidityUsd ?? null,
 
+			entryVolume5m:
+				p.entryVolume5m ?? null,
+
+			entryVolume1h:
+				p.entryVolume1h ?? null,
+
 			entryVolume24h:
 				p.entryVolume24h ?? null,
+
+			entryDiscoverySources:
+				Array.isArray(p.entryDiscoverySources)
+					? [...p.entryDiscoverySources]
+					: [],
+
+			entryCurrentActivity:
+				p.entryCurrentActivity
+					? structuredClone(p.entryCurrentActivity)
+					: null,
+
+			entryPostPump:
+				p.entryPostPump
+					? structuredClone(p.entryPostPump)
+					: null,
+
+			entrySmartMoney:
+				p.entrySmartMoney
+					? structuredClone(p.entrySmartMoney)
+					: null,
 
 			entryBuys5m:
 				p.entryBuys5m ?? null,
