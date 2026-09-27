@@ -875,6 +875,7 @@ function buildRejectionTelemetry(candidates = []) {
 		lateMomentum: 0,
 		marketDataIntegrity: 0,
 		preDiscoveryPump: 0,
+		postPumpRebound: 0,
 		nearEntries: []
 	};
 
