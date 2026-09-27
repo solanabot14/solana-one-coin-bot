@@ -303,6 +303,35 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
     next.executions.push(execution);
     if (next.executions.length > 2000) next.executions = next.executions.slice(-2000);
     save(next);
+
+    if (closedTrade) {
+      const audit = {
+        event: "TRADE_AUDIT_CLOSED",
+        mode: "SWARM",
+        slotId: closedTrade.slotId,
+        positionId: closedTrade.positionId,
+        symbol: closedTrade.symbol,
+        tokenAddress: closedTrade.tokenAddress,
+        entryTime: closedTrade.entryTime,
+        exitTime: closedTrade.exitTime,
+        entryPrice: closedTrade.entryPrice,
+        exitPrice: closedTrade.exitPrice,
+        highestPrice: closedTrade.highestPrice,
+        returnPercent: closedTrade.returnPercent,
+        exitReason: closedTrade.reason,
+        entryVolume5m: closedTrade.entryVolume5m,
+        entryVolume1h: closedTrade.entryVolume1h,
+        entryVolume24h: closedTrade.entryVolume24h,
+        entryVolumeLiquidity5mPercent: closedTrade.entryCurrentActivity?.volumeLiquidity5mPercent ?? null,
+        discoverySources: closedTrade.entryDiscoverySources,
+        smartMoney: closedTrade.entrySmartMoney,
+        postPump: closedTrade.entryPostPump,
+        preDiscoveryPump: closedTrade.entryPreDiscoveryPump,
+        marketDataIntegrity: closedTrade.entryMarketDataIntegrity
+      };
+      console.log("TRADE_AUDIT " + JSON.stringify(audit));
+    }
+
     return { success:true, execution:structuredClone(execution), closedTrade, newlyReached };
   }
 
