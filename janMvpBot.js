@@ -48,7 +48,7 @@ function createJanMvpBot({
       const slot = state.slots.find(s => s.id === closedTrade.slotId);
       const nextTarget = slot?.currentTarget;
       await notifier.sendTelegramMessage([
-        "JAN MVP | SLOT MILESTONE",
+        "SWARM | SLOT MILESTONE",
         `Slot: ${closedTrade.slotId}`,
         `Reached: $${Number(milestone).toFixed(2)}`,
         `Balance: $${Number(closedTrade.endingBalance).toFixed(2)}`,
@@ -269,7 +269,7 @@ function createJanMvpBot({
     } catch (error) {
       if (isActive(session)) {
         lastError = error.message;
-        console.error("JAN MVP error:", error.message);
+        console.error("SWARM error:", error.message);
       }
     } finally {
       if (kind === "follow") followBusy = false;
