@@ -25,15 +25,16 @@ function pairToTokenData(pair, tokenAddress) {
 async function getTokenData(tokenAddress, { signal, pairAddress } = {}) {
 	try {
 		if (pairAddress) {
-			// Keep the same request count as normal monitoring: fetch the token once,
-			// then select only the exact pair saved at entry. Never fall back to another pool.
-			const url = "https://api.dexscreener.com/latest/dex/tokens/" + encodeURIComponent(tokenAddress);
+			const url = "https://api.dexscreener.com/latest/dex/pairs/solana/" + encodeURIComponent(pairAddress);
 			const response = await axios.get(url, { timeout: 10000, signal });
-			const pairs = Array.isArray(response.data?.pairs) ? response.data.pairs : [];
+			const pairs = Array.isArray(response.data?.pairs)
+				? response.data.pairs
+				: response.data?.pair
+					? [response.data.pair]
+					: [];
 
 			const exactPair = pairs.find(pair =>
-				pair?.chainId === "solana" &&
-				pair?.pairAddress === pairAddress
+				pair?.chainId === "solana" && pair?.pairAddress === pairAddress
 			);
 
 			if (!exactPair) {
@@ -43,10 +44,7 @@ async function getTokenData(tokenAddress, { signal, pairAddress } = {}) {
 
 			const data = pairToTokenData(exactPair, tokenAddress);
 			if (!data) {
-				console.log(
-					"PAIR LOCK MISMATCH | " + tokenAddress + " | Pair: " + pairAddress +
-					" | Base token: " + (exactPair.baseToken?.address || "unknown")
-				);
+				console.log("PAIR LOCK MISMATCH | " + tokenAddress + " | Pair: " + pairAddress);
 				return null;
 			}
 
