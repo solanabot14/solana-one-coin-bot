@@ -110,6 +110,7 @@ function createJanMvpBot({
       discoverySources: Array.isArray(position.entryDiscoverySources) ? [...position.entryDiscoverySources] : [],
       currentActivity: position.entryCurrentActivity ? structuredClone(position.entryCurrentActivity) : null,
       postPump: position.entryPostPump ? structuredClone(position.entryPostPump) : null,
+      preDiscoveryPump: position.entryPreDiscoveryPump ? structuredClone(position.entryPreDiscoveryPump) : null,
       marketDataIntegrity: position.entryMarketDataIntegrity ? structuredClone(position.entryMarketDataIntegrity) : null,
       smartMoney: position.entrySmartMoney ? structuredClone(position.entrySmartMoney) : null,
       buys5m: Number(position.entryBuys5m) || 0,
