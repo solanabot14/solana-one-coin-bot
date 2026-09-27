@@ -6,6 +6,10 @@ const telegram = require("./telegram");
 const POSITION_MONITOR_MS = 2000;
 const SCANNER_INTERVAL_MS = 120000;
 const TOKEN_COOLDOWN_MS = 60 * 60 * 1000;
+const TOKEN_DIVERSITY_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_LOSS_ENTRIES_PER_TOKEN_24H = 2;
+const MAX_RUNNER_ENTRIES_PER_TOKEN_24H = 3;
+const RUNNER_MAX_GAIN_PERCENT = 30;
 const HARD_STOP_PERCENT = -10;
 const TAKE_PROFIT_1_PERCENT = 15;
 const TAKE_PROFIT_1_SELL_PERCENT = 15;
@@ -20,6 +24,141 @@ const MOMENTUM_EXIT_STRONG_LOSS = -5;
 const MOMENTUM_EXIT_STRONG_5M = -1;
 const MOMENTUM_EXIT_BUY_RATIO = 0.45;
 const MOMENTUM_EXIT_MIN_TRANSACTIONS = 10;
+
+
+function recentTokenStats(history = [], now = Date.now()) {
+  const cutoff = now - TOKEN_DIVERSITY_WINDOW_MS;
+  const positions = new Map();
+
+  for (const trade of history) {
+    if (!trade?.tokenAddress || !trade?.entryTime) continue;
+    const entryMs = Date.parse(trade.entryTime);
+    if (!Number.isFinite(entryMs) || entryMs < cutoff) continue;
+
+    const key = trade.positionId || `${trade.tokenAddress}|${trade.entryTime}`;
+    if (!positions.has(key)) {
+      positions.set(key, {
+        tokenAddress: trade.tokenAddress,
+        entryTime: entryMs,
+        quantityBought: 0,
+        quantitySold: 0,
+        pnl: 0,
+        completed: false,
+        maxGainPercent: null,
+        lastExitAt: null
+      });
+    }
+
+    const position = positions.get(key);
+    if (trade.type === "BUY") {
+      position.quantityBought += Number(trade.quantity) || 0;
+    } else if (trade.type === "SELL") {
+      position.quantitySold += Number(trade.quantitySold) || 0;
+      position.pnl += Number(trade.pnl) || 0;
+      const exitMs = Date.parse(trade.exitTime);
+      if (Number.isFinite(exitMs)) position.lastExitAt = Math.max(position.lastExitAt || 0, exitMs);
+      if (Number(trade.percentSold) === 100) position.completed = true;
+    }
+
+    const entryPrice = Number(trade.entryPrice);
+    const highestPrice = Number(trade.highestPrice);
+    if (entryPrice > 0 && highestPrice > 0) {
+      const gain = (highestPrice - entryPrice) / entryPrice * 100;
+      position.maxGainPercent = position.maxGainPercent == null
+        ? gain
+        : Math.max(position.maxGainPercent, gain);
+    }
+  }
+
+  const byToken = new Map();
+  for (const position of positions.values()) {
+    if (
+      !position.completed &&
+      position.quantityBought > 0 &&
+      position.quantitySold >= position.quantityBought * (1 - 1e-10)
+    ) {
+      position.completed = true;
+    }
+
+    if (!byToken.has(position.tokenAddress)) {
+      byToken.set(position.tokenAddress, {
+        entries: 0,
+        winningCompletions: 0,
+        losingCompletions: 0,
+        maxGainPercent: null,
+        lastExitAt: null
+      });
+    }
+
+    const stats = byToken.get(position.tokenAddress);
+    stats.entries++;
+    if (position.completed) {
+      if (position.pnl > 0) stats.winningCompletions++;
+      else if (position.pnl < 0) stats.losingCompletions++;
+    }
+    if (Number.isFinite(position.maxGainPercent)) {
+      stats.maxGainPercent = stats.maxGainPercent == null
+        ? position.maxGainPercent
+        : Math.max(stats.maxGainPercent, position.maxGainPercent);
+    }
+    if (Number.isFinite(position.lastExitAt)) {
+      stats.lastExitAt = Math.max(stats.lastExitAt || 0, position.lastExitAt);
+    }
+  }
+
+  return byToken;
+}
+
+function buyRatio5m(coin) {
+  const buys = Number(coin?.buys5m) || 0;
+  const sells = Number(coin?.sells5m) || 0;
+  const total = buys + sells;
+  return total > 0 ? buys / total : 0;
+}
+
+function exceptionalRunnerReentry(coin) {
+  const change5m = Number(coin?.priceChange5m) || 0;
+  const change1h = Number(coin?.priceChange1h) || 0;
+  const transactions = (Number(coin?.buys5m) || 0) + (Number(coin?.sells5m) || 0);
+  return (
+    coin?.signal === "STRONG BUY" &&
+    Number(coin?.score) >= 10 &&
+    change5m >= 0.50 &&
+    change5m < 4 &&
+    change1h >= 1 &&
+    change1h <= 20 &&
+    buyRatio5m(coin) >= 0.60 &&
+    transactions >= 20
+  );
+}
+
+function diversityDecision(coin, stats) {
+  if (!stats || stats.entries === 0) {
+    return { eligible: true, priority: 0, reason: "NEW TOKEN" };
+  }
+
+  const runner = Number(stats.maxGainPercent) >= RUNNER_MAX_GAIN_PERCENT;
+
+  if (runner) {
+    if (
+      stats.entries < MAX_RUNNER_ENTRIES_PER_TOKEN_24H &&
+      exceptionalRunnerReentry(coin)
+    ) {
+      return { eligible: true, priority: 2, reason: "RUNNER REENTRY" };
+    }
+    return { eligible: false, priority: 99, reason: "RUNNER WAITING FOR EXCEPTIONAL REENTRY" };
+  }
+
+  if (stats.winningCompletions > 0) {
+    return { eligible: false, priority: 99, reason: "NORMAL WINNER REST 24H" };
+  }
+
+  if (stats.entries >= MAX_LOSS_ENTRIES_PER_TOKEN_24H) {
+    return { eligible: false, priority: 99, reason: "LOSS REENTRY LIMIT 24H" };
+  }
+
+  return { eligible: true, priority: 1, reason: "LOSS SECOND CHANCE" };
+}
 
 function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
   discoverCandidates = scanner.discoverCandidates, timers = globalThis,
@@ -55,25 +194,54 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     }
 
     const now = Date.now();
-    const availableCandidates = candidates.filter(coin => {
-      const started = tokenCooldowns.get(coin.tokenAddress);
-      if (!started) return true;
-      if (now - started >= TOKEN_COOLDOWN_MS) {
-        tokenCooldowns.delete(coin.tokenAddress);
-        return true;
+    const statsByToken = recentTokenStats(getPortfolio().history, now);
+    const rankedCandidates = [];
+
+    for (const coin of candidates) {
+      const stats = statsByToken.get(coin.tokenAddress);
+      const memoryCooldown = tokenCooldowns.get(coin.tokenAddress);
+      const persistentCooldown = stats?.lastExitAt || 0;
+      const cooldownStarted = Math.max(memoryCooldown || 0, persistentCooldown);
+
+      if (cooldownStarted && now - cooldownStarted < TOKEN_COOLDOWN_MS) {
+        continue;
       }
-      return false;
-    });
+      if (memoryCooldown && now - memoryCooldown >= TOKEN_COOLDOWN_MS) {
+        tokenCooldowns.delete(coin.tokenAddress);
+      }
+
+      const diversity = diversityDecision(coin, stats);
+      if (!diversity.eligible) {
+        console.log(
+          `DIVERSITY SKIP | ${coin.symbol} | ${diversity.reason} | Entries24h: ${stats?.entries || 0} | MaxGain: ${Number(stats?.maxGainPercent || 0).toFixed(2)}%`
+        );
+        continue;
+      }
+
+      rankedCandidates.push({ coin, diversity });
+    }
+
+    rankedCandidates.sort((a, b) =>
+      a.diversity.priority - b.diversity.priority ||
+      Number(b.coin.score || 0) - Number(a.coin.score || 0)
+    );
+
+    const availableCandidates = rankedCandidates.map(item => item.coin);
     if (!availableCandidates.length) {
-      console.log("All candidates are currently on cooldown.");
+      console.log("No candidates available after cooldown and diversity rules.");
       return;
     }
 
-    const bestCoin = availableCandidates.find(coin => coin.signal === "STRONG BUY");
+    const bestEntry = rankedCandidates.find(item => item.coin.signal === "STRONG BUY");
+    const bestCoin = bestEntry?.coin;
     if (!bestCoin) {
       console.log("No STRONG BUY candidate available.");
       return;
     }
+
+    console.log(
+      `DIVERSITY SELECT | ${bestCoin.symbol} | ${bestEntry.diversity.reason} | Priority ${bestEntry.diversity.priority}`
+    );
 
     console.log("\nBOT SELECTED:");
     console.log(`${bestCoin.symbol} - ${bestCoin.name}`);
@@ -227,4 +395,10 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
   return { startBot, stopBot, getBotStatus: () => activeSession !== null,
     getLastError: () => lastError };
 }
-module.exports = { createBot, ...createBot() };
+module.exports = {
+  createBot,
+  recentTokenStats,
+  exceptionalRunnerReentry,
+  diversityDecision,
+  ...createBot()
+};
