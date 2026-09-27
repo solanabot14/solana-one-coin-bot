@@ -55,6 +55,11 @@ const PRE_ENTRY_PUMP_15M_PERCENT = Number.parseFloat(process.env.PRE_ENTRY_PUMP_
 const PRE_ENTRY_PUMP_30M_PERCENT = Number.parseFloat(process.env.PRE_ENTRY_PUMP_30M_PERCENT || "12") || 12;
 const PRE_ENTRY_PUMP_MAX_5M_PERCENT = Number.parseFloat(process.env.PRE_ENTRY_PUMP_MAX_5M_PERCENT || "2") || 2;
 const PRE_ENTRY_PUMP_MAX_RETRACE_PERCENT = Number.parseFloat(process.env.PRE_ENTRY_PUMP_MAX_RETRACE_PERCENT || "6") || 6;
+const FAILED_STRUCTURE_MIN_RUNUP_PERCENT = Number.parseFloat(process.env.FAILED_STRUCTURE_MIN_RUNUP_PERCENT || "8") || 8;
+const FAILED_STRUCTURE_MIN_DRAWDOWN_PERCENT = Number.parseFloat(process.env.FAILED_STRUCTURE_MIN_DRAWDOWN_PERCENT || "10") || 10;
+const FAILED_STRUCTURE_MIN_REBOUND_PERCENT = Number.parseFloat(process.env.FAILED_STRUCTURE_MIN_REBOUND_PERCENT || "2") || 2;
+const FAILED_STRUCTURE_MAX_REBOUND_PERCENT = Number.parseFloat(process.env.FAILED_STRUCTURE_MAX_REBOUND_PERCENT || "8") || 8;
+const FAILED_STRUCTURE_MIN_BELOW_HIGH_PERCENT = Number.parseFloat(process.env.FAILED_STRUCTURE_MIN_BELOW_HIGH_PERCENT || "6") || 6;
 const BIRDEYE_OHLCV_MAX_REQUESTS_PER_DAY = Math.max(
 	10,
 	Number.parseInt(process.env.BIRDEYE_OHLCV_MAX_REQUESTS_PER_DAY || "60", 10) || 60
@@ -98,6 +103,7 @@ let lastDiscoveryTelemetry = {
 		lateMomentum: 0,
 		marketDataIntegrity: 0,
 		preDiscoveryPump: 0,
+		postPumpRebound: 0,
 		nearEntries: []
 	}
 };
@@ -267,6 +273,87 @@ function normalizeBirdeyeCandle(item) {
 	};
 }
 
+function failedStructureSnapshot(candles = [], currentPrice, nowSeconds = Math.floor(Date.now() / 1000)) {
+	const price = Number(currentPrice);
+	const cutoff = nowSeconds - 30 * 60;
+	const rows = candles
+		.map(normalizeBirdeyeCandle)
+		.filter(Boolean)
+		.filter(row => row.time >= cutoff && row.time <= nowSeconds + 60)
+		.sort((a, b) => a.time - b.time);
+
+	const base = {
+		source: "Birdeye OHLCV 1m",
+		status: rows.length >= 10 ? "OK" : "INSUFFICIENT_HISTORY",
+		candles: rows.length,
+		lookbackMinutes: 30,
+		peakPrice: null,
+		peakTime: null,
+		prePeakLow: null,
+		postPeakLow: null,
+		postPeakLowTime: null,
+		runupPercent: null,
+		drawdownPercent: null,
+		reboundPercent: null,
+		belowPeakPercent: null,
+		thresholds: {
+			minRunupPercent: FAILED_STRUCTURE_MIN_RUNUP_PERCENT,
+			minDrawdownPercent: FAILED_STRUCTURE_MIN_DRAWDOWN_PERCENT,
+			minReboundPercent: FAILED_STRUCTURE_MIN_REBOUND_PERCENT,
+			maxReboundPercent: FAILED_STRUCTURE_MAX_REBOUND_PERCENT,
+			minBelowHighPercent: FAILED_STRUCTURE_MIN_BELOW_HIGH_PERCENT
+		},
+		blocked: false
+	};
+
+	if (rows.length < 10 || !(price > 0)) return base;
+
+	let peakIndex = 0;
+	for (let i = 1; i < rows.length; i++) {
+		if (rows[i].high > rows[peakIndex].high) peakIndex = i;
+	}
+
+	// A failed-structure pattern needs real price history both before and after the peak.
+	if (peakIndex < 2 || peakIndex >= rows.length - 2) return base;
+
+	const beforePeak = rows.slice(0, peakIndex);
+	const afterPeak = rows.slice(peakIndex + 1);
+	const peakPrice = rows[peakIndex].high;
+	const prePeakLow = Math.min(...beforePeak.map(row => row.low));
+
+	let postPeakLowRow = afterPeak[0];
+	for (const row of afterPeak) {
+		if (row.low < postPeakLowRow.low) postPeakLowRow = row;
+	}
+
+	const postPeakLow = postPeakLowRow.low;
+	const runupPercent = prePeakLow > 0 ? (peakPrice - prePeakLow) / prePeakLow * 100 : null;
+	const drawdownPercent = peakPrice > 0 ? (peakPrice - postPeakLow) / peakPrice * 100 : null;
+	const reboundPercent = postPeakLow > 0 ? (price - postPeakLow) / postPeakLow * 100 : null;
+	const belowPeakPercent = peakPrice > 0 ? Math.max(0, (peakPrice - price) / peakPrice * 100) : null;
+
+	const blocked =
+		Number(runupPercent) >= FAILED_STRUCTURE_MIN_RUNUP_PERCENT &&
+		Number(drawdownPercent) >= FAILED_STRUCTURE_MIN_DRAWDOWN_PERCENT &&
+		Number(reboundPercent) >= FAILED_STRUCTURE_MIN_REBOUND_PERCENT &&
+		Number(reboundPercent) <= FAILED_STRUCTURE_MAX_REBOUND_PERCENT &&
+		Number(belowPeakPercent) >= FAILED_STRUCTURE_MIN_BELOW_HIGH_PERCENT;
+
+	return {
+		...base,
+		peakPrice,
+		peakTime: rows[peakIndex].time,
+		prePeakLow,
+		postPeakLow,
+		postPeakLowTime: postPeakLowRow.time,
+		runupPercent,
+		drawdownPercent,
+		reboundPercent,
+		belowPeakPercent,
+		blocked
+	};
+}
+
 function preDiscoveryPumpSnapshot(candles = [], currentPrice, current5mChange, nowSeconds = Math.floor(Date.now() / 1000)) {
 	const price = Number(currentPrice);
 	const change5m = Number(current5mChange) || 0;
@@ -410,16 +497,26 @@ async function preEntryHistoricalPumpCheck(tokenAddress, currentPrice, current5m
 			status: fetched.status,
 			cached: fetched.cached,
 			blocked: false,
-			enoughHistory: false
+			enoughHistory: false,
+			failedStructure: {
+				status: fetched.status,
+				blocked: false
+			}
 		};
 	}
+	const nowSeconds = Math.floor(Date.now() / 1000);
 	const snapshot = preDiscoveryPumpSnapshot(
 		fetched.candles,
 		currentPrice,
 		current5mChange,
-		Math.floor(Date.now() / 1000)
+		nowSeconds
 	);
-	return { ...snapshot, cached: fetched.cached };
+	const failedStructure = failedStructureSnapshot(
+		fetched.candles,
+		currentPrice,
+		nowSeconds
+	);
+	return { ...snapshot, failedStructure, cached: fetched.cached };
 }
 
 function updateRollingPriceHistory(tokenAddress, price, now = Date.now()) {
@@ -742,6 +839,7 @@ function entryDiagnostics(data, analysis) {
 	if (reasons.some(reason => reason.includes("LATE MOMENTUM GUARD"))) blockers.push("LATE_MOMENTUM");
 	if (reasons.some(reason => reason.includes("MARKET DATA INTEGRITY"))) blockers.push("MARKET_DATA_INTEGRITY");
 	if (reasons.some(reason => reason.includes("PRE-DISCOVERY PUMP"))) blockers.push("PRE_DISCOVERY_PUMP");
+	if (reasons.some(reason => reason.includes("POST-PUMP REBOUND"))) blockers.push("POST_PUMP_REBOUND");
 
 	if (!blockers.length && analysis?.signal !== "STRONG BUY") {
 		if (Number(analysis?.score) < 8) blockers.push("SCORE_BELOW_8");
@@ -777,6 +875,7 @@ function buildRejectionTelemetry(candidates = []) {
 		lateMomentum: 0,
 		marketDataIntegrity: 0,
 		preDiscoveryPump: 0,
+		postPumpRebound: 0,
 		nearEntries: []
 	};
 
@@ -797,6 +896,7 @@ function buildRejectionTelemetry(candidates = []) {
 		if (blockers.includes("LATE_MOMENTUM")) telemetry.lateMomentum++;
 		if (blockers.includes("MARKET_DATA_INTEGRITY")) telemetry.marketDataIntegrity++;
 		if (blockers.includes("PRE_DISCOVERY_PUMP")) telemetry.preDiscoveryPump++;
+		if (blockers.includes("POST_PUMP_REBOUND")) telemetry.postPumpRebound++;
 
 		if (Number(candidate.score) >= 6 || candidate.signal === "BUY") {
 			telemetry.nearEntries.push({
@@ -951,6 +1051,23 @@ async function analyzeDiscoveredToken(token, signal) {
 					"PRE-DISCOVERY PUMP: Birdeye OHLCV shows recent extension before scanner observation"
 				]
 			};
+		} else if (preDiscoveryPump.failedStructure?.blocked) {
+			const failed = preDiscoveryPump.failedStructure;
+			console.log(
+				"POST-PUMP REBOUND BLOCK | " + (data.symbol || token.tokenAddress) +
+				" | run-up: " + Number(failed.runupPercent).toFixed(2) +
+				"% | drawdown: " + Number(failed.drawdownPercent).toFixed(2) +
+				"% | rebound: " + Number(failed.reboundPercent).toFixed(2) +
+				"% | below peak: " + Number(failed.belowPeakPercent).toFixed(2) + "%"
+			);
+			analysis = {
+				...analysis,
+				signal: "AVOID",
+				reasons: [
+					...(analysis.reasons || []),
+					"POST-PUMP REBOUND: prior pump failed, sold off, and current move is only a partial rebound"
+				]
+			};
 		}
 	}
 
@@ -1061,6 +1178,14 @@ async function discoverCandidates({ signal } = {}) {
 				maxCurrent5mPercent: PRE_ENTRY_PUMP_MAX_5M_PERCENT,
 				maxRetracePercent: PRE_ENTRY_PUMP_MAX_RETRACE_PERCENT,
 				blockedCandidates: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("PRE_DISCOVERY_PUMP")).length,
+				postPumpReboundBlocked: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("POST_PUMP_REBOUND")).length,
+				failedStructureThresholds: {
+					minRunupPercent: FAILED_STRUCTURE_MIN_RUNUP_PERCENT,
+					minDrawdownPercent: FAILED_STRUCTURE_MIN_DRAWDOWN_PERCENT,
+					minReboundPercent: FAILED_STRUCTURE_MIN_REBOUND_PERCENT,
+					maxReboundPercent: FAILED_STRUCTURE_MAX_REBOUND_PERCENT,
+					minBelowHighPercent: FAILED_STRUCTURE_MIN_BELOW_HIGH_PERCENT
+				},
 				usage: { ...birdeyeOhlcvUsage }
 			},
 			marketDataIntegrityGate: {
@@ -1108,6 +1233,7 @@ module.exports = {
 	entryQualitySnapshot,
 	marketDataIntegritySnapshot,
 	preDiscoveryPumpSnapshot,
+	failedStructureSnapshot,
 	birdeyeOhlcvItems,
 	normalizeBirdeyeCandle,
 	updateRollingPriceHistory,

@@ -96,6 +96,7 @@ function renderLiveTrade(d) {
 			Historical 15m: ${pct(position.entryPreDiscoveryPump?.window15m?.extensionPercent)} &nbsp; | &nbsp;
 			Historical 30m: ${pct(position.entryPreDiscoveryPump?.window30m?.extensionPercent)}<br>
 			Pre-Discovery Check: ${escapeHtml(position.entryPreDiscoveryPump?.status || "—")} &nbsp; | &nbsp;
+			Failed Structure: ${position.entryPreDiscoveryPump?.failedStructure?.blocked ? "BLOCKED" : "OK"}<br>
 			Smart Money: ${escapeHtml(smartMoneyLabel(position.entrySmartMoney))}<br>
 			Source: ${escapeHtml((position.entryDiscoverySources || []).join(", ") || "—")}<br><br>
 			<strong>Strategy Reasons:</strong> ${reasons}
@@ -146,7 +147,8 @@ function renderRejectionTelemetry(d) {
 		rejectCurrentActivity: r.currentActivity || 0,
 		rejectLateMomentum: r.lateMomentum || 0,
 		rejectMarketIntegrity: r.marketDataIntegrity || 0,
-		rejectPreDiscoveryPump: r.preDiscoveryPump || 0
+		rejectPreDiscoveryPump: r.preDiscoveryPump || 0,
+		rejectPostPumpRebound: r.postPumpRebound || 0
 	};
 	const sm = d.discoveryTelemetry?.smartMoney || {};
 	const historical = d.discoveryTelemetry?.preDiscoveryPumpGuard || {};
@@ -175,7 +177,8 @@ function renderRejectionTelemetry(d) {
 		CURRENT_ACTIVITY: "Current activity",
 		LATE_MOMENTUM: "Late momentum",
 		MARKET_DATA_INTEGRITY: "Market data integrity",
-		PRE_DISCOVERY_PUMP: "Pre-discovery pump"
+		PRE_DISCOVERY_PUMP: "Pre-discovery pump",
+		POST_PUMP_REBOUND: "Post-pump rebound"
 	}[blocker] || blocker);
 
 	const near = Array.isArray(r.nearEntries) ? r.nearEntries : [];
