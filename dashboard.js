@@ -273,7 +273,7 @@ th,td{
 
 <div class="tabs" role="tablist" aria-label="Dashboard views">
   <button class="tab-button active" id="botTab" type="button">Current Bot</button>
-  <button class="tab-button" id="slotTab" type="button">Slot Compounding Lab</button>
+  <button class="tab-button" id="slotTab" type="button">Swarm</button>
 </div>
 
 <div id="botPanel" class="tab-panel active">
@@ -563,26 +563,26 @@ th,td{
 <div id="slotPanel" class="tab-panel">
 
 <div class="card section">
-  <h2>Slot Compounding Lab</h2>
+  <h2>Swarm</h2>
   <p class="muted">
-    Independent paper simulation using the same coin entries as the OG bot. When the OG bot buys,
-    Jan mirrors that coin into the next available slot, then manages the slot independently.
+    Independent concurrent paper simulation. All free slots can act at the same time from one shared
+    DexScreener scan. Swarm can mirror the OG opportunity when a slot is free while other slots trade different qualifying coins.
   </p>
 
   <div class="controls" style="margin-bottom:16px">
-    <div id="janStatus" class="status">JAN MVP OFFLINE</div>
-    <button class="start" id="janStartButton" type="button">START JAN MVP</button>
-    <button class="stop" id="janStopButton" type="button">STOP JAN MVP</button>
+    <div id="janStatus" class="status">SWARM OFFLINE</div>
+    <button class="start" id="janStartButton" type="button">START SWARM</button>
+    <button class="stop" id="janStopButton" type="button">STOP SWARM</button>
   </div>
-  <p id="janNotice" class="muted">Jan MVP controls only the slot simulator.</p>
+  <p id="janNotice" class="muted">Swarm controls only the slot simulator and never changes OG trading logic.</p>
 
   <div class="grid">
     <div class="metric">
-      <div class="metric-label">Lab Starting Capital</div>
+      <div class="metric-label">Swarm Starting Capital</div>
       <div class="metric-value" id="slotStarting">$10.00</div>
     </div>
     <div class="metric">
-      <div class="metric-label">Simulated Slot Capital</div>
+      <div class="metric-label">Swarm Capital</div>
       <div class="metric-value" id="slotTotal">$10.00</div>
     </div>
     <div class="metric">
@@ -618,7 +618,7 @@ th,td{
         </tr>
       </thead>
       <tbody id="slotRows">
-        <tr><td colspan="9">Waiting for Jan MVP activity...</td></tr>
+        <tr><td colspan="9">Waiting for Swarm activity...</td></tr>
       </tbody>
     </table>
   </div>
@@ -680,8 +680,17 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       if (route === "/api/start" || route === "/api/stop") {
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
         if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
-        if (route === "/api/start") controls.startBot(); else controls.stopBot();
-        return json(res, { running: controls.getBotStatus() });
+        if (route === "/api/start") {
+          controls.startBot();
+          janControls.start();
+        } else {
+          controls.stopBot();
+          janControls.stop();
+        }
+        return json(res, {
+          running: controls.getBotStatus(),
+          swarmRunning: janControls.getStatus()
+        });
       }
       if (route === "/api/jan/start" || route === "/api/jan/stop") {
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
@@ -714,7 +723,6 @@ function json(res, value, status = 200) {
 if (require.main === module) {
   const config = getConfig();
   getPortfolio();
-  janMvpBot.start();
   const server = createDashboardServer({ config, janControls: janMvpBot });
   server.listen(config.port, config.host, () => console.log("Dashboard listening on " + config.host + ":" + config.port));
   const shutdown = () => {
