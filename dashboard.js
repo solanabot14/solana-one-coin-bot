@@ -448,7 +448,7 @@ th,td{
 
 <p class="muted">
   Latest OG scan only. Counts can overlap because one token may fail more than one STRONG BUY confirmation.
-  Volume and Smart Money fields are observational. Post-Pump Guard is an active late-entry protection.
+  Volume and Smart Money fields are shown for context. Post-Pump, Current Activity and Late Momentum are active entry protections.
 </p>
 
 <div class="grid">
@@ -491,6 +491,14 @@ th,td{
   <div class="metric">
     <div class="metric-label">Post-Pump Guard</div>
     <div class="metric-value" id="rejectPostPump">0</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Current Activity Gate</div>
+    <div class="metric-value" id="rejectCurrentActivity">0</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Late Momentum Guard</div>
+    <div class="metric-value" id="rejectLateMomentum">0</div>
   </div>
   <div class="metric">
     <div class="metric-label">Smart Money Status</div>
