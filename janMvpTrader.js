@@ -245,6 +245,7 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
         entryDiscoverySources: Array.isArray(pos.entryDiscoverySources) ? [...pos.entryDiscoverySources] : [],
         entryCurrentActivity: pos.entryCurrentActivity ? structuredClone(pos.entryCurrentActivity) : null,
         entryPostPump: pos.entryPostPump ? structuredClone(pos.entryPostPump) : null,
+        entryPreDiscoveryPump: pos.entryPreDiscoveryPump ? structuredClone(pos.entryPreDiscoveryPump) : null,
         entryMarketDataIntegrity: pos.entryMarketDataIntegrity ? structuredClone(pos.entryMarketDataIntegrity) : null,
         entrySmartMoney: pos.entrySmartMoney ? structuredClone(pos.entrySmartMoney) : null,
         milestonesReached: [...newlyReached]
