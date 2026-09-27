@@ -45,7 +45,7 @@ test("pair lock keeps the entry pool even when another pool has more liquidity",
 	assert.equal(data.priceUsd, "0.63");
 	assert.equal(data.pairAddress, "ENTRY_PAIR");
 	assert.equal(requests.length, 1);
-	assert.match(requests[0].url, /\/latest\/dex\/tokens\/TOKEN$/);
+	assert.match(requests[0].url, /\/latest\/dex\/pairs\/solana\/ENTRY_PAIR$/);
 });
 
 test("pair lock never falls back when the saved entry pair is missing", async () => {
