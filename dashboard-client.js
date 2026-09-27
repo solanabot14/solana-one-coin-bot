@@ -205,18 +205,21 @@ function renderSlotSimulation(d) {
 	const executions = Array.isArray(sim.executions) ? sim.executions : [];
 	$("slotExecutions").innerHTML = executions.map(execution => {
 		const time = execution.time ? new Date(execution.time).toLocaleString() : "—";
-		const amount = execution.type === "BUY"
+		const isSplit = execution.type === "SPLIT";
+		const amount = execution.type === "BUY" || isSplit
 			? money(execution.amount)
 			: execution.saleValue == null ? "—" : money(execution.saleValue);
 		const details = execution.type === "SELL"
 			? `${escapeHtml(execution.reason || "SELL")} ${execution.pnl == null ? "" : " | " + money(execution.pnl)}`
-			: "BUY";
+			: isSplit
+				? `Created slots ${escapeHtml((execution.childSlotIds || []).join(", "))} | Parent kept ${money(execution.remainingBalance)}`
+				: "BUY";
 		return `<tr>
 			<td>${escapeHtml(time)}</td>
 			<td>${escapeHtml(execution.type || "—")}</td>
 			<td>Slot ${escapeHtml(execution.slotId)}</td>
-			<td><strong>${escapeHtml(execution.symbol)}</strong></td>
-			<td>${price(execution.price)}</td>
+			<td><strong>${isSplit ? "—" : escapeHtml(execution.symbol || "—")}</strong></td>
+			<td>${isSplit ? "—" : price(execution.price)}</td>
 			<td>${amount}</td>
 			<td class="${execution.pnl == null ? "" : cls(execution.pnl)}">${details}</td>
 		</tr>`;

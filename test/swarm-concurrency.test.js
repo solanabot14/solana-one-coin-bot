@@ -35,7 +35,7 @@ function strongCoin(i) {
   };
 }
 
-test("one shared Swarm scan can fill all free slots simultaneously", async t => {
+test("one OG cache snapshot can fill all free Swarm slots without a discovery call", async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "swarm-concurrent-"));
   t.after(() => fs.rmSync(dir, { recursive:true, force:true }));
 
@@ -44,15 +44,18 @@ test("one shared Swarm scan can fill all free slots simultaneously", async t => 
     config:{ slotCount:5, startingSlotValue:2, targets:[10,50,100,150] }
   });
   const timers = fakeTimers();
-  let discoveryCalls = 0;
+  let cacheReads = 0;
 
   const bot = createJanMvpBot({
     trader,
     timers,
     getOgPortfolio:() => ({ position:null }),
-    discoverCandidates:async () => {
-      discoveryCalls++;
-      return [1,2,3,4,5].map(strongCoin);
+    getCachedCandidates:() => {
+      cacheReads++;
+      return {
+        updatedAt:new Date().toISOString(),
+        candidates:[1,2,3,4,5].map(strongCoin)
+      };
     },
     getTokenData:async () => null,
     notifier:{ sendTelegramMessage:async () => ({ sent:true }) }
@@ -62,7 +65,7 @@ test("one shared Swarm scan can fill all free slots simultaneously", async t => 
   await new Promise(resolve => setImmediate(resolve));
 
   const state = trader.getState();
-  assert.equal(discoveryCalls, 1);
+  assert.equal(cacheReads, 1);
   assert.equal(state.slots.filter(slot => slot.position).length, 5);
   assert.equal(new Set(state.slots.map(slot => slot.position.tokenAddress)).size, 5);
   assert.deepEqual(state.slots.map(slot => slot.position.symbol), ["COIN1","COIN2","COIN3","COIN4","COIN5"]);
@@ -102,7 +105,10 @@ test("Swarm can mirror OG into one slot and use other coins in remaining slots",
     trader,
     timers,
     getOgPortfolio:() => ({ position:ogPosition }),
-    discoverCandidates:async () => [strongCoin(1), strongCoin(2), strongCoin(3), strongCoin(4)],
+    getCachedCandidates:() => ({
+      updatedAt:new Date().toISOString(),
+      candidates:[strongCoin(1), strongCoin(2), strongCoin(3), strongCoin(4)]
+    }),
     getTokenData:async () => null,
     notifier:{ sendTelegramMessage:async () => ({ sent:true }) }
   });
@@ -114,7 +120,7 @@ test("Swarm can mirror OG into one slot and use other coins in remaining slots",
   const open = state.slots.map(slot => slot.position).filter(Boolean);
   assert.equal(open.length, 5);
   assert.equal(open.filter(position => position.source === "OG_MIRROR").length, 1);
-  assert.equal(open.filter(position => position.source === "SWARM_SCAN").length, 4);
+  assert.equal(open.filter(position => position.source === "SWARM_CACHE").length, 4);
   assert.equal(new Set(open.map(position => position.tokenAddress)).size, 5);
   bot.stop();
 });

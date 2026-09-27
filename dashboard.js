@@ -566,8 +566,8 @@ th,td{
 <div class="card section">
   <h2>Swarm</h2>
   <p class="muted">
-    Independent concurrent paper simulation. All free slots can act at the same time from one shared
-    DexScreener scan. Swarm can mirror the OG opportunity when a slot is free while other slots trade different qualifying coins.
+    Independent concurrent paper simulation. Swarm uses the OG scanner candidate cache only for new entries,
+    refills free slots immediately, and can mirror the OG opportunity while other slots trade different qualifying coins.
   </p>
 
   <div class="controls" style="margin-bottom:16px">
@@ -590,7 +590,7 @@ th,td{
     </div>
     <div class="metric">
       <div class="metric-label">Milestones</div>
-      <div class="metric-value" id="slotTarget">$10 → $50 → $100 → $150</div>
+      <div class="metric-value" id="slotTarget">$10 SPLIT → $100</div>
     </div>
     <div class="metric">
       <div class="metric-label">Completed Swarm Trades</div>

@@ -50,7 +50,7 @@ test("each slot compounds its entire realized balance independently", t => {
 	assert.equal(trader.getState().slots[1].cashBalance, 2);
 });
 
-test("partial exits remain inside the same slot and full close compounds proceeds", t => {
+test("partial exits remain inside the same slot and a ten-dollar close funds two child slots", t => {
 	const { trader } = setup(t, { slotCount:1, startingSlotValue:10, targets:[50,100,150] });
 	trader.buy(1, coin("A"));
 	const id = trader.getState().slots[0].position.id;
@@ -65,19 +65,29 @@ test("partial exits remain inside the same slot and full close compounds proceed
 	const final = trader.sell(1, 1.20, 100, { expectedPosition:id, reason:"TRAILING STOP" });
 	assert.equal(final.success, true);
 	assert.equal(trader.getState().slots[0].position, null);
-	assert.ok(trader.getState().slots[0].cashBalance > 10);
+	assert.ok(trader.getState().slots[0].cashBalance > 6);
+	assert.equal(trader.getState().slots.length, 3);
+	assert.equal(trader.getState().slots[0].splitDone, true);
+	assert.equal(trader.getState().slots[1].parentSlotId, 1);
+	assert.equal(trader.getState().slots[2].parentSlotId, 1);
+	assert.equal(trader.getState().slots[1].cashBalance, 2);
+	assert.equal(trader.getState().slots[2].cashBalance, 2);
 	assert.equal(trader.getState().slots[0].completedTrades, 1);
 });
 
-test("milestones are independent per slot and scalable", t => {
+test("ten-dollar milestone changes the parent and children to the post-split one-hundred target", t => {
 	const { trader } = setup(t);
 	trader.buy(1, coin("A"));
 	const first = trader.sell(1, 5, 100, { reason:"BIG WIN" });
 	assert.deepEqual(first.newlyReached, [10]);
 	assert.deepEqual(trader.getState().slots[0].milestonesReached, [10]);
 	assert.deepEqual(trader.getState().slots[1].milestonesReached, []);
-	assert.equal(trader.getDashboardState().slots[0].currentTarget, 50);
-	assert.equal(trader.getDashboardState().slots[1].currentTarget, 10);
+	assert.equal(trader.getState().slots.length, 4);
+	const dashboard = trader.getDashboardState();
+	assert.equal(dashboard.startingCapital, 4);
+	assert.equal(dashboard.slots.find(slot => slot.id === 1).currentTarget, 100);
+	assert.equal(dashboard.slots.find(slot => slot.id === 2).currentTarget, 10);
+	assert.equal(dashboard.slots.find(slot => slot.parentSlotId === 1).currentTarget, 100);
 });
 
 test("executions stay in Jan MVP history only", t => {

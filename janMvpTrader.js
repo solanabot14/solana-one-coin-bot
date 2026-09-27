@@ -12,6 +12,9 @@ function getConfig(env = process.env) {
   return {
     slotCount: Math.max(1, Math.min(20, Number.parseInt(env.JAN_MVP_SLOT_COUNT || "5", 10) || 5)),
     startingSlotValue: Math.max(0.01, Number(env.JAN_MVP_SLOT_START || 2) || 2),
+    splitThreshold: Math.max(0.01, Number(env.SWARM_SPLIT_THRESHOLD || 10) || 10),
+    postSplitTarget: Math.max(0.01, Number(env.SWARM_POST_SPLIT_TARGET || 100) || 100),
+    childSlotValue: Math.max(0.01, Number(env.SWARM_CHILD_SLOT_VALUE || 2) || 2),
     targets: parseTargets(env.JAN_MVP_TARGETS)
   };
 }
@@ -27,13 +30,17 @@ function initialState(config = getConfig()) {
     mode: "JAN_MVP_LIVE_PAPER",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    targets: [...config.targets],
+    targets: [config.splitThreshold, config.postSplitTarget],
+    initialCapital: config.slotCount * config.startingSlotValue,
     slots: Array.from({ length: config.slotCount }, (_, i) => ({
       id: i + 1,
       startingValue: config.startingSlotValue,
       cashBalance: config.startingSlotValue,
       position: null,
       milestonesReached: [],
+      splitDone: false,
+      parentSlotId: null,
+      generation: 0,
       completedTrades: 0,
       winners: 0,
       losers: 0
@@ -43,6 +50,7 @@ function initialState(config = getConfig()) {
 }
 
 function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = getConfig() } = {}) {
+  config = { ...getConfig(), ...config };
   let state = null;
 
   function validate(data) {
@@ -59,6 +67,18 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
     if (state) return state;
     if (io.existsSync(dataFile)) state = validate(JSON.parse(io.readFileSync(dataFile, "utf8")));
     else state = initialState(config);
+
+    state.targets = [config.splitThreshold, config.postSplitTarget];
+    if (!Number.isFinite(Number(state.initialCapital)) || Number(state.initialCapital) <= 0) {
+      const rootSlots = state.slots.filter(slot => slot.parentSlotId == null);
+      state.initialCapital = rootSlots.reduce((sum, slot) => sum + Number(slot.startingValue || 0), 0) ||
+        config.slotCount * config.startingSlotValue;
+    }
+    for (const slot of state.slots) {
+      if (typeof slot.splitDone !== "boolean") slot.splitDone = false;
+      if (slot.parentSlotId === undefined) slot.parentSlotId = null;
+      if (!Number.isFinite(Number(slot.generation))) slot.generation = 0;
+    }
     return state;
   }
 
@@ -132,6 +152,7 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
     };
     next.executions.push({
       type:"BUY", slotId:slot.id, positionId:slot.position.id, symbol:slot.position.symbol,
+      tokenAddress:slot.position.tokenAddress,
       price, amount, time:slot.position.entryTime,
       source: options.source || null,
       sourceOgPositionId: options.sourceOgPositionId || null
@@ -178,6 +199,7 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
 
     const execution = {
       type:"SELL", slotId:slot.id, positionId:pos.id, symbol:pos.symbol,
+      tokenAddress:pos.tokenAddress,
       price:currentPrice, percentSold:percentToSell, saleValue, pnl,
       pnlPercent: costBasisSold > 0 ? pnl / costBasisSold * 100 : 0,
       reason:options.reason || "MANUAL", time:new Date().toISOString()
@@ -213,6 +235,52 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
       };
       execution.closedTrade = closedTrade;
       slot.position = null;
+
+      if (
+        !slot.splitDone &&
+        finalCash >= config.splitThreshold &&
+        finalCash >= config.childSlotValue * 2
+      ) {
+        const nextId = () =>
+          next.slots.reduce((max, item) => Math.max(max, Number(item.id) || 0), 0) + 1;
+
+        const childIds = [];
+        for (let i = 0; i < 2; i++) {
+          const childId = nextId();
+          childIds.push(childId);
+          next.slots.push({
+            id: childId,
+            startingValue: config.childSlotValue,
+            cashBalance: config.childSlotValue,
+            position: null,
+            milestonesReached: [],
+            splitDone: true,
+            parentSlotId: slot.id,
+            generation: Number(slot.generation || 0) + 1,
+            completedTrades: 0,
+            winners: 0,
+            losers: 0
+          });
+        }
+
+        slot.cashBalance -= config.childSlotValue * 2;
+        slot.splitDone = true;
+
+        next.executions.push({
+          type:"SPLIT",
+          slotId:slot.id,
+          childSlotIds:childIds,
+          amount:config.childSlotValue * 2,
+          remainingBalance:slot.cashBalance,
+          time:new Date().toISOString()
+        });
+
+        closedTrade.split = {
+          childSlotIds: childIds,
+          childSlotValue: config.childSlotValue,
+          remainingBalance: slot.cashBalance
+        };
+      }
     }
 
     next.executions.push(execution);
@@ -225,10 +293,10 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
     const data = structuredClone(load());
     let totalEquity = 0;
     for (const slot of data.slots) totalEquity += Number(slot.cashBalance || 0) + Number(slot.position?.amountInvested || 0);
-    const startingCapital = data.slots.reduce((sum,s)=>sum+Number(s.startingValue||0),0);
+    const startingCapital = Number(data.initialCapital) || config.slotCount * config.startingSlotValue;
     return {
       mode:data.mode,
-      targets:[...data.targets],
+      targets:[config.splitThreshold, config.postSplitTarget],
       slotCount:data.slots.length,
       startingCapital,
       totalCapital:totalEquity,
@@ -236,15 +304,19 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
       tradesReplayed:data.slots.reduce((sum,s)=>sum+Number(s.completedTrades||0),0),
       executions:[...data.executions].slice(-100).reverse(),
       slots:data.slots.map(slot => {
-        const nextTarget = data.targets.find(t => !(slot.milestonesReached || []).includes(t)) ?? null;
-        const previousTarget = [...data.targets].reverse().find(t => (slot.milestonesReached || []).includes(t)) || 0;
-        const base = nextTarget == null ? 1 : Math.max(0.01,nextTarget-previousTarget);
-        const progress = nextTarget == null ? 100 : Math.max(0, Math.min(100,(slot.cashBalance-previousTarget)/base*100));
+        const nextTarget = slot.splitDone ? config.postSplitTarget : config.splitThreshold;
+        const previousTarget = slot.splitDone ? config.splitThreshold : 0;
+        const balanceForProgress = Number(slot.cashBalance || 0) + Number(slot.position?.amountInvested || 0);
+        const base = Math.max(0.01, nextTarget - previousTarget);
+        const progress = Math.max(0, Math.min(100, (balanceForProgress - previousTarget) / base * 100));
         return { ...slot, currentTarget:nextTarget, previousTarget, progressPercent:progress };
       }),
-      targetProgress:data.targets.map(target => ({
+      targetProgress:[config.splitThreshold, config.postSplitTarget].map(target => ({
         target,
-        reachedBy:data.slots.filter(s => (s.milestonesReached || []).includes(target)).length,
+        reachedBy:data.slots.filter(s => {
+          const equity = Number(s.cashBalance || 0) + Number(s.position?.amountInvested || 0);
+          return target === config.splitThreshold ? s.splitDone || equity >= target : equity >= target;
+        }).length,
         totalSlots:data.slots.length
       }))
     };

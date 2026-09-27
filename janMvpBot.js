@@ -6,7 +6,8 @@ const paperTrader = require("./paperTrader");
 
 const POSITION_MONITOR_MS = 5000;
 const OG_FOLLOW_INTERVAL_MS = 2000;
-const SWARM_SCAN_INTERVAL_MS = 120000;
+const SWARM_CACHE_FILL_INTERVAL_MS = 1000;
+const SWARM_CACHE_MAX_AGE_MS = 3 * 60 * 1000;
 const TOKEN_COOLDOWN_MS = 60 * 60 * 1000;
 
 const HARD_STOP_PERCENT = -10;
@@ -28,16 +29,16 @@ function createJanMvpBot({
   trader = createJanMvpTrader(),
   getTokenData = market.getTokenData,
   getOgPortfolio = paperTrader.getPortfolio,
-  discoverCandidates = scanner.discoverCandidates,
+  getCachedCandidates = scanner.getCachedCandidates,
   timers = globalThis,
   notifier = telegram
 } = {}) {
   let activeSession = null;
   let followInterval = null;
-  let scanInterval = null;
+  let fillInterval = null;
   let monitorInterval = null;
   let followBusy = false;
-  let scanBusy = false;
+  let fillBusy = false;
   let monitorBusy = false;
   let lastError = null;
   const isActive = session => activeSession === session && !session.signal.aborted;
@@ -137,15 +138,17 @@ function createJanMvpBot({
       );
   }
 
-  async function runSwarmScan(session) {
+  async function fillFreeSlotsFromCache(session) {
     const slots = freeSlots();
-    if (!slots.length) return;
+    if (!slots.length || !isActive(session)) return;
 
-    const candidates = await discoverCandidates({ signal: session.signal });
-    if (!isActive(session)) return;
+    const cache = getCachedCandidates();
+    const updatedAtMs = Date.parse(cache?.updatedAt || "");
+    const ageMs = Number.isFinite(updatedAtMs) ? Date.now() - updatedAtMs : Infinity;
+    if (ageMs > SWARM_CACHE_MAX_AGE_MS) return;
 
     const occupied = occupiedTokenAddresses();
-    const usable = candidates.filter(coin =>
+    const usable = (cache?.candidates || []).filter(coin =>
       coin.signal === "STRONG BUY" &&
       coin.tokenAddress &&
       !occupied.has(coin.tokenAddress)
@@ -165,11 +168,11 @@ function createJanMvpBot({
       }
       if (!coin) break;
 
-      const result = trader.buy(slot.id, coin, { source: "SWARM_SCAN" });
+      const result = trader.buy(slot.id, coin, { source: "SWARM_CACHE" });
       if (result.success) {
         occupied.add(coin.tokenAddress);
         console.log(
-          `SWARM BUY | Slot ${slot.id} | ${coin.symbol} | ${Number(result.trade.amountInvested).toFixed(2)} | Source SWARM_SCAN`
+          `SWARM CACHE BUY | Slot ${slot.id} | ${coin.symbol} | ${Number(result.trade.amountInvested).toFixed(2)} | Cache age ${Math.round(ageMs / 1000)}s`
         );
       }
     }
@@ -208,6 +211,7 @@ function createJanMvpBot({
       const result = trader.sell(slot.id, currentPrice, percent, { expectedPosition, reason });
       if (result.success && result.closedTrade) {
         await notifyMilestones(result.closedTrade, result.newlyReached);
+        void tick("fill", session);
       }
       return result;
     };
@@ -256,15 +260,15 @@ function createJanMvpBot({
   async function tick(kind, session = activeSession) {
     if (!session || !isActive(session)) return;
     if (kind === "follow" && followBusy) return;
-    if (kind === "scan" && scanBusy) return;
+    if (kind === "fill" && fillBusy) return;
     if (kind === "monitor" && monitorBusy) return;
     if (kind === "follow") followBusy = true;
-    else if (kind === "scan") scanBusy = true;
+    else if (kind === "fill") fillBusy = true;
     else monitorBusy = true;
 
     try {
       if (kind === "follow") await followOgEntry(session);
-      else if (kind === "scan") await runSwarmScan(session);
+      else if (kind === "fill") await fillFreeSlotsFromCache(session);
       else await monitorPositions(session);
     } catch (error) {
       if (isActive(session)) {
@@ -273,7 +277,7 @@ function createJanMvpBot({
       }
     } finally {
       if (kind === "follow") followBusy = false;
-      else if (kind === "scan") scanBusy = false;
+      else if (kind === "fill") fillBusy = false;
       else monitorBusy = false;
     }
   }
@@ -283,13 +287,13 @@ function createJanMvpBot({
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("SWARM STARTED | Concurrent independent slots with shared market scan");
+    console.log("SWARM STARTED | Concurrent slots using OG candidate cache only");
     monitorInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
     followInterval = timers.setInterval(() => tick("follow", session), OG_FOLLOW_INTERVAL_MS);
-    scanInterval = timers.setInterval(() => tick("scan", session), SWARM_SCAN_INTERVAL_MS);
+    fillInterval = timers.setInterval(() => tick("fill", session), SWARM_CACHE_FILL_INTERVAL_MS);
     void tick("monitor", session);
     void tick("follow", session);
-    void tick("scan", session);
+    void tick("fill", session);
   }
 
   function stop() {
@@ -297,9 +301,9 @@ function createJanMvpBot({
     activeSession.abort();
     activeSession = null;
     timers.clearInterval(followInterval);
-    timers.clearInterval(scanInterval);
+    timers.clearInterval(fillInterval);
     timers.clearInterval(monitorInterval);
-    followInterval = scanInterval = monitorInterval = null;
+    followInterval = fillInterval = monitorInterval = null;
     console.log("SWARM STOPPED");
   }
 
