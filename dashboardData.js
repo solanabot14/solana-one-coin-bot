@@ -496,6 +496,7 @@ async function buildDashboardData(data, getTokenData) {
 	const v35Baseline = data.strategyDatasets?.["V3.5"] || null;
 	const v35Research = {
 		strategyVersion: "V3.5",
+		name: "Clean Research",
 		startedAt: v35Baseline?.startedAt || null,
 		startingBalance: Number.isFinite(Number(v35Baseline?.startingBalance)) ? Number(v35Baseline.startingBalance) : null,
 		stats: summarizeTrades(cleanV35Trades, v35Baseline?.startingBalance),
@@ -503,11 +504,24 @@ async function buildDashboardData(data, getTokenData) {
 		birdeyeRankStats: buildBirdeyeRankStats(cleanV35Trades)
 	};
 
+	const cleanV36Trades = completedTrades.filter(trade => trade.strategyVersion === "V3.6");
+	const v36Baseline = data.strategyDatasets?.["V3.6"] || null;
+	const v36Research = {
+		strategyVersion: "V3.6",
+		name: "Pump Structure Protection",
+		startedAt: v36Baseline?.startedAt || null,
+		startingBalance: Number.isFinite(Number(v36Baseline?.startingBalance)) ? Number(v36Baseline.startingBalance) : null,
+		stats: summarizeTrades(cleanV36Trades, v36Baseline?.startingBalance),
+		sourceStats: buildSourceStats(cleanV36Trades),
+		birdeyeRankStats: buildBirdeyeRankStats(cleanV36Trades)
+	};
+
 	return {
 		...data, live, equity, totalPnl: equity === null ? null : equity - data.startingBalance,
 		priceUnavailable: !!data.position && !live, completedTrades, scoreStats: buildScoreStats(completedTrades), exitReasonCounts,
 		strategyVersionStats: buildStrategyVersionStats(completedTrades),
 		v35Research,
+		v36Research,
 		slotSimulation: buildSlotSimulation(completedTrades),
 		tokenDiversity: buildTokenDiversityView(completedTrades, data.position),
 		stats
