@@ -1,5 +1,5 @@
 const axios = require("axios");
-const { getTokenData } = require("./dexscreener");
+const { getTokenData, getMarketDataHealth } = require("./dexscreener");
 const { analyzeToken } = require("./strategy");
 
 const DISCOVERY_SOURCES = [
@@ -46,6 +46,14 @@ const MIN_ENTRY_VOLUME_5M_USD = Number.parseFloat(process.env.MIN_ENTRY_VOLUME_5
 const MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT = Number.parseFloat(process.env.MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT || "1") || 1;
 const LATE_ENTRY_1H_PERCENT = Number.parseFloat(process.env.LATE_ENTRY_1H_PERCENT || "20") || 20;
 const LATE_ENTRY_MAX_5M_PERCENT = Number.parseFloat(process.env.LATE_ENTRY_MAX_5M_PERCENT || "1.5") || 1.5;
+const MARKET_DATA_MAX_MCAP_FDV_RATIO = Math.max(
+	10,
+	Number.parseFloat(process.env.MARKET_DATA_MAX_MCAP_FDV_RATIO || "100") || 100
+);
+const MARKET_DATA_MAX_LIQUIDITY_FDV_RATIO = Math.max(
+	2,
+	Number.parseFloat(process.env.MARKET_DATA_MAX_LIQUIDITY_FDV_RATIO || "10") || 10
+);
 const BIRDEYE_TRENDING_REFRESH_MS = Math.max(
 	60 * 60 * 1000,
 	(Number.parseInt(process.env.BIRDEYE_TRENDING_REFRESH_MINUTES || "90", 10) || 90) * 60 * 1000
@@ -75,6 +83,7 @@ let lastDiscoveryTelemetry = {
 		postPump: 0,
 		currentActivity: 0,
 		lateMomentum: 0,
+		marketDataIntegrity: 0,
 		nearEntries: []
 	}
 };
@@ -417,6 +426,46 @@ async function mapWithConcurrency(items, concurrency, worker, signal) {
 }
 
 
+function marketDataIntegritySnapshot(data, expectedTokenAddress = null) {
+	const price = Number(data?.priceUsd);
+	const liquidity = Number(data?.liquidityUsd);
+	const fdv = Number(data?.fdv);
+	const marketCap = Number(data?.marketCap);
+	const reasons = [];
+
+	if (!(price > 0)) reasons.push("INVALID_PRICE");
+	if (!data?.pairAddress) reasons.push("MISSING_PAIR");
+	if (expectedTokenAddress && data?.tokenAddress && data.tokenAddress !== expectedTokenAddress) {
+		reasons.push("TOKEN_ID_MISMATCH");
+	}
+
+	if (fdv > 0 && marketCap > 0) {
+		const ratio = Math.max(fdv / marketCap, marketCap / fdv);
+		if (ratio > MARKET_DATA_MAX_MCAP_FDV_RATIO) {
+			reasons.push("EXTREME_MCAP_FDV_RATIO");
+		}
+	}
+
+	if (fdv > 0 && liquidity > 0 && liquidity / fdv > MARKET_DATA_MAX_LIQUIDITY_FDV_RATIO) {
+		reasons.push("LIQUIDITY_FDV_INCONSISTENT");
+	}
+
+	return {
+		ok: reasons.length === 0,
+		reasons,
+		source: data?.marketDataSource || "DexScreener",
+		dexId: data?.dexId || null,
+		pairAddress: data?.pairAddress || null,
+		tokenAddress: data?.tokenAddress || expectedTokenAddress || null,
+		quoteTokenAddress: data?.quoteTokenAddress || null,
+		quoteTokenSymbol: data?.quoteTokenSymbol || null,
+		priceUsd: Number.isFinite(price) ? price : null,
+		liquidityUsd: Number.isFinite(liquidity) ? liquidity : null,
+		fdv: Number.isFinite(fdv) && fdv > 0 ? fdv : null,
+		marketCap: Number.isFinite(marketCap) && marketCap > 0 ? marketCap : null
+	};
+}
+
 function entryQualitySnapshot(data) {
 	const liquidity = Number(data?.liquidityUsd) || 0;
 	const volume5m = Number(data?.volume5m) || 0;
@@ -462,6 +511,7 @@ function entryDiagnostics(data, analysis) {
 	if (reasons.some(reason => reason.includes("POST-PUMP GUARD"))) blockers.push("POST_PUMP");
 	if (reasons.some(reason => reason.includes("CURRENT ACTIVITY GATE"))) blockers.push("CURRENT_ACTIVITY");
 	if (reasons.some(reason => reason.includes("LATE MOMENTUM GUARD"))) blockers.push("LATE_MOMENTUM");
+	if (reasons.some(reason => reason.includes("MARKET DATA INTEGRITY"))) blockers.push("MARKET_DATA_INTEGRITY");
 
 	if (!blockers.length && analysis?.signal !== "STRONG BUY") {
 		if (Number(analysis?.score) < 8) blockers.push("SCORE_BELOW_8");
@@ -495,6 +545,7 @@ function buildRejectionTelemetry(candidates = []) {
 		postPump: 0,
 		currentActivity: 0,
 		lateMomentum: 0,
+		marketDataIntegrity: 0,
 		nearEntries: []
 	};
 
@@ -513,6 +564,7 @@ function buildRejectionTelemetry(candidates = []) {
 		if (blockers.includes("POST_PUMP")) telemetry.postPump++;
 		if (blockers.includes("CURRENT_ACTIVITY")) telemetry.currentActivity++;
 		if (blockers.includes("LATE_MOMENTUM")) telemetry.lateMomentum++;
+		if (blockers.includes("MARKET_DATA_INTEGRITY")) telemetry.marketDataIntegrity++;
 
 		if (Number(candidate.score) >= 6 || candidate.signal === "BUY") {
 			telemetry.nearEntries.push({
@@ -567,6 +619,7 @@ async function analyzeDiscoveredToken(token, signal) {
 		buyRatio5m: quality.buyRatio5m
 	};
 	const postPump = postPumpSnapshot(token.tokenAddress, data.priceUsd);
+	const marketDataIntegrity = marketDataIntegritySnapshot(data, token.tokenAddress);
 
 	if (analysis.signal === "STRONG BUY" && postPump.blocked) {
 		console.log(
@@ -617,6 +670,22 @@ async function analyzeDiscoveredToken(token, signal) {
 		};
 	}
 
+	if (analysis.signal === "STRONG BUY" && !marketDataIntegrity.ok) {
+		console.log(
+			"MARKET DATA INTEGRITY BLOCK | " + (data.symbol || token.tokenAddress) +
+			" | " + marketDataIntegrity.reasons.join(", ") +
+			" | Pair: " + (marketDataIntegrity.pairAddress || "missing")
+		);
+		analysis = {
+			...analysis,
+			signal: "AVOID",
+			reasons: [
+				...(analysis.reasons || []),
+				"MARKET DATA INTEGRITY: " + marketDataIntegrity.reasons.join(", ")
+			]
+		};
+	}
+
 	const diagnostics = entryDiagnostics(data, analysis);
 
 	console.log(
@@ -635,6 +704,7 @@ async function analyzeDiscoveredToken(token, signal) {
 		entryDiagnostics: diagnostics,
 		currentActivity,
 		postPump,
+		marketDataIntegrity,
 		smartMoney: null,
 		birdeyeRank: Number.isFinite(Number(token.birdeyeRank)) ? Number(token.birdeyeRank) : null
 	};
@@ -713,8 +783,10 @@ async function discoverCandidates({ signal } = {}) {
 				lateEntry1hPercent: LATE_ENTRY_1H_PERCENT,
 				lateEntryMax5mPercent: LATE_ENTRY_MAX_5M_PERCENT,
 				currentActivityBlocked: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("CURRENT_ACTIVITY")).length,
-				lateMomentumBlocked: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("LATE_MOMENTUM")).length
+				lateMomentumBlocked: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("LATE_MOMENTUM")).length,
+			marketDataIntegrityBlocked: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("MARKET_DATA_INTEGRITY")).length
 			},
+			marketDataHealth: getMarketDataHealth(),
 			rejectionTelemetry: buildRejectionTelemetry(candidates),
 			topCandidates: candidates.slice(0, 12).map(candidate => ({
 				symbol: candidate.symbol || "-",
@@ -752,6 +824,7 @@ module.exports = {
 	entryDiagnostics,
 	buildRejectionTelemetry,
 	entryQualitySnapshot,
+	marketDataIntegritySnapshot,
 	updateRollingPriceHistory,
 	postPumpSnapshot,
 	smartMoneyItems,
