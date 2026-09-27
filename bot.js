@@ -33,7 +33,7 @@ function recentTokenStats(history = [], now = Date.now()) {
   for (const trade of history) {
     if (!trade?.tokenAddress || !trade?.entryTime) continue;
     const entryMs = Date.parse(trade.entryTime);
-    if (!Number.isFinite(entryMs) || entryMs < cutoff) continue;
+    if (!Number.isFinite(entryMs)) continue;
 
     const key = trade.positionId || `${trade.tokenAddress}|${trade.entryTime}`;
     if (!positions.has(key)) {
@@ -80,6 +80,10 @@ function recentTokenStats(history = [], now = Date.now()) {
       position.completed = true;
     }
 
+    const enteredRecently = position.entryTime >= cutoff;
+    const exitedRecently = Number.isFinite(position.lastExitAt) && position.lastExitAt >= cutoff;
+    if (!enteredRecently && !exitedRecently) continue;
+
     if (!byToken.has(position.tokenAddress)) {
       byToken.set(position.tokenAddress, {
         entries: 0,
@@ -91,17 +95,17 @@ function recentTokenStats(history = [], now = Date.now()) {
     }
 
     const stats = byToken.get(position.tokenAddress);
-    stats.entries++;
-    if (position.completed) {
+    if (enteredRecently) stats.entries++;
+    if (position.completed && exitedRecently) {
       if (position.pnl > 0) stats.winningCompletions++;
       else if (position.pnl < 0) stats.losingCompletions++;
     }
-    if (Number.isFinite(position.maxGainPercent)) {
+    if ((enteredRecently || exitedRecently) && Number.isFinite(position.maxGainPercent)) {
       stats.maxGainPercent = stats.maxGainPercent == null
         ? position.maxGainPercent
         : Math.max(stats.maxGainPercent, position.maxGainPercent);
     }
-    if (Number.isFinite(position.lastExitAt)) {
+    if (exitedRecently) {
       stats.lastExitAt = Math.max(stats.lastExitAt || 0, position.lastExitAt);
     }
   }
