@@ -43,7 +43,13 @@ function groupCompletedTrades(history = [], position = null) {
 				entryPriceChange1h: trade.entryPriceChange1h ?? null,
 				entryPriceChange24h: trade.entryPriceChange24h ?? null,
 				entryLiquidityUsd: trade.entryLiquidityUsd ?? null,
+				entryVolume5m: trade.entryVolume5m ?? null,
+				entryVolume1h: trade.entryVolume1h ?? null,
 				entryVolume24h: trade.entryVolume24h ?? null,
+				entryDiscoverySources: Array.isArray(trade.entryDiscoverySources) ? [...trade.entryDiscoverySources] : [],
+				entryCurrentActivity: trade.entryCurrentActivity ? structuredClone(trade.entryCurrentActivity) : null,
+				entryPostPump: trade.entryPostPump ? structuredClone(trade.entryPostPump) : null,
+				entrySmartMoney: trade.entrySmartMoney ? structuredClone(trade.entrySmartMoney) : null,
 				entryBuys5m: trade.entryBuys5m ?? null,
 				entrySells5m: trade.entrySells5m ?? null,
 				entryTransactions5m: trade.entryTransactions5m ?? null,
@@ -335,7 +341,7 @@ async function buildDashboardData(data, getTokenData) {
 				highestPrice, maxGainPercent, holdTimeMs,
 				mode, profitLockActive, protectedFloorPercent, trailingExitPrice, trailingExitPercent,
 				priceChange5m: fresh.priceChange5m, priceChange1h: fresh.priceChange1h, priceChange24h: fresh.priceChange24h,
-				liquidityUsd: fresh.liquidityUsd, volume24h: fresh.volume24h, buys5m, sells5m, transactions5m,
+				liquidityUsd: fresh.liquidityUsd, volume5m: fresh.volume5m, volume1h: fresh.volume1h, volume24h: fresh.volume24h, buys5m, sells5m, transactions5m,
 				buyRatio5m: transactions5m > 0 ? buys5m / transactions5m : 0,
 				pairAddress: p.pairAddress || fresh.pairAddress || null
 			};

@@ -257,6 +257,11 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     console.log(`5m Momentum: ${bestCoin.priceChange5m}%`);
     console.log(`1h Momentum: ${bestCoin.priceChange1h}%`);
     console.log(`5m Buys/Sells: ${bestCoin.buys5m}/${bestCoin.sells5m}`);
+    console.log(`5m Volume: ${Number(bestCoin.volume5m || 0).toFixed(2)}`);
+    console.log(`15m Observed Extension: ${Number(bestCoin.postPump?.extensionPercent || 0).toFixed(2)}%`);
+    if (bestCoin.smartMoney) {
+      console.log(`Smart Money: Net $ ${Number(bestCoin.smartMoney.netFlow || 0).toFixed(2)} | Traders: ${Number(bestCoin.smartMoney.smartTraders || 0)}`);
+    }
 
     const trade = buy(bestCoin);
     if (trade.success) void notifier.notifyTrade("BUY", trade.trade);

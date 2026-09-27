@@ -29,6 +29,8 @@ async function getTokenData(tokenAddress, { signal } = {}) {
 			symbol: bestPair.baseToken?.symbol,
 			priceUsd: bestPair.priceUsd,
 			liquidityUsd: bestPair.liquidity?.usd,
+			volume5m: bestPair.volume?.m5,
+			volume1h: bestPair.volume?.h1,
 			volume24h: bestPair.volume?.h24,
 			priceChange5m: bestPair.priceChange?.m5,
 			priceChange1h: bestPair.priceChange?.h1,

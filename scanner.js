@@ -32,6 +32,16 @@ const TRENDING_PAIRS_PER_META = 10;
 const TRENDING_TOTAL_TOKEN_LIMIT = 8;
 const BIRDEYE_TRENDING_URL = "https://public-api.birdeye.so/defi/token_trending";
 const BIRDEYE_TRENDING_LIMIT = 20;
+const SMART_MONEY_URL = "https://public-api.birdeye.so/smart-money/v1/token/list";
+const SMART_MONEY_LIMIT = 20;
+const SMART_MONEY_REFRESH_MS = Math.max(
+	60 * 60 * 1000,
+	(Number.parseInt(process.env.BIRDEYE_SMART_MONEY_REFRESH_MINUTES || "360", 10) || 360) * 60 * 1000
+);
+const POST_PUMP_WINDOW_MS = 15 * 60 * 1000;
+const POST_PUMP_MIN_HISTORY_MS = 4 * 60 * 1000;
+const POST_PUMP_MIN_OBSERVATIONS = 3;
+const POST_PUMP_GUARD_PERCENT = Number.parseFloat(process.env.POST_PUMP_GUARD_PERCENT || "6") || 6;
 const BIRDEYE_TRENDING_REFRESH_MS = Math.max(
 	60 * 60 * 1000,
 	(Number.parseInt(process.env.BIRDEYE_TRENDING_REFRESH_MINUTES || "90", 10) || 90) * 60 * 1000
@@ -58,6 +68,7 @@ let lastDiscoveryTelemetry = {
 		antiChase5m: 0,
 		antiChase1h: 0,
 		antiChase24h: 0,
+		postPump: 0,
 		nearEntries: []
 	}
 };
@@ -65,6 +76,14 @@ let lastDiscoveryTelemetry = {
 let lastCandidateCache = {
 	updatedAt: null,
 	candidates: []
+};
+
+const rollingPriceHistory = new Map();
+
+let smartMoneyCache = {
+	updatedAt: 0,
+	lastStatus: "NOT_FETCHED",
+	items: new Map()
 };
 
 async function fetchDiscoverySource(source, signal) {
@@ -161,6 +180,124 @@ async function fetchBirdeyeTrendingTokens(signal) {
 		return { name: "Birdeye Trending 1H", type: "organic", tokens: [] };
 	}
 }
+
+function updateRollingPriceHistory(tokenAddress, price, now = Date.now()) {
+	price = Number(price);
+	if (!tokenAddress || !Number.isFinite(price) || price <= 0) return [];
+
+	const cutoff = now - POST_PUMP_WINDOW_MS;
+	const points = (rollingPriceHistory.get(tokenAddress) || [])
+		.filter(point => point.time >= cutoff);
+
+	points.push({ time: now, price });
+	rollingPriceHistory.set(tokenAddress, points);
+
+	if (rollingPriceHistory.size > 1500) {
+		for (const [address, history] of rollingPriceHistory) {
+			if (!history.length || history[history.length - 1].time < cutoff) {
+				rollingPriceHistory.delete(address);
+			}
+		}
+	}
+
+	return points;
+}
+
+function postPumpSnapshot(tokenAddress, price, now = Date.now()) {
+	const points = updateRollingPriceHistory(tokenAddress, price, now);
+	const spanMs = points.length > 1 ? points[points.length - 1].time - points[0].time : 0;
+	const minimum = points.reduce((min, point) => Math.min(min, point.price), Number.POSITIVE_INFINITY);
+	const extensionPercent = Number.isFinite(minimum) && minimum > 0
+		? (Number(price) - minimum) / minimum * 100
+		: 0;
+	const enoughHistory =
+		points.length >= POST_PUMP_MIN_OBSERVATIONS &&
+		spanMs >= POST_PUMP_MIN_HISTORY_MS;
+
+	return {
+		windowMinutes: 15,
+		observations: points.length,
+		historySpanMinutes: spanMs / 60000,
+		minObservedPrice: Number.isFinite(minimum) ? minimum : null,
+		extensionPercent,
+		thresholdPercent: POST_PUMP_GUARD_PERCENT,
+		enoughHistory,
+		blocked: enoughHistory && extensionPercent >= POST_PUMP_GUARD_PERCENT
+	};
+}
+
+function smartMoneyItems(payload) {
+	const data = payload?.data;
+	if (Array.isArray(data)) return data;
+	if (Array.isArray(data?.items)) return data.items;
+	if (Array.isArray(data?.tokens)) return data.tokens;
+	return [];
+}
+
+function normalizeSmartMoneyItem(item) {
+	const tokenAddress = item?.token || item?.address || item?.token_address || item?.tokenAddress;
+	if (!tokenAddress) return null;
+	return {
+		tokenAddress,
+		netFlow: Number(item?.net_flow) || 0,
+		smartTraders: Number(item?.smart_traders_no) || 0,
+		buyVolumeUsd: Number(item?.volume_buy_usd) || 0,
+		sellVolumeUsd: Number(item?.volume_sell_usd) || 0
+	};
+}
+
+async function refreshSmartMoney(signal) {
+	const now = Date.now();
+	if (smartMoneyCache.updatedAt && now - smartMoneyCache.updatedAt < SMART_MONEY_REFRESH_MS) {
+		return smartMoneyCache;
+	}
+
+	const apiKey = process.env.BIRDEYE_API_KEY;
+	if (!apiKey) {
+		smartMoneyCache = { updatedAt: now, lastStatus: "NO_API_KEY", items: new Map() };
+		return smartMoneyCache;
+	}
+
+	try {
+		const sinceTrendingRefresh = Date.now() - birdeyeTrendingCache.updatedAt;
+		if (birdeyeTrendingCache.updatedAt && sinceTrendingRefresh >= 0 && sinceTrendingRefresh < 1100) {
+			await new Promise(resolve => setTimeout(resolve, 1100 - sinceTrendingRefresh));
+			if (signal?.aborted) return smartMoneyCache;
+		}
+
+		const response = await axios.get(SMART_MONEY_URL, {
+			timeout: 10000,
+			signal,
+			params: {
+				sort_by: "net_flow",
+				trader_style: "all",
+				interval: "1d",
+				sort_type: "desc",
+				offset: 0,
+				limit: SMART_MONEY_LIMIT
+			},
+			headers: { Accept: "application/json", "X-API-KEY": apiKey, "x-chain": "solana" }
+		});
+		const normalized = smartMoneyItems(response.data).map(normalizeSmartMoneyItem).filter(Boolean);
+		smartMoneyCache = {
+			updatedAt: now,
+			lastStatus: "OK",
+			items: new Map(normalized.map(item => [item.tokenAddress, item]))
+		};
+		console.log("Birdeye Smart Money: " + normalized.length + " tokens cached");
+	} catch (error) {
+		const status = error?.response?.status || "ERROR";
+		smartMoneyCache = { updatedAt: now, lastStatus: String(status), items: new Map() };
+		console.log("Birdeye Smart Money unavailable: " + error.message + " | cached retry window " + Math.round(SMART_MONEY_REFRESH_MS / 60000) + "m");
+	}
+
+	return smartMoneyCache;
+}
+
+function smartMoneyForToken(tokenAddress) {
+	return smartMoneyCache.items.get(tokenAddress) || null;
+}
+
 async function fetchTrendingMetaTokens(signal) {
 	try {
 		const response = await axios.get(TRENDING_META_URL, {
@@ -281,6 +418,7 @@ function entryDiagnostics(data, analysis) {
 	if (reasons.some(reason => reason.includes("ANTI-CHASE: 5m"))) blockers.push("ANTI_CHASE_5M");
 	if (reasons.some(reason => reason.includes("ANTI-CHASE: 1h"))) blockers.push("ANTI_CHASE_1H");
 	if (reasons.some(reason => reason.includes("ANTI-CHASE: 24h"))) blockers.push("ANTI_CHASE_24H");
+	if (reasons.some(reason => reason.includes("POST-PUMP GUARD"))) blockers.push("POST_PUMP");
 
 	if (!blockers.length && analysis?.signal !== "STRONG BUY") {
 		if (Number(analysis?.score) < 8) blockers.push("SCORE_BELOW_8");
@@ -311,6 +449,7 @@ function buildRejectionTelemetry(candidates = []) {
 		antiChase5m: 0,
 		antiChase1h: 0,
 		antiChase24h: 0,
+		postPump: 0,
 		nearEntries: []
 	};
 
@@ -326,6 +465,7 @@ function buildRejectionTelemetry(candidates = []) {
 		if (blockers.includes("ANTI_CHASE_5M")) telemetry.antiChase5m++;
 		if (blockers.includes("ANTI_CHASE_1H")) telemetry.antiChase1h++;
 		if (blockers.includes("ANTI_CHASE_24H")) telemetry.antiChase24h++;
+		if (blockers.includes("POST_PUMP")) telemetry.postPump++;
 
 		if (Number(candidate.score) >= 6 || candidate.signal === "BUY") {
 			telemetry.nearEntries.push({
@@ -337,6 +477,11 @@ function buildRejectionTelemetry(candidates = []) {
 				priceChange1h: candidate.entryDiagnostics?.change1h ?? null,
 				buyRatio: candidate.entryDiagnostics?.buyRatio ?? null,
 				transactions5m: candidate.entryDiagnostics?.totalTransactions ?? null,
+				volume5m: Number(candidate.volume5m) || 0,
+				volumeLiquidity5mPercent: Number(candidate.currentActivity?.volumeLiquidity5mPercent) || 0,
+				postPumpExtensionPercent: Number(candidate.postPump?.extensionPercent) || 0,
+				postPumpObservations: Number(candidate.postPump?.observations) || 0,
+				smartMoney: candidate.smartMoney ? { ...candidate.smartMoney } : null,
 				discoverySources: [...(candidate.discoverySources || [])]
 			});
 		}
@@ -365,8 +510,33 @@ async function analyzeDiscoveredToken(token, signal) {
 		return null;
 	}
 
-	const analysis = analyzeToken(data);
+	let analysis = analyzeToken(data);
+	const postPump = postPumpSnapshot(token.tokenAddress, data.priceUsd);
+	if (analysis.signal === "STRONG BUY" && postPump.blocked) {
+		console.log(
+			"POST-PUMP BLOCK | " + (data.symbol || token.tokenAddress) +
+			" | 15m observed extension: " + postPump.extensionPercent.toFixed(2) +
+			"% | observations: " + postPump.observations
+		);
+		analysis = {
+			...analysis,
+			signal: "AVOID",
+			reasons: [
+				...(analysis.reasons || []),
+				"POST-PUMP GUARD: " + postPump.extensionPercent.toFixed(2) + "% above rolling 15m observed low"
+			]
+		};
+	}
 	const diagnostics = entryDiagnostics(data, analysis);
+	const liquidity = Number(data.liquidityUsd) || 0;
+	const volume5m = Number(data.volume5m) || 0;
+	const currentActivity = {
+		volume5m,
+		volume1h: Number(data.volume1h) || 0,
+		volumeLiquidity5mPercent: liquidity > 0 ? volume5m / liquidity * 100 : 0,
+		transactions5m: diagnostics.totalTransactions,
+		buyRatio5m: diagnostics.buyRatio
+	};
 
 	console.log(
 		`PASSED FILTERS: ${data.symbol} | Score: ${analysis.score} | ` +
@@ -381,7 +551,10 @@ async function analyzeDiscoveredToken(token, signal) {
 		reasons: analysis.reasons,
 		discoverySources: [...token.discoverySources],
 		discoveryTypes: [...token.discoveryTypes],
-		entryDiagnostics: diagnostics
+		entryDiagnostics: diagnostics,
+		currentActivity,
+		postPump,
+		smartMoney: null
 	};
 }
 
@@ -412,6 +585,15 @@ async function discoverCandidates({ signal } = {}) {
 		if (signal?.aborted) return [];
 
 		const candidates = analyzed.filter(Boolean);
+
+		if (candidates.length) {
+			await refreshSmartMoney(signal);
+			if (signal?.aborted) return [];
+			for (const candidate of candidates) {
+				candidate.smartMoney = smartMoneyForToken(candidate.tokenAddress);
+			}
+		}
+
 		candidates.sort((a, b) => b.score - a.score);
 
 		const cacheUpdatedAt = new Date().toISOString();
@@ -432,6 +614,17 @@ async function discoverCandidates({ signal } = {}) {
 			strongBuys: candidates.filter(candidate => candidate.signal === "STRONG BUY").length,
 			scanDurationMs: Date.now() - scanStartedAt,
 			tokenLookupConcurrency: TOKEN_LOOKUP_CONCURRENCY,
+			smartMoney: {
+				status: smartMoneyCache.lastStatus,
+				updatedAt: smartMoneyCache.updatedAt ? new Date(smartMoneyCache.updatedAt).toISOString() : null,
+				matchedCandidates: candidates.filter(candidate => candidate.smartMoney).length,
+				cacheSize: smartMoneyCache.items.size
+			},
+			postPumpGuard: {
+				thresholdPercent: POST_PUMP_GUARD_PERCENT,
+				windowMinutes: 15,
+				blockedCandidates: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("POST_PUMP")).length
+			},
 			rejectionTelemetry: buildRejectionTelemetry(candidates),
 			topCandidates: candidates.slice(0, 12).map(candidate => ({
 				symbol: candidate.symbol || "-",
@@ -468,6 +661,10 @@ module.exports = {
 	mapWithConcurrency,
 	entryDiagnostics,
 	buildRejectionTelemetry,
+	updateRollingPriceHistory,
+	postPumpSnapshot,
+	smartMoneyItems,
+	normalizeSmartMoneyItem,
 	birdeyeTrendingItems,
 	birdeyeTrendingToTokens
 };

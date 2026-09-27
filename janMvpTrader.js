@@ -143,7 +143,13 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
       entryPriceChange1h: Number(coin.priceChange1h) || 0,
       entryPriceChange24h: Number(coin.priceChange24h) || 0,
       entryLiquidityUsd: Number(coin.liquidityUsd) || 0,
+      entryVolume5m: Number(coin.volume5m) || 0,
+      entryVolume1h: Number(coin.volume1h) || 0,
       entryVolume24h: Number(coin.volume24h) || 0,
+      entryDiscoverySources: Array.isArray(coin.discoverySources) ? [...coin.discoverySources] : [],
+      entryCurrentActivity: coin.currentActivity ? structuredClone(coin.currentActivity) : null,
+      entryPostPump: coin.postPump ? structuredClone(coin.postPump) : null,
+      entrySmartMoney: coin.smartMoney ? structuredClone(coin.smartMoney) : null,
       entryBuys5m: buys5m,
       entrySells5m: sells5m,
       entryBuyRatio: buyRatio,
@@ -231,6 +237,13 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
         entryTime: pos.entryTime,
         exitTime: execution.time,
         highestPrice: pos.highestPrice,
+        entryVolume5m: pos.entryVolume5m ?? null,
+        entryVolume1h: pos.entryVolume1h ?? null,
+        entryVolume24h: pos.entryVolume24h ?? null,
+        entryDiscoverySources: Array.isArray(pos.entryDiscoverySources) ? [...pos.entryDiscoverySources] : [],
+        entryCurrentActivity: pos.entryCurrentActivity ? structuredClone(pos.entryCurrentActivity) : null,
+        entryPostPump: pos.entryPostPump ? structuredClone(pos.entryPostPump) : null,
+        entrySmartMoney: pos.entrySmartMoney ? structuredClone(pos.entrySmartMoney) : null,
         milestonesReached: [...newlyReached]
       };
       execution.closedTrade = closedTrade;

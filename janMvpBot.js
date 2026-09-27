@@ -104,7 +104,13 @@ function createJanMvpBot({
       priceChange1h: Number(position.entryPriceChange1h) || 0,
       priceChange24h: Number(position.entryPriceChange24h) || 0,
       liquidityUsd: Number(position.entryLiquidityUsd) || 0,
+      volume5m: Number(position.entryVolume5m) || 0,
+      volume1h: Number(position.entryVolume1h) || 0,
       volume24h: Number(position.entryVolume24h) || 0,
+      discoverySources: Array.isArray(position.entryDiscoverySources) ? [...position.entryDiscoverySources] : [],
+      currentActivity: position.entryCurrentActivity ? structuredClone(position.entryCurrentActivity) : null,
+      postPump: position.entryPostPump ? structuredClone(position.entryPostPump) : null,
+      smartMoney: position.entrySmartMoney ? structuredClone(position.entrySmartMoney) : null,
       buys5m: Number(position.entryBuys5m) || 0,
       sells5m: Number(position.entrySells5m) || 0
     };
