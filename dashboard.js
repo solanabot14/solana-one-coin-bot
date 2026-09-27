@@ -553,6 +553,10 @@ th,td{
     <div class="metric-value" id="rejectPreDiscoveryPump">0</div>
   </div>
   <div class="metric">
+    <div class="metric-label">Post-Pump Rebound</div>
+    <div class="metric-value" id="rejectPostPumpRebound">0</div>
+  </div>
+  <div class="metric">
     <div class="metric-label">Birdeye OHLCV Status</div>
     <div class="metric-value" id="birdeyeOhlcvStatus">—</div>
   </div>
