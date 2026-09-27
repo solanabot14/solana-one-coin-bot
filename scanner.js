@@ -810,7 +810,7 @@ function entryQualitySnapshot(data) {
 		transactions5m,
 		buyRatio5m,
 		activityHealthy:
-			volume5m >= MIN_ENTRY_VOLUME_5M_USD ||
+			volume5m >= MIN_ENTRY_VOLUME_5M_USD &&
 			volumeLiquidity5mPercent >= MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT,
 		lateMomentum:
 			change1h >= LATE_ENTRY_1H_PERCENT &&
@@ -981,8 +981,9 @@ async function analyzeDiscoveredToken(token, signal) {
 			signal: "AVOID",
 			reasons: [
 				...(analysis.reasons || []),
-				"CURRENT ACTIVITY GATE: 5m volume $" + quality.volume5m.toFixed(2) +
-				" and 5m vol/liquidity " + quality.volumeLiquidity5mPercent.toFixed(2) + "% are below entry thresholds"
+				"CURRENT ACTIVITY GATE: requires 5m volume >= $" + MIN_ENTRY_VOLUME_5M_USD.toFixed(0) +
+				" AND 5m vol/liquidity >= " + MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT.toFixed(2) +
+				"%; observed $" + quality.volume5m.toFixed(2) + " and " + quality.volumeLiquidity5mPercent.toFixed(2) + "%"
 			]
 		};
 	}
@@ -1164,6 +1165,7 @@ async function discoverCandidates({ signal } = {}) {
 				blockedCandidates: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("POST_PUMP")).length
 			},
 			entryQualityGates: {
+				activityRule: "BOTH_REQUIRED",
 				minVolume5mUsd: MIN_ENTRY_VOLUME_5M_USD,
 				minVolumeLiquidity5mPercent: MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT,
 				lateEntry1hPercent: LATE_ENTRY_1H_PERCENT,
