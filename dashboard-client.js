@@ -188,7 +188,7 @@ function renderSlotSimulation(d) {
 			<td class="green">${number(slot.winners)}</td>
 			<td class="red">${number(slot.losers)}</td>
 		</tr>`;
-	}).join("") || `<tr><td colspan="9">Waiting for Jan MVP activity...</td></tr>`;
+	}).join("") || `<tr><td colspan="9">Waiting for Swarm activity...</td></tr>`;
 
 	const progress = Array.isArray(sim.targetProgress) ? sim.targetProgress : [];
 	$("slotTargets").innerHTML = (sim.targets || []).map(target => {
@@ -220,7 +220,7 @@ function renderSlotSimulation(d) {
 			<td>${amount}</td>
 			<td class="${execution.pnl == null ? "" : cls(execution.pnl)}">${details}</td>
 		</tr>`;
-	}).join("") || `<tr><td colspan="7">Waiting for Jan MVP executions...</td></tr>`;
+	}).join("") || `<tr><td colspan="7">Waiting for Swarm executions...</td></tr>`;
 }
 
 function showTab(name) {
@@ -257,11 +257,11 @@ async function refreshData() {
 async function refreshJanStatus() {
 	try {
 		const d = await request("/api/jan/status");
-		$("janStatus").textContent = d.running ? "JAN MVP ONLINE" : "JAN MVP OFFLINE";
+		$("janStatus").textContent = d.running ? "SWARM ONLINE" : "SWARM OFFLINE";
 		$("janStatus").className = "status" + (d.running ? " online" : "");
-		if (d.error) $("janNotice").textContent = "Jan MVP error: " + d.error;
+		if (d.error) $("janNotice").textContent = "Swarm error: " + d.error;
 	} catch (error) {
-		$("janStatus").textContent = "JAN MVP UNAVAILABLE";
+		$("janStatus").textContent = "SWARM UNAVAILABLE";
 		$("janStatus").className = "status";
 	}
 }
@@ -272,8 +272,8 @@ async function janControl(action) {
 	try {
 		await request("/api/jan/" + action, {method:"POST", headers:{"X-Bot-Control":"1"}});
 		$("janNotice").textContent = action === "stop"
-			? "Jan MVP paused. Its simulated positions remain saved."
-			: "Jan MVP running independently from the original bot.";
+			? "Swarm paused. Its simulated positions remain saved."
+			: "Swarm running independently from the original bot.";
 		await refreshJanStatus();
 	} catch (error) {
 		$("janNotice").textContent = error.message;
