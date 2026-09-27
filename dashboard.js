@@ -382,6 +382,38 @@ th,td{
 
 <div class="card section">
 
+<h2>Token Diversity</h2>
+
+<p class="muted">
+  Read-only view of the OG token reentry rules. This section does not change trading behavior.
+</p>
+
+<div style="overflow-x:auto">
+
+<table>
+<thead>
+<tr>
+  <th>Coin</th>
+  <th>Status</th>
+  <th>Entries 24h</th>
+  <th>Wins</th>
+  <th>Losses</th>
+  <th>Max Gain</th>
+  <th>Available Again</th>
+  <th>Reason</th>
+</tr>
+</thead>
+
+<tbody id="diversityRows">
+<tr><td colspan="8">No recent token activity.</td></tr>
+</tbody>
+</table>
+
+</div>
+</div>
+
+<div class="card section">
+
 <h2>Performance by Entry Score</h2>
 
 <div style="overflow-x:auto">
