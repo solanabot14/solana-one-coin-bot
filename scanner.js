@@ -699,6 +699,7 @@ function entryDiagnostics(data, analysis) {
 	if (reasons.some(reason => reason.includes("CURRENT ACTIVITY GATE"))) blockers.push("CURRENT_ACTIVITY");
 	if (reasons.some(reason => reason.includes("LATE MOMENTUM GUARD"))) blockers.push("LATE_MOMENTUM");
 	if (reasons.some(reason => reason.includes("MARKET DATA INTEGRITY"))) blockers.push("MARKET_DATA_INTEGRITY");
+	if (reasons.some(reason => reason.includes("PRE-DISCOVERY PUMP"))) blockers.push("PRE_DISCOVERY_PUMP");
 
 	if (!blockers.length && analysis?.signal !== "STRONG BUY") {
 		if (Number(analysis?.score) < 8) blockers.push("SCORE_BELOW_8");
@@ -752,6 +753,7 @@ function buildRejectionTelemetry(candidates = []) {
 		if (blockers.includes("CURRENT_ACTIVITY")) telemetry.currentActivity++;
 		if (blockers.includes("LATE_MOMENTUM")) telemetry.lateMomentum++;
 		if (blockers.includes("MARKET_DATA_INTEGRITY")) telemetry.marketDataIntegrity++;
+		if (blockers.includes("PRE_DISCOVERY_PUMP")) telemetry.preDiscoveryPump++;
 
 		if (Number(candidate.score) >= 6 || candidate.signal === "BUY") {
 			telemetry.nearEntries.push({
@@ -767,6 +769,7 @@ function buildRejectionTelemetry(candidates = []) {
 				volumeLiquidity5mPercent: Number(candidate.currentActivity?.volumeLiquidity5mPercent) || 0,
 				postPumpExtensionPercent: Number(candidate.postPump?.extensionPercent) || 0,
 				postPumpObservations: Number(candidate.postPump?.observations) || 0,
+				preDiscoveryPump: candidate.preDiscoveryPump ? structuredClone(candidate.preDiscoveryPump) : null,
 				smartMoney: candidate.smartMoney ? { ...candidate.smartMoney } : null,
 				discoverySources: [...(candidate.discoverySources || [])]
 			});
@@ -873,6 +876,41 @@ async function analyzeDiscoveredToken(token, signal) {
 		};
 	}
 
+	let preDiscoveryPump = {
+		source: "Birdeye OHLCV 1m",
+		status: "NOT_CHECKED",
+		blocked: false,
+		enoughHistory: false
+	};
+
+	if (analysis.signal === "STRONG BUY") {
+		preDiscoveryPump = await preEntryHistoricalPumpCheck(
+			token.tokenAddress,
+			data.priceUsd,
+			data.priceChange5m,
+			signal
+		);
+
+		if (preDiscoveryPump.blocked) {
+			const extension15 = Number(preDiscoveryPump.window15m?.extensionPercent);
+			const extension30 = Number(preDiscoveryPump.window30m?.extensionPercent);
+			console.log(
+				"PRE-DISCOVERY PUMP BLOCK | " + (data.symbol || token.tokenAddress) +
+				" | 15m: " + (Number.isFinite(extension15) ? extension15.toFixed(2) : "—") +
+				"% | 30m: " + (Number.isFinite(extension30) ? extension30.toFixed(2) : "—") +
+				"% | current 5m: " + (Number(data.priceChange5m) || 0).toFixed(2) + "%"
+			);
+			analysis = {
+				...analysis,
+				signal: "AVOID",
+				reasons: [
+					...(analysis.reasons || []),
+					"PRE-DISCOVERY PUMP: Birdeye OHLCV shows recent extension before scanner observation"
+				]
+			};
+		}
+	}
+
 	const diagnostics = entryDiagnostics(data, analysis);
 
 	console.log(
@@ -891,6 +929,7 @@ async function analyzeDiscoveredToken(token, signal) {
 		entryDiagnostics: diagnostics,
 		currentActivity,
 		postPump,
+		preDiscoveryPump,
 		marketDataIntegrity,
 		smartMoney: null,
 		birdeyeRank: Number.isFinite(Number(token.birdeyeRank)) ? Number(token.birdeyeRank) : null
@@ -972,6 +1011,15 @@ async function discoverCandidates({ signal } = {}) {
 				currentActivityBlocked: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("CURRENT_ACTIVITY")).length,
 				lateMomentumBlocked: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("LATE_MOMENTUM")).length
 			},
+			preDiscoveryPumpGuard: {
+				source: "Birdeye OHLCV 1m",
+				extension15mPercent: PRE_ENTRY_PUMP_15M_PERCENT,
+				extension30mPercent: PRE_ENTRY_PUMP_30M_PERCENT,
+				maxCurrent5mPercent: PRE_ENTRY_PUMP_MAX_5M_PERCENT,
+				maxRetracePercent: PRE_ENTRY_PUMP_MAX_RETRACE_PERCENT,
+				blockedCandidates: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("PRE_DISCOVERY_PUMP")).length,
+				usage: { ...birdeyeOhlcvUsage }
+			},
 			marketDataIntegrityGate: {
 				maxMcapFdvRatio: MARKET_DATA_MAX_MCAP_FDV_RATIO,
 				maxLiquidityFdvRatio: MARKET_DATA_MAX_LIQUIDITY_FDV_RATIO,
@@ -1016,6 +1064,9 @@ module.exports = {
 	buildRejectionTelemetry,
 	entryQualitySnapshot,
 	marketDataIntegritySnapshot,
+	preDiscoveryPumpSnapshot,
+	birdeyeOhlcvItems,
+	normalizeBirdeyeCandle,
 	updateRollingPriceHistory,
 	postPumpSnapshot,
 	smartMoneyItems,
