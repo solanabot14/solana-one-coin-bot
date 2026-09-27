@@ -219,11 +219,12 @@ function buildTokenDiversityView(completedTrades = [], openPosition = null, now 
 	}
 
 	if (openPosition?.tokenAddress) {
-		if (!rows.has(openPosition.tokenAddress)) {
+		const existed = rows.has(openPosition.tokenAddress);
+		if (!existed) {
 			rows.set(openPosition.tokenAddress, {
 				tokenAddress: openPosition.tokenAddress,
 				symbol: openPosition.symbol || "-",
-				entries24h: 1,
+				entries24h: 0,
 				wins24h: 0,
 				losses24h: 0,
 				maxGainPercent: null,
@@ -232,6 +233,8 @@ function buildTokenDiversityView(completedTrades = [], openPosition = null, now 
 			});
 		}
 		const row = rows.get(openPosition.tokenAddress);
+		const openEntryMs = Date.parse(openPosition.entryTime);
+		if (Number.isFinite(openEntryMs) && openEntryMs >= cutoff) row.entries24h++;
 		row.openNow = true;
 		row.symbol = openPosition.symbol || row.symbol;
 	}
