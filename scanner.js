@@ -39,6 +39,11 @@ let lastDiscoveryTelemetry = {
 	topCandidates: []
 };
 
+let lastCandidateCache = {
+	updatedAt: null,
+	candidates: []
+};
+
 async function fetchDiscoverySource(source, signal) {
 	try {
 		const response = await axios.get(source.url, {
@@ -193,8 +198,14 @@ async function discoverCandidates({ signal } = {}) {
 
 		candidates.sort((a, b) => b.score - a.score);
 
+		const cacheUpdatedAt = new Date().toISOString();
+		lastCandidateCache = {
+			updatedAt: cacheUpdatedAt,
+			candidates: structuredClone(candidates)
+		};
+
 		lastDiscoveryTelemetry = {
-			updatedAt: new Date().toISOString(),
+			updatedAt: cacheUpdatedAt,
 			sources: results.map(result => ({
 				name: result.name,
 				type: result.type,
@@ -223,8 +234,13 @@ function getDiscoveryTelemetry() {
 	return structuredClone(lastDiscoveryTelemetry);
 }
 
+function getCachedCandidates() {
+	return structuredClone(lastCandidateCache);
+}
+
 module.exports = {
 	discoverCandidates,
 	getDiscoveryTelemetry,
+	getCachedCandidates,
 	mergeDiscoveryTokens
 };
