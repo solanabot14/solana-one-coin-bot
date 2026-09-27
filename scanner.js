@@ -39,6 +39,20 @@ const TOKEN_SECURITY_CACHE_MS = Math.max(
 	5 * 60 * 1000,
 	(Number.parseInt(process.env.TOKEN_SECURITY_CACHE_MINUTES || "30", 10) || 30) * 60 * 1000
 );
+
+// Narrow, exact-mint exceptions only. Never infer trust from token name/symbol.
+// wXMR is a documented bridge asset whose mint/freeze authorities are part of
+// the bridge design; all ordinary tokens remain blocked when either authority is active.
+const VERIFIED_WRAPPED_ASSETS = new Map([
+	[
+		"WXMRyRZhsa19ety5erZhHg4N3xj3EVN92u94422teJp",
+		{
+			name: "wXMR",
+			bridgeProgramId: "EzBkC8P5wxab9kwrtV5hRdynHAfB5w3UPcPXNgMseVA8",
+			source: "wxmr.io / sullystuff/wxmr-frontend"
+		}
+	]
+]);
 const SMART_MONEY_LIMIT = 20;
 const SMART_MONEY_REFRESH_MS = Math.max(
 	60 * 60 * 1000,
@@ -816,18 +830,32 @@ async function tokenSecuritySnapshot(tokenAddress, signal) {
 		const freezeAuthority = info.freezeAuthority ?? null;
 		const mintable = mintAuthority !== null;
 		const freezable = freezeAuthority !== null;
-		const reasons = [];
-		if (mintable) reasons.push("MINT_AUTHORITY_ACTIVE");
-		if (freezable) reasons.push("FREEZE_AUTHORITY_ACTIVE");
+		const authorityRisks = [];
+		if (mintable) authorityRisks.push("MINT_AUTHORITY_ACTIVE");
+		if (freezable) authorityRisks.push("FREEZE_AUTHORITY_ACTIVE");
+
+		const verifiedWrappedAsset = VERIFIED_WRAPPED_ASSETS.get(tokenAddress) || null;
+		const wrappedExceptionApplied =
+			!!verifiedWrappedAsset &&
+			authorityRisks.length > 0;
+
+		const reasons = wrappedExceptionApplied
+			? ["VERIFIED_WRAPPED_ASSET_AUTHORITY_EXCEPTION"]
+			: [...authorityRisks];
 
 		const snapshot = {
 			...base,
-			status: "OK",
+			status: wrappedExceptionApplied ? "VERIFIED_WRAPPED_ASSET" : "OK",
 			mintAuthority,
 			freezeAuthority,
 			mintable,
 			freezable,
-			blocked: reasons.length > 0,
+			authorityRisks,
+			verifiedWrappedAsset: verifiedWrappedAsset
+				? { ...verifiedWrappedAsset }
+				: null,
+			wrappedExceptionApplied,
+			blocked: authorityRisks.length > 0 && !wrappedExceptionApplied,
 			reasons
 		};
 		tokenSecurityCache.set(tokenAddress, { updatedAt: now, snapshot });
@@ -1182,6 +1210,14 @@ async function analyzeDiscoveredToken(token, signal) {
 
 	if (analysis.signal === "STRONG BUY") {
 		tokenSecurity = await tokenSecuritySnapshot(token.tokenAddress, signal);
+		if (tokenSecurity.wrappedExceptionApplied) {
+			console.log(
+				"TOKEN SECURITY VERIFIED WRAPPED ASSET | " + (data.symbol || token.tokenAddress) +
+				" | " + tokenSecurity.verifiedWrappedAsset?.name +
+				" | Bridge: " + tokenSecurity.verifiedWrappedAsset?.bridgeProgramId +
+				" | Authority flags recorded but not treated as creator-token risk"
+			);
+		}
 		if (tokenSecurity.blocked) {
 			console.log(
 				"TOKEN SECURITY BLOCK | " + (data.symbol || token.tokenAddress) +
@@ -1321,6 +1357,8 @@ async function discoverCandidates({ signal } = {}) {
 				source: "Solana RPC getAccountInfo",
 				cacheMinutes: Math.round(TOKEN_SECURITY_CACHE_MS / 60000),
 				blockedCandidates: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("TOKEN_SECURITY")).length,
+				verifiedWrappedExceptions: candidates.filter(candidate => candidate.tokenSecurity?.wrappedExceptionApplied).length,
+				verifiedWrappedMints: Array.from(VERIFIED_WRAPPED_ASSETS.keys()),
 				failMode: "OPEN_ON_RPC_ERROR"
 			},
 			marketDataIntegrityGate: {
