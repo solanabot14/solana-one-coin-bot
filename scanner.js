@@ -783,8 +783,12 @@ async function discoverCandidates({ signal } = {}) {
 				lateEntry1hPercent: LATE_ENTRY_1H_PERCENT,
 				lateEntryMax5mPercent: LATE_ENTRY_MAX_5M_PERCENT,
 				currentActivityBlocked: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("CURRENT_ACTIVITY")).length,
-				lateMomentumBlocked: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("LATE_MOMENTUM")).length,
-			marketDataIntegrityBlocked: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("MARKET_DATA_INTEGRITY")).length
+				lateMomentumBlocked: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("LATE_MOMENTUM")).length
+			},
+			marketDataIntegrityGate: {
+				maxMcapFdvRatio: MARKET_DATA_MAX_MCAP_FDV_RATIO,
+				maxLiquidityFdvRatio: MARKET_DATA_MAX_LIQUIDITY_FDV_RATIO,
+				blockedCandidates: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("MARKET_DATA_INTEGRITY")).length
 			},
 			marketDataHealth: getMarketDataHealth(),
 			rejectionTelemetry: buildRejectionTelemetry(candidates),
