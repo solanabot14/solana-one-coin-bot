@@ -839,6 +839,7 @@ function entryDiagnostics(data, analysis) {
 	if (reasons.some(reason => reason.includes("LATE MOMENTUM GUARD"))) blockers.push("LATE_MOMENTUM");
 	if (reasons.some(reason => reason.includes("MARKET DATA INTEGRITY"))) blockers.push("MARKET_DATA_INTEGRITY");
 	if (reasons.some(reason => reason.includes("PRE-DISCOVERY PUMP"))) blockers.push("PRE_DISCOVERY_PUMP");
+	if (reasons.some(reason => reason.includes("POST-PUMP REBOUND"))) blockers.push("POST_PUMP_REBOUND");
 
 	if (!blockers.length && analysis?.signal !== "STRONG BUY") {
 		if (Number(analysis?.score) < 8) blockers.push("SCORE_BELOW_8");
@@ -894,6 +895,7 @@ function buildRejectionTelemetry(candidates = []) {
 		if (blockers.includes("LATE_MOMENTUM")) telemetry.lateMomentum++;
 		if (blockers.includes("MARKET_DATA_INTEGRITY")) telemetry.marketDataIntegrity++;
 		if (blockers.includes("PRE_DISCOVERY_PUMP")) telemetry.preDiscoveryPump++;
+		if (blockers.includes("POST_PUMP_REBOUND")) telemetry.postPumpRebound++;
 
 		if (Number(candidate.score) >= 6 || candidate.signal === "BUY") {
 			telemetry.nearEntries.push({
@@ -1048,6 +1050,23 @@ async function analyzeDiscoveredToken(token, signal) {
 					"PRE-DISCOVERY PUMP: Birdeye OHLCV shows recent extension before scanner observation"
 				]
 			};
+		} else if (preDiscoveryPump.failedStructure?.blocked) {
+			const failed = preDiscoveryPump.failedStructure;
+			console.log(
+				"POST-PUMP REBOUND BLOCK | " + (data.symbol || token.tokenAddress) +
+				" | run-up: " + Number(failed.runupPercent).toFixed(2) +
+				"% | drawdown: " + Number(failed.drawdownPercent).toFixed(2) +
+				"% | rebound: " + Number(failed.reboundPercent).toFixed(2) +
+				"% | below peak: " + Number(failed.belowPeakPercent).toFixed(2) + "%"
+			);
+			analysis = {
+				...analysis,
+				signal: "AVOID",
+				reasons: [
+					...(analysis.reasons || []),
+					"POST-PUMP REBOUND: prior pump failed, sold off, and current move is only a partial rebound"
+				]
+			};
 		}
 	}
 
@@ -1158,6 +1177,14 @@ async function discoverCandidates({ signal } = {}) {
 				maxCurrent5mPercent: PRE_ENTRY_PUMP_MAX_5M_PERCENT,
 				maxRetracePercent: PRE_ENTRY_PUMP_MAX_RETRACE_PERCENT,
 				blockedCandidates: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("PRE_DISCOVERY_PUMP")).length,
+				postPumpReboundBlocked: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("POST_PUMP_REBOUND")).length,
+				failedStructureThresholds: {
+					minRunupPercent: FAILED_STRUCTURE_MIN_RUNUP_PERCENT,
+					minDrawdownPercent: FAILED_STRUCTURE_MIN_DRAWDOWN_PERCENT,
+					minReboundPercent: FAILED_STRUCTURE_MIN_REBOUND_PERCENT,
+					maxReboundPercent: FAILED_STRUCTURE_MAX_REBOUND_PERCENT,
+					minBelowHighPercent: FAILED_STRUCTURE_MIN_BELOW_HIGH_PERCENT
+				},
 				usage: { ...birdeyeOhlcvUsage }
 			},
 			marketDataIntegrityGate: {
@@ -1205,6 +1232,7 @@ module.exports = {
 	entryQualitySnapshot,
 	marketDataIntegritySnapshot,
 	preDiscoveryPumpSnapshot,
+	failedStructureSnapshot,
 	birdeyeOhlcvItems,
 	normalizeBirdeyeCandle,
 	updateRollingPriceHistory,
