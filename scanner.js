@@ -29,6 +29,10 @@ const TRENDING_META_URL = "https://api.dexscreener.com/metas/trending/v1";
 const TRENDING_META_DETAIL_BASE = "https://api.dexscreener.com/metas/meta/v1/";
 const TRENDING_META_LIMIT = 3;
 const TRENDING_PAIRS_PER_META = 10;
+const TOKEN_LOOKUP_CONCURRENCY = Math.max(
+	1,
+	Math.min(12, Number.parseInt(process.env.SCANNER_TOKEN_CONCURRENCY || "8", 10) || 8)
+);
 
 let lastDiscoveryTelemetry = {
 	updatedAt: null,
@@ -145,8 +149,66 @@ function mergeDiscoveryTokens(sourceResults = []) {
 	return Array.from(uniqueSolanaTokens.values());
 }
 
+
+async function mapWithConcurrency(items, concurrency, worker, signal) {
+	const results = new Array(items.length);
+	let nextIndex = 0;
+
+	async function runWorker() {
+		while (true) {
+			if (signal?.aborted) return;
+			const index = nextIndex++;
+			if (index >= items.length) return;
+			results[index] = await worker(items[index], index);
+		}
+	}
+
+	const workerCount = Math.min(Math.max(1, concurrency), items.length || 1);
+	await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+	return results;
+}
+
+async function analyzeDiscoveredToken(token, signal) {
+	if (signal?.aborted) return null;
+
+	const data = await getTokenData(token.tokenAddress, { signal });
+	if (!data || signal?.aborted) return null;
+
+	console.log(
+		`CHECK ${data.symbol} | Liquidity: ${data.liquidityUsd || 0} | ` +
+		`Volume24h: ${data.volume24h || 0} | Sources: ${token.discoverySources.join(", ")}`
+	);
+
+	if (
+		(data.liquidityUsd || 0) < 50000 ||
+		(data.volume24h || 0) < 100000
+	) {
+		return null;
+	}
+
+	const analysis = analyzeToken(data);
+
+	console.log(
+		`PASSED FILTERS: ${data.symbol} | Score: ${analysis.score} | ` +
+		`Signal: ${analysis.signal} | Sources: ${token.discoverySources.join(", ")}`
+	);
+
+	return {
+		tokenAddress: token.tokenAddress,
+		...data,
+		score: analysis.score,
+		signal: analysis.signal,
+		reasons: analysis.reasons,
+		discoverySources: [...token.discoverySources],
+		discoveryTypes: [...token.discoveryTypes]
+	};
+}
+
 async function discoverCandidates({ signal } = {}) {
-	console.log("\nScanning Solana for active tokens...");
+	const scanStartedAt = Date.now();
+	console.log(
+		`\nScanning Solana for active tokens... | Token concurrency: ${TOKEN_LOOKUP_CONCURRENCY}`
+	);
 
 	try {
 		const results = await Promise.all([
@@ -158,44 +220,16 @@ async function discoverCandidates({ signal } = {}) {
 
 		console.log(`Unique Solana candidates: ${solanaTokens.length}`);
 
-		const candidates = [];
+		const analyzed = await mapWithConcurrency(
+			solanaTokens,
+			TOKEN_LOOKUP_CONCURRENCY,
+			token => analyzeDiscoveredToken(token, signal),
+			signal
+		);
 
-		for (const token of solanaTokens) {
-			if (signal?.aborted) return [];
+		if (signal?.aborted) return [];
 
-			const data = await getTokenData(token.tokenAddress, { signal });
-			if (!data) continue;
-
-			console.log(
-				`CHECK ${data.symbol} | Liquidity: $${data.liquidityUsd || 0} | ` +
-				`Volume24h: $${data.volume24h || 0} | Sources: ${token.discoverySources.join(", ")}`
-			);
-
-			if (
-				(data.liquidityUsd || 0) < 50000 ||
-				(data.volume24h || 0) < 100000
-			) {
-				continue;
-			}
-
-			const analysis = analyzeToken(data);
-
-			console.log(
-				`PASSED FILTERS: ${data.symbol} | Score: ${analysis.score} | ` +
-				`Signal: ${analysis.signal} | Sources: ${token.discoverySources.join(", ")}`
-			);
-
-			candidates.push({
-				tokenAddress: token.tokenAddress,
-				...data,
-				score: analysis.score,
-				signal: analysis.signal,
-				reasons: analysis.reasons,
-				discoverySources: [...token.discoverySources],
-				discoveryTypes: [...token.discoveryTypes]
-			});
-		}
-
+		const candidates = analyzed.filter(Boolean);
 		candidates.sort((a, b) => b.score - a.score);
 
 		const cacheUpdatedAt = new Date().toISOString();
@@ -214,6 +248,8 @@ async function discoverCandidates({ signal } = {}) {
 			uniqueSolanaCandidates: solanaTokens.length,
 			candidatesAfterSafetyFilters: candidates.length,
 			strongBuys: candidates.filter(candidate => candidate.signal === "STRONG BUY").length,
+			scanDurationMs: Date.now() - scanStartedAt,
+			tokenLookupConcurrency: TOKEN_LOOKUP_CONCURRENCY,
 			topCandidates: candidates.slice(0, 12).map(candidate => ({
 				symbol: candidate.symbol || "-",
 				score: candidate.score,
@@ -222,7 +258,10 @@ async function discoverCandidates({ signal } = {}) {
 			}))
 		};
 
-		console.log(`Candidates after safety filters: ${candidates.length}`);
+		const durationMs = Date.now() - scanStartedAt;
+		console.log(
+			`Candidates after safety filters: ${candidates.length} | Scan completed in ${(durationMs / 1000).toFixed(2)}s`
+		);
 		return candidates;
 	} catch (error) {
 		console.error("Scanner error:", error.message);
@@ -242,5 +281,6 @@ module.exports = {
 	discoverCandidates,
 	getDiscoveryTelemetry,
 	getCachedCandidates,
-	mergeDiscoveryTokens
+	mergeDiscoveryTokens,
+	mapWithConcurrency
 };
