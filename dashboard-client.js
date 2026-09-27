@@ -266,23 +266,6 @@ async function refreshJanStatus() {
 	}
 }
 
-async function janControl(action) {
-	$("janStartButton").disabled = true;
-	$("janStopButton").disabled = true;
-	try {
-		await request("/api/jan/" + action, {method:"POST", headers:{"X-Bot-Control":"1"}});
-		$("janNotice").textContent = action === "stop"
-			? "Swarm paused. Its simulated positions remain saved."
-			: "Swarm running independently from the original bot.";
-		await refreshJanStatus();
-	} catch (error) {
-		$("janNotice").textContent = error.message;
-	} finally {
-		$("janStartButton").disabled = false;
-		$("janStopButton").disabled = false;
-	}
-}
-
 async function control(action) {
 	$("startButton").disabled = true; $("stopButton").disabled = true;
 	try {
@@ -297,8 +280,6 @@ $("startButton").addEventListener("click", () => control("start"));
 $("stopButton").addEventListener("click", () => control("stop"));
 $("botTab").addEventListener("click", () => showTab("bot"));
 $("slotTab").addEventListener("click", () => showTab("slot"));
-$("janStartButton").addEventListener("click", () => janControl("start"));
-$("janStopButton").addEventListener("click", () => janControl("stop"));
 
 async function pollStatus() { await refreshStatus(); await refreshJanStatus(); setTimeout(pollStatus, 2000); }
 async function pollData() { await refreshData(); setTimeout(pollData, 5000); }
