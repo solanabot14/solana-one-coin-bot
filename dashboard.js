@@ -492,7 +492,7 @@ th,td{
 
 <p class="muted">
   Latest OG scan only. Counts can overlap because one token may fail more than one STRONG BUY confirmation.
-  Volume and Smart Money fields are shown for context. Post-Pump, Current Activity and Late Momentum are active entry protections.
+  Volume and Smart Money fields are shown for context. Post-Pump, Current Activity, Late Momentum and Market Data Integrity are active entry protections.
 </p>
 
 <div class="grid">
@@ -543,6 +543,14 @@ th,td{
   <div class="metric">
     <div class="metric-label">Late Momentum Guard</div>
     <div class="metric-value" id="rejectLateMomentum">0</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Market Data Integrity</div>
+    <div class="metric-value" id="rejectMarketIntegrity">0</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Dex Discovery Health</div>
+    <div class="metric-value" id="dexDiscoveryHealth">—</div>
   </div>
   <div class="metric">
     <div class="metric-label">Smart Money Status</div>
