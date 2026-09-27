@@ -115,6 +115,47 @@ function renderDiscoveryTelemetry(d) {
 	</tr>`).join("") || `<tr><td colspan="4">Waiting for scan data...</td></tr>`;
 }
 
+
+function renderRejectionTelemetry(d) {
+	const r = d.discoveryTelemetry?.rejectionTelemetry || {};
+	const counts = {
+		rejectNotStrong: r.notStrongBuy || 0,
+		rejectScore: r.scoreBelow8 || 0,
+		reject5m: r.fiveMinute || 0,
+		reject1h: r.oneHour || 0,
+		rejectRatio: r.buyRatio || 0,
+		rejectTx: r.transactions || 0,
+		rejectAnti5m: r.antiChase5m || 0,
+		rejectAnti1h: r.antiChase1h || 0,
+		rejectAnti24h: r.antiChase24h || 0
+	};
+	for (const [id, value] of Object.entries(counts)) $(id).textContent = number(value);
+
+	const blockerLabel = blocker => ({
+		SCORE_BELOW_8: "Score < 8",
+		"5M_CONFIRMATION": "5m confirmation",
+		"1H_CONFIRMATION": "1h confirmation",
+		BUY_RATIO: "Buy ratio < 55%",
+		TRANSACTIONS: "5m tx < 20",
+		ANTI_CHASE_5M: "Anti-chase 5m",
+		ANTI_CHASE_1H: "Anti-chase 1h",
+		ANTI_CHASE_24H: "Anti-chase 24h"
+	}[blocker] || blocker);
+
+	const near = Array.isArray(r.nearEntries) ? r.nearEntries : [];
+	$("rejectionNearEntries").innerHTML = near.map(item => `<tr>
+		<td><strong>${escapeHtml(item.symbol)}</strong></td>
+		<td>${escapeHtml(item.score)}</td>
+		<td>${escapeHtml(item.signal || "—")}</td>
+		<td>${pct(item.priceChange5m)}</td>
+		<td>${pct(item.priceChange1h)}</td>
+		<td>${item.buyRatio == null ? "—" : pct(Number(item.buyRatio) * 100)}</td>
+		<td>${number(item.transactions5m)}</td>
+		<td>${escapeHtml((item.blockers || []).map(blockerLabel).join(", ") || "—")}</td>
+		<td>${escapeHtml((item.discoverySources || []).join(", ") || "—")}</td>
+	</tr>`).join("") || `<tr><td colspan="9">No near-entry BUY candidates in the latest scan.</td></tr>`;
+}
+
 function renderTokenDiversity(d) {
 	const rows = Array.isArray(d.tokenDiversity?.rows) ? d.tokenDiversity.rows : [];
 	$("diversityRows").innerHTML = rows.map(row => {
@@ -240,7 +281,7 @@ function renderData(d) {
 	for (const [id, value] of Object.entries(values)) $(id).textContent = value;
 	$("pnl").className = "value " + cls(d.totalPnl);
 	$("net").className = "metric-value " + cls(s.netPnl);
-	renderLiveTrade(d); renderDiscoveryTelemetry(d); renderTokenDiversity(d); renderScoreStats(d); renderExitReasons(d); renderHistory(d); renderSlotSimulation(d);
+	renderLiveTrade(d); renderDiscoveryTelemetry(d); renderRejectionTelemetry(d); renderTokenDiversity(d); renderScoreStats(d); renderExitReasons(d); renderHistory(d); renderSlotSimulation(d);
 }
 
 async function refreshStatus() {
