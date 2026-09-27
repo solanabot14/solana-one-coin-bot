@@ -89,6 +89,32 @@ function renderLiveTrade(d) {
 }
 
 
+
+function renderDiscoveryTelemetry(d) {
+	const telemetry = d.discoveryTelemetry || {};
+	$("discoveryUnique").textContent = number(telemetry.uniqueSolanaCandidates || 0);
+	$("discoveryPassed").textContent = number(telemetry.candidatesAfterSafetyFilters || 0);
+	$("discoveryStrong").textContent = number(telemetry.strongBuys || 0);
+	$("discoveryUpdated").textContent = telemetry.updatedAt
+		? new Date(telemetry.updatedAt).toLocaleTimeString()
+		: "—";
+
+	const sources = Array.isArray(telemetry.sources) ? telemetry.sources : [];
+	$("discoverySources").innerHTML = sources.map(source => `<tr>
+		<td><strong>${escapeHtml(source.name)}</strong></td>
+		<td>${escapeHtml(source.type || "—")}</td>
+		<td>${number(source.received)}</td>
+	</tr>`).join("") || `<tr><td colspan="3">Waiting for scan data...</td></tr>`;
+
+	const candidates = Array.isArray(telemetry.topCandidates) ? telemetry.topCandidates : [];
+	$("discoveryCandidates").innerHTML = candidates.map(candidate => `<tr>
+		<td><strong>${escapeHtml(candidate.symbol)}</strong></td>
+		<td>${escapeHtml(candidate.score ?? "—")}</td>
+		<td>${escapeHtml(candidate.signal || "—")}</td>
+		<td>${escapeHtml((candidate.discoverySources || []).join(", ") || "—")}</td>
+	</tr>`).join("") || `<tr><td colspan="4">Waiting for scan data...</td></tr>`;
+}
+
 function renderTokenDiversity(d) {
 	const rows = Array.isArray(d.tokenDiversity?.rows) ? d.tokenDiversity.rows : [];
 	$("diversityRows").innerHTML = rows.map(row => {
@@ -211,7 +237,7 @@ function renderData(d) {
 	for (const [id, value] of Object.entries(values)) $(id).textContent = value;
 	$("pnl").className = "value " + cls(d.totalPnl);
 	$("net").className = "metric-value " + cls(s.netPnl);
-	renderLiveTrade(d); renderTokenDiversity(d); renderScoreStats(d); renderExitReasons(d); renderHistory(d); renderSlotSimulation(d);
+	renderLiveTrade(d); renderDiscoveryTelemetry(d); renderTokenDiversity(d); renderScoreStats(d); renderExitReasons(d); renderHistory(d); renderSlotSimulation(d);
 }
 
 async function refreshStatus() {
