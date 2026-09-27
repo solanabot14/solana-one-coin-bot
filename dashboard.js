@@ -9,6 +9,7 @@ const { buildDashboardData } = require("./dashboardData");
 const scanner = require("./scanner");
 const janSlotEngine = require("./janSlotEngine");
 const janMvpBot = require("./janMvpBot");
+const { createRuntimeState } = require("./runtimeState");
 
 function getConfig(env = process.env) {
   const railway = !!env.RAILWAY_ENVIRONMENT_ID;
@@ -571,10 +572,8 @@ th,td{
 
   <div class="controls" style="margin-bottom:16px">
     <div id="janStatus" class="status">SWARM OFFLINE</div>
-    <button class="start" id="janStartButton" type="button">START SWARM</button>
-    <button class="stop" id="janStopButton" type="button">STOP SWARM</button>
   </div>
-  <p id="janNotice" class="muted">Swarm controls only the slot simulator and never changes OG trading logic.</p>
+  <p id="janNotice" class="muted">Swarm follows the main bot automatically. START BOT starts both; STOP BOT pauses both.</p>
 
   <div class="grid">
     <div class="metric">
@@ -662,7 +661,7 @@ th,td{
 
 function createDashboardServer({ config = getConfig(), controls = bot,
   portfolio = getPortfolio, marketData = getTokenData, slotEngine = null,
-  janControls = janMvpBot } = {}) {
+  janControls = janMvpBot, runtimeState = createRuntimeState() } = {}) {
   const client = fs.readFileSync(path.join(__dirname, "dashboard-client.js"));
   return http.createServer(async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
@@ -683,20 +682,16 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         if (route === "/api/start") {
           controls.startBot();
           janControls.start();
+          runtimeState.setRunning();
         } else {
-          controls.stopBot();
+          runtimeState.setStopped();
           janControls.stop();
+          controls.stopBot();
         }
         return json(res, {
           running: controls.getBotStatus(),
           swarmRunning: janControls.getStatus()
         });
-      }
-      if (route === "/api/jan/start" || route === "/api/jan/stop") {
-        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
-        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
-        if (route === "/api/jan/start") janControls.start(); else janControls.stop();
-        return json(res, { running: janControls.getStatus() });
       }
       if (req.method !== "GET") return json(res, { error: "Method not allowed" }, 405);
       if (route === "/api/status") return json(res, { running: controls.getBotStatus(), error: controls.getLastError() });
@@ -722,10 +717,40 @@ function json(res, value, status = 200) {
 }
 if (require.main === module) {
   const config = getConfig();
+  const runtimeState = createRuntimeState();
   getPortfolio();
-  const server = createDashboardServer({ config, janControls: janMvpBot });
+
+  const desired = runtimeState.read();
+  if (desired.desiredRunning) {
+    console.log("RUNTIME RESTORE | Previous state was RUNNING | Restoring OG + Swarm");
+    bot.startBot();
+    janMvpBot.start();
+  } else {
+    console.log("RUNTIME RESTORE | Previous state was STOPPED");
+  }
+
+  const server = createDashboardServer({
+    config,
+    janControls: janMvpBot,
+    runtimeState
+  });
+
   server.listen(config.port, config.host, () => console.log("Dashboard listening on " + config.host + ":" + config.port));
+
+  // Keep Swarm coupled to OG in the server process, independent of whether a browser is open.
+  const couplingInterval = setInterval(() => {
+    if (!bot.getBotStatus() && janMvpBot.getStatus()) {
+      console.log("SWARM COUPLING | OG offline, pausing Swarm");
+      janMvpBot.stop();
+    } else if (bot.getBotStatus() && !janMvpBot.getStatus() && runtimeState.read().desiredRunning) {
+      console.log("SWARM COUPLING | OG online, restoring Swarm");
+      janMvpBot.start();
+    }
+  }, 2000);
+
   const shutdown = () => {
+    clearInterval(couplingInterval);
+    // Do not overwrite desiredRunning here. Railway/process restarts must restore the prior user choice.
     janMvpBot.stop();
     bot.stopBot();
     server.close(() => process.exit(0));
