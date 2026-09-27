@@ -88,6 +88,26 @@ function renderLiveTrade(d) {
 		</div>`;
 }
 
+
+function renderTokenDiversity(d) {
+	const rows = Array.isArray(d.tokenDiversity?.rows) ? d.tokenDiversity.rows : [];
+	$("diversityRows").innerHTML = rows.map(row => {
+		const available = row.availableAt
+			? new Date(row.availableAt).toLocaleString()
+			: row.status === "OPEN NOW" ? "After close" : row.status === "RESTING 24H" ? "—" : "If qualified";
+		return `<tr>
+			<td><strong>${escapeHtml(row.symbol)}</strong></td>
+			<td><span class="badge">${escapeHtml(row.status)}</span></td>
+			<td>${number(row.entries24h)}</td>
+			<td class="green">${number(row.wins24h)}</td>
+			<td class="red">${number(row.losses24h)}</td>
+			<td class="${cls(row.maxGainPercent)}">${pct(row.maxGainPercent)}</td>
+			<td>${escapeHtml(available)}</td>
+			<td>${escapeHtml(row.detail)}</td>
+		</tr>`;
+	}).join("") || `<tr><td colspan="8">No recent token activity.</td></tr>`;
+}
+
 function renderScoreStats(d) {
 	const rows = Array.isArray(d.scoreStats) ? d.scoreStats : [];
 	$("scoreStats").innerHTML = rows.map(row => `<tr>
@@ -191,7 +211,7 @@ function renderData(d) {
 	for (const [id, value] of Object.entries(values)) $(id).textContent = value;
 	$("pnl").className = "value " + cls(d.totalPnl);
 	$("net").className = "metric-value " + cls(s.netPnl);
-	renderLiveTrade(d); renderScoreStats(d); renderExitReasons(d); renderHistory(d); renderSlotSimulation(d);
+	renderLiveTrade(d); renderTokenDiversity(d); renderScoreStats(d); renderExitReasons(d); renderHistory(d); renderSlotSimulation(d);
 }
 
 async function refreshStatus() {
