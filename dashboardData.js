@@ -50,6 +50,7 @@ function groupCompletedTrades(history = [], position = null) {
 				entryCurrentActivity: trade.entryCurrentActivity ? structuredClone(trade.entryCurrentActivity) : null,
 				entryPostPump: trade.entryPostPump ? structuredClone(trade.entryPostPump) : null,
 				entrySmartMoney: trade.entrySmartMoney ? structuredClone(trade.entrySmartMoney) : null,
+				entryBirdeyeRank: trade.entryBirdeyeRank ?? null,
 				entryBuys5m: trade.entryBuys5m ?? null,
 				entrySells5m: trade.entrySells5m ?? null,
 				entryTransactions5m: trade.entryTransactions5m ?? null,
@@ -289,6 +290,142 @@ function average(values) {
 	return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
 }
 
+function maxLossStreak(trades = []) {
+	let current = 0;
+	let maximum = 0;
+	for (const trade of [...trades].sort((a, b) => new Date(a.exitTime || 0) - new Date(b.exitTime || 0))) {
+		if (Number(trade.pnl) < 0) {
+			current++;
+			maximum = Math.max(maximum, current);
+		} else {
+			current = 0;
+		}
+	}
+	return maximum;
+}
+
+function realizedDrawdown(trades = [], startingBalance = null) {
+	const start = Number(startingBalance);
+	if (!(start > 0)) return { maxDrawdownPercent: null, maxDrawdownUsd: null };
+	let equity = start;
+	let peak = start;
+	let maxDrawdownPercent = 0;
+	let maxDrawdownUsd = 0;
+
+	for (const trade of [...trades].sort((a, b) => new Date(a.exitTime || 0) - new Date(b.exitTime || 0))) {
+		equity += Number(trade.pnl) || 0;
+		peak = Math.max(peak, equity);
+		const drawdownUsd = Math.max(0, peak - equity);
+		const drawdownPercent = peak > 0 ? drawdownUsd / peak * 100 : 0;
+		maxDrawdownUsd = Math.max(maxDrawdownUsd, drawdownUsd);
+		maxDrawdownPercent = Math.max(maxDrawdownPercent, drawdownPercent);
+	}
+
+	return { maxDrawdownPercent, maxDrawdownUsd };
+}
+
+function summarizeTrades(trades = [], startingBalance = null) {
+	const winners = trades.filter(trade => Number(trade.pnl) > 0);
+	const losers = trades.filter(trade => Number(trade.pnl) < 0);
+	const grossProfit = winners.reduce((sum, trade) => sum + Number(trade.pnl || 0), 0);
+	const grossLoss = losers.reduce((sum, trade) => sum + Math.abs(Number(trade.pnl || 0)), 0);
+	const netPnl = grossProfit - grossLoss;
+	const winnerReturns = winners.map(trade => Number(trade.pnlPercent)).filter(Number.isFinite);
+	const loserReturns = losers.map(trade => Number(trade.pnlPercent)).filter(Number.isFinite);
+	const allReturns = trades.map(trade => Number(trade.pnlPercent)).filter(Number.isFinite);
+	const averageWinnerPercent = average(winnerReturns);
+	const averageLoserPercent = average(loserReturns);
+	const payoffRatio = averageWinnerPercent != null && averageLoserPercent != null && averageLoserPercent !== 0
+		? averageWinnerPercent / Math.abs(averageLoserPercent)
+		: null;
+	const drawdown = realizedDrawdown(trades, startingBalance);
+
+	return {
+		completedTrades: trades.length,
+		winners: winners.length,
+		losers: losers.length,
+		winRate: trades.length ? winners.length / trades.length * 100 : 0,
+		grossProfit,
+		grossLoss,
+		netPnl,
+		profitFactor: grossLoss > 0 ? grossProfit / grossLoss : null,
+		profitFactorLabel: grossLoss > 0 ? (grossProfit / grossLoss).toFixed(2) : grossProfit > 0 ? "∞" : "—",
+		expectancyPercent: average(allReturns),
+		averageWinnerPercent,
+		averageLoserPercent,
+		payoffRatio,
+		maxConsecutiveLosses: maxLossStreak(trades),
+		maxDrawdownPercent: drawdown.maxDrawdownPercent,
+		maxDrawdownUsd: drawdown.maxDrawdownUsd,
+		averageHoldTimeMs: average(trades.map(trade => Number(trade.holdTimeMs)).filter(Number.isFinite)),
+		averageMaxGainPercent: average(trades.map(trade => Number(trade.maxGainPercent)).filter(Number.isFinite))
+	};
+}
+
+function compactPerformance(trades = []) {
+	const summary = summarizeTrades(trades);
+	return {
+		trades: summary.completedTrades,
+		winners: summary.winners,
+		losers: summary.losers,
+		winRate: summary.winRate,
+		netPnl: summary.netPnl,
+		expectancyPercent: summary.expectancyPercent,
+		profitFactorLabel: summary.profitFactorLabel
+	};
+}
+
+function buildStrategyVersionStats(trades = []) {
+	const groups = new Map();
+	for (const trade of trades) {
+		const label = trade.strategyVersion || "Legacy / Unlabeled";
+		if (!groups.has(label)) groups.set(label, []);
+		groups.get(label).push(trade);
+	}
+	return [...groups.entries()]
+		.map(([version, rows]) => ({ version, ...compactPerformance(rows) }))
+		.sort((a, b) => String(a.version).localeCompare(String(b.version)));
+}
+
+function buildSourceStats(trades = []) {
+	const groups = new Map();
+	for (const trade of trades) {
+		const sources = Array.isArray(trade.entryDiscoverySources) && trade.entryDiscoverySources.length
+			? trade.entryDiscoverySources
+			: ["Unknown"];
+		for (const source of new Set(sources)) {
+			if (!groups.has(source)) groups.set(source, []);
+			groups.get(source).push(trade);
+		}
+	}
+	return [...groups.entries()]
+		.map(([source, rows]) => ({ source, ...compactPerformance(rows) }))
+		.sort((a, b) => b.trades - a.trades || a.source.localeCompare(b.source));
+}
+
+function buildBirdeyeRankStats(trades = []) {
+	const bucket = rank => {
+		const value = Number(rank);
+		if (!Number.isFinite(value)) return null;
+		if (value === 1) return "#1";
+		if (value <= 5) return "#2–5";
+		if (value <= 10) return "#6–10";
+		if (value <= 20) return "#11–20";
+		return "#21+";
+	};
+	const order = new Map([["#1", 1], ["#2–5", 2], ["#6–10", 3], ["#11–20", 4], ["#21+", 5]]);
+	const groups = new Map();
+	for (const trade of trades) {
+		const label = bucket(trade.entryBirdeyeRank);
+		if (!label) continue;
+		if (!groups.has(label)) groups.set(label, []);
+		groups.get(label).push(trade);
+	}
+	return [...groups.entries()]
+		.map(([rank, rows]) => ({ rank, ...compactPerformance(rows) }))
+		.sort((a, b) => (order.get(a.rank) || 99) - (order.get(b.rank) || 99));
+}
+
 function buildScoreStats(completedTrades) {
 	const buckets = new Map();
 	for (const trade of completedTrades) {
@@ -348,32 +485,40 @@ async function buildDashboardData(data, getTokenData) {
 		}
 	}
 
-	const grossProfit = completedTrades.reduce((sum, trade) => sum + Math.max(trade.pnl, 0), 0);
-	const grossLoss = completedTrades.reduce((sum, trade) => sum + Math.max(-trade.pnl, 0), 0);
-	const winners = completedTrades.filter(trade => trade.pnl > 0).length;
-	const losers = completedTrades.filter(trade => trade.pnl < 0).length;
 	const equity = data.position && !live ? null : data.cashBalance + (live?.currentValue || 0);
-	const winnerReturns = completedTrades.filter(t => t.pnl > 0).map(t => Number(t.pnlPercent));
-	const loserReturns = completedTrades.filter(t => t.pnl < 0).map(t => Number(t.pnlPercent));
-	const holdTimes = completedTrades.map(t => Number(t.holdTimeMs)).filter(Number.isFinite);
-	const maxGains = completedTrades.map(t => Number(t.maxGainPercent)).filter(Number.isFinite);
 	const exitReasonCounts = {};
 	for (const trade of completedTrades) for (const reason of trade.exitReasons) exitReasonCounts[reason] = (exitReasonCounts[reason] || 0) + 1;
-	const netPnl = grossProfit - grossLoss;
+
+	const stats = summarizeTrades(completedTrades, data.startingBalance);
+	const cleanV35Trades = completedTrades.filter(trade => trade.strategyVersion === "V3.5");
+	const v35Baseline = data.strategyDatasets?.V3.5 || null;
+	const v35Research = {
+		strategyVersion: "V3.5",
+		startedAt: v35Baseline?.startedAt || null,
+		startingBalance: Number.isFinite(Number(v35Baseline?.startingBalance)) ? Number(v35Baseline.startingBalance) : null,
+		stats: summarizeTrades(cleanV35Trades, v35Baseline?.startingBalance),
+		sourceStats: buildSourceStats(cleanV35Trades),
+		birdeyeRankStats: buildBirdeyeRankStats(cleanV35Trades)
+	};
+
 	return {
 		...data, live, equity, totalPnl: equity === null ? null : equity - data.startingBalance,
 		priceUnavailable: !!data.position && !live, completedTrades, scoreStats: buildScoreStats(completedTrades), exitReasonCounts,
+		strategyVersionStats: buildStrategyVersionStats(completedTrades),
+		v35Research,
 		slotSimulation: buildSlotSimulation(completedTrades),
 		tokenDiversity: buildTokenDiversityView(completedTrades, data.position),
-		stats: {
-			completedTrades: completedTrades.length, winners, losers,
-			winRate: completedTrades.length ? winners / completedTrades.length * 100 : 0,
-			netPnl, grossProfit, grossLoss, profitFactor: grossLoss > 0 ? grossProfit / grossLoss : null,
-			profitFactorLabel: grossLoss > 0 ? (grossProfit / grossLoss).toFixed(2) : grossProfit > 0 ? "∞" : "—",
-			averageWinnerPercent: average(winnerReturns), averageLoserPercent: average(loserReturns),
-			averageHoldTimeMs: average(holdTimes), averageMaxGainPercent: average(maxGains)
-		}
+		stats
 	};
 }
 
-module.exports = { groupCompletedTrades, buildDashboardData, buildSlotSimulation, buildTokenDiversityView };
+module.exports = {
+	groupCompletedTrades,
+	buildDashboardData,
+	buildSlotSimulation,
+	buildTokenDiversityView,
+	summarizeTrades,
+	buildStrategyVersionStats,
+	buildSourceStats,
+	buildBirdeyeRankStats
+};

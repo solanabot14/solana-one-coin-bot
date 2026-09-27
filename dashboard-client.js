@@ -207,6 +207,47 @@ function renderScoreStats(d) {
 		<td class="${cls(row.averageMaxGain)}">${pct(row.averageMaxGain)}</td><td class="${cls(row.netPnl)}">${money(row.netPnl)}</td></tr>`).join("") || `<tr><td colspan="8">No completed trades yet.</td></tr>`;
 }
 
+function renderV35Research(d) {
+	const research = d.v35Research || {};
+	const s = research.stats || {};
+	const values = {
+		v35Trades: s.completedTrades || 0,
+		v35WinRate: pct(s.winRate || 0),
+		v35Net: money(s.netPnl || 0),
+		v35Factor: s.profitFactorLabel || "—",
+		v35Expectancy: pct(s.expectancyPercent),
+		v35Payoff: s.payoffRatio == null ? "—" : Number(s.payoffRatio).toFixed(2) + "x",
+		v35Drawdown: pct(s.maxDrawdownPercent),
+		v35LossStreak: number(s.maxConsecutiveLosses || 0),
+		v35Started: research.startedAt ? new Date(research.startedAt).toLocaleString() : "Waiting for first V3.5 trade",
+		v35StartBalance: money(research.startingBalance)
+	};
+	for (const [id, value] of Object.entries(values)) $(id).textContent = value;
+	$("v35Net").className = "metric-value " + cls(s.netPnl);
+	$("v35Expectancy").className = "metric-value " + cls(s.expectancyPercent);
+
+	const versionRows = Array.isArray(d.strategyVersionStats) ? d.strategyVersionStats : [];
+	$("strategyVersionStats").innerHTML = versionRows.map(row => `<tr>
+		<td><strong>${escapeHtml(row.version)}</strong></td><td>${number(row.trades)}</td><td>${pct(row.winRate)}</td>
+		<td class="${cls(row.expectancyPercent)}">${pct(row.expectancyPercent)}</td><td>${escapeHtml(row.profitFactorLabel || "—")}</td>
+		<td class="${cls(row.netPnl)}">${money(row.netPnl)}</td>
+	</tr>`).join("") || `<tr><td colspan="6">No completed strategy data yet.</td></tr>`;
+
+	const sourceRows = Array.isArray(research.sourceStats) ? research.sourceStats : [];
+	$("v35SourceStats").innerHTML = sourceRows.map(row => `<tr>
+		<td><strong>${escapeHtml(row.source)}</strong></td><td>${number(row.trades)}</td><td>${pct(row.winRate)}</td>
+		<td class="${cls(row.expectancyPercent)}">${pct(row.expectancyPercent)}</td><td>${escapeHtml(row.profitFactorLabel || "—")}</td>
+		<td class="${cls(row.netPnl)}">${money(row.netPnl)}</td>
+	</tr>`).join("") || `<tr><td colspan="6">Waiting for V3.5 trades.</td></tr>`;
+
+	const rankRows = Array.isArray(research.birdeyeRankStats) ? research.birdeyeRankStats : [];
+	$("v35RankStats").innerHTML = rankRows.map(row => `<tr>
+		<td><strong>${escapeHtml(row.rank)}</strong></td><td>${number(row.trades)}</td><td>${pct(row.winRate)}</td>
+		<td class="${cls(row.expectancyPercent)}">${pct(row.expectancyPercent)}</td><td>${escapeHtml(row.profitFactorLabel || "—")}</td>
+		<td class="${cls(row.netPnl)}">${money(row.netPnl)}</td>
+	</tr>`).join("") || `<tr><td colspan="6">Waiting for Birdeye-ranked V3.5 trades.</td></tr>`;
+}
+
 function renderExitReasons(d) {
 	const entries = Object.entries(d.exitReasonCounts || {});
 	$("exitReasons").innerHTML = entries.map(([reason, count]) => `<div class="metric"><div class="metric-label">${escapeHtml(reason)}</div><div class="metric-value">${count}</div></div>`).join("") || `<div class="metric">No completed positions yet.</div>`;
@@ -216,7 +257,7 @@ function renderHistory(d) {
 	$("history").innerHTML = d.completedTrades.map(t => {
 		const reason = Array.isArray(t.exitReasons) ? t.exitReasons.join(" / ") : "—";
 		const chartAddress = t.pairAddress || t.tokenAddress || "";
-		return `<tr><td><strong>${escapeHtml(t.symbol)}</strong></td><td>${escapeHtml(t.entryScore ?? "—")}</td>
+		return `<tr><td><strong>${escapeHtml(t.symbol)}</strong></td><td>${escapeHtml(t.strategyVersion || "—")}</td><td>${t.entryBirdeyeRank == null ? "—" : "#" + escapeHtml(t.entryBirdeyeRank)}</td><td>${escapeHtml(t.entryScore ?? "—")}</td>
 			<td>${pct(t.entryPriceChange5m)}</td><td>${pct(t.entryPriceChange1h)}</td><td>${entryRatio(t)}</td>
 			<td>${money(t.entryVolume5m)}</td><td>${pct(t.entryPostPump?.extensionPercent)}</td>
 			<td>${escapeHtml(smartMoneyLabel(t.entrySmartMoney))}</td>
@@ -226,7 +267,7 @@ function renderHistory(d) {
 			<td class="${cls(t.pnl)}">${money(t.pnl)}</td><td class="${cls(t.pnlPercent)}">${pct(t.pnlPercent)}</td>
 			<td class="${cls(t.maxGainPercent)}">${pct(t.maxGainPercent)}</td><td>${duration(t.holdTimeMs)}</td><td>${escapeHtml(reason)}</td>
 			<td><a class="small-link" target="_blank" rel="noopener noreferrer" href="https://dexscreener.com/solana/${encodeURIComponent(chartAddress)}">DexScreener</a></td></tr>`;
-	}).join("") || `<tr><td colspan="23">No completed positions yet.</td></tr>`;
+	}).join("") || `<tr><td colspan="25">No completed positions yet.</td></tr>`;
 }
 
 
@@ -308,7 +349,7 @@ function renderData(d) {
 	for (const [id, value] of Object.entries(values)) $(id).textContent = value;
 	$("pnl").className = "value " + cls(d.totalPnl);
 	$("net").className = "metric-value " + cls(s.netPnl);
-	renderLiveTrade(d); renderDiscoveryTelemetry(d); renderRejectionTelemetry(d); renderTokenDiversity(d); renderScoreStats(d); renderExitReasons(d); renderHistory(d); renderSlotSimulation(d);
+	renderLiveTrade(d); renderV35Research(d); renderDiscoveryTelemetry(d); renderRejectionTelemetry(d); renderTokenDiversity(d); renderScoreStats(d); renderExitReasons(d); renderHistory(d); renderSlotSimulation(d);
 }
 
 async function refreshStatus() {
