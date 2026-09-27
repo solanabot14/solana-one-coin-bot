@@ -108,7 +108,7 @@ function repairKnownJtoBadQuote(data) {
 	next.position.firstTakeProfitDone = false;
 	next.position.secondTakeProfitDone = false;
 	next.position.highestPrice = Number(next.position.entryPrice);
-	next.history = next.history.filter(trade => !badSells.some(bad => bad === trade));
+	next.history = structuredClone(data.history.filter(trade => !badSells.includes(trade)));
 	next.repairs = Array.isArray(next.repairs) ? next.repairs : [];
 	next.repairs.push({
 		id: JTO_REPAIR_ID,
