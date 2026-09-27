@@ -242,9 +242,14 @@ function createJanMvpBot({
 
   async function monitorPositions(session) {
     const open = trader.getState().slots.filter(slot => slot.position);
-    for (const slot of open) {
-      if (!isActive(session)) return;
-      await monitorSlot(session, slot);
+    if (!open.length || !isActive(session)) return;
+    const results = await Promise.allSettled(
+      open.map(slot => monitorSlot(session, slot))
+    );
+    for (const result of results) {
+      if (result.status === "rejected") {
+        console.error("SWARM SLOT MONITOR ERROR:", result.reason?.message || result.reason);
+      }
     }
   }
 
