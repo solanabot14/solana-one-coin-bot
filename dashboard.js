@@ -594,7 +594,7 @@ th,td{
       <div class="metric-value" id="slotTarget">$10 → $50 → $100 → $150</div>
     </div>
     <div class="metric">
-      <div class="metric-label">Trades Replayed</div>
+      <div class="metric-label">Completed Swarm Trades</div>
       <div class="metric-value" id="slotTrades">0</div>
     </div>
   </div>
