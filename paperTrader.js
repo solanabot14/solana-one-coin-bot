@@ -126,7 +126,7 @@ function repairKnownJtoBadQuote(data) {
 
 	return { changed: true, data: next };
 }
-const CURRENT_ENTRY_STRATEGY = "V3.7";
+const CURRENT_ENTRY_STRATEGY = "V3.8";
 
 function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 	let state = {
@@ -309,6 +309,11 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 					? structuredClone(coin.marketDataIntegrity)
 					: null,
 
+			entryTokenSecurity:
+				coin.tokenSecurity
+					? structuredClone(coin.tokenSecurity)
+					: null,
+
 			entrySmartMoney:
 				coin.smartMoney
 					? structuredClone(coin.smartMoney)
@@ -488,6 +493,11 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 			entryMarketDataIntegrity:
 				p.entryMarketDataIntegrity
 					? structuredClone(p.entryMarketDataIntegrity)
+					: null,
+
+			entryTokenSecurity:
+				p.entryTokenSecurity
+					? structuredClone(p.entryTokenSecurity)
 					: null,
 
 			entrySmartMoney:

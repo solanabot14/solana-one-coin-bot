@@ -389,7 +389,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("BOT STARTED | Entry V3.7 Activity Confirmation + Pump Structure Protection | Risk V3.4 Profit Lock + Runner");
+    console.log("BOT STARTED | Entry V3.8 Token Security + Activity Confirmation + Pump Structure Protection | Risk V3.4 Profit Lock + Runner");
     positionInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
     scannerInterval = timers.setInterval(() => tick("scanner", session), SCANNER_INTERVAL_MS);
     void tick("monitor", session);
