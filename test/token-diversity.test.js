@@ -151,3 +151,23 @@ test("activity older than 24 hours does not penalize a token", () => {
   ];
   assert.equal(recentTokenStats(history, NOW).has("old-token"), false);
 });
+
+
+test("a recent winning exit still rests even when the entry was more than 24 hours ago", () => {
+  const longEntry = "2026-09-25T10:00:00Z";
+  const history = [
+    buy("long", "long-winner", longEntry),
+    sell("long", "long-winner", longEntry, {
+      pnl:4,
+      highestPrice:1.25,
+      exitTime:"2026-09-26T19:30:00Z"
+    })
+  ];
+  const stats = recentTokenStats(history, NOW).get("long-winner");
+  assert.ok(stats);
+  assert.equal(stats.winningCompletions, 1);
+  assert.equal(
+    diversityDecision(strongCoin({ tokenAddress:"long-winner" }), stats).reason,
+    "NORMAL WINNER REST 24H"
+  );
+});
