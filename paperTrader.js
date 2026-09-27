@@ -126,6 +126,8 @@ function repairKnownJtoBadQuote(data) {
 
 	return { changed: true, data: next };
 }
+const CURRENT_ENTRY_STRATEGY = "V3.5";
+
 function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 	let state = {
 		startingBalance: 100,
@@ -213,6 +215,15 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 		}
 
 		const next = structuredClone(state);
+		next.strategyDatasets = next.strategyDatasets && typeof next.strategyDatasets === "object"
+			? next.strategyDatasets
+			: {};
+		if (!next.strategyDatasets[CURRENT_ENTRY_STRATEGY]) {
+			next.strategyDatasets[CURRENT_ENTRY_STRATEGY] = {
+				startedAt: new Date().toISOString(),
+				startingBalance: Number(next.cashBalance)
+			};
+		}
 		const amountInvested = next.cashBalance * 0.10;
 
 		const buys5m = Number(coin.buys5m) || 0;
@@ -242,7 +253,7 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 			highestPrice: price,
 			entryTime: new Date().toISOString(),
 
-			strategyVersion: "V3.4",
+			strategyVersion: CURRENT_ENTRY_STRATEGY,
 			riskManagementVersion: "V3.4",
 
 			entryScore: Number(coin.score) || 0,
@@ -291,6 +302,11 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 			entrySmartMoney:
 				coin.smartMoney
 					? structuredClone(coin.smartMoney)
+					: null,
+
+			entryBirdeyeRank:
+				Number.isFinite(Number(coin.birdeyeRank))
+					? Number(coin.birdeyeRank)
 					: null,
 
 			entryBuys5m: buys5m,
@@ -459,6 +475,9 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 					? structuredClone(p.entrySmartMoney)
 					: null,
 
+			entryBirdeyeRank:
+				p.entryBirdeyeRank ?? null,
+
 			entryBuys5m:
 				p.entryBuys5m ?? null,
 
@@ -593,7 +612,8 @@ const current = () =>
 module.exports = {
 	createPaperTrader,
 	defaultDataFile,
-	repairKnownJtoBadQuote
+	repairKnownJtoBadQuote,
+	CURRENT_ENTRY_STRATEGY
 };
 
 for (const method of [
