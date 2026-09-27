@@ -852,7 +852,8 @@ function createDashboardServer({ config = getConfig(), controls = bot,
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     try {
-      const route = new URL(req.url, "http://localhost").pathname;
+      const requestUrl = new URL(req.url, "http://localhost");
+      const route = requestUrl.pathname;
       if (req.method === "GET" && route === "/healthz") return json(res, { ok: true });
       if (config.localOnly) {
         const hostname = new URL("http://" + req.headers.host).hostname;
@@ -884,6 +885,25 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         else if (slotEngine?.getDashboardState) data.slotSimulation = slotEngine.getDashboardState();
         data.discoveryTelemetry = scanner.getDiscoveryTelemetry();
         return json(res, data);
+      }
+      if (route === "/api/audit/recent") {
+        const requestedLimit = Number.parseInt(requestUrl.searchParams.get("limit") || "25", 10);
+        const limit = Math.max(1, Math.min(100, Number.isFinite(requestedLimit) ? requestedLimit : 25));
+        const data = await buildDashboardData(portfolio(), marketData);
+        const completedTrades = Array.isArray(data.completedTrades) ? data.completedTrades.slice(0, limit) : [];
+        const swarmState = janControls?.getDashboardState ? janControls.getDashboardState() : null;
+        const swarmExecutions = Array.isArray(swarmState?.executions)
+          ? swarmState.executions.filter(item => item?.closedTrade).slice(0, limit)
+          : [];
+        return json(res, {
+          generatedAt: new Date().toISOString(),
+          currentStrategy: "V3.6 Pump Structure Protection",
+          riskEngine: "V3.4 Profit Lock + Runner",
+          livePosition: data.live || null,
+          completedTrades,
+          swarmClosedTrades: swarmExecutions,
+          discoveryTelemetry: scanner.getDiscoveryTelemetry()
+        });
       }
       if (route === "/dashboard-client.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(client); }
       if (route !== "/") return json(res, { error: "Not found" }, 404);
