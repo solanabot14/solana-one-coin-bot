@@ -14,12 +14,12 @@ function defaultRuntimeStateFile() {
 function createRuntimeState(file = defaultRuntimeStateFile(), io = fs) {
 	function read() {
 		try {
-			if (!io.existsSync(file)) return { desiredRunning: false };
+			if (!io.existsSync(file)) return { desiredRunning: true, initialized: false };
 			const parsed = JSON.parse(io.readFileSync(file, "utf8"));
-			return { desiredRunning: parsed?.desiredRunning === true };
+			return { desiredRunning: parsed?.desiredRunning === true, initialized: true };
 		} catch (error) {
 			console.error("Runtime state read failed:", error.message);
-			return { desiredRunning: false };
+			return { desiredRunning: false, initialized: true };
 		}
 	}
 
