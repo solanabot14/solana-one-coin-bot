@@ -149,6 +149,7 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
       entryDiscoverySources: Array.isArray(coin.discoverySources) ? [...coin.discoverySources] : [],
       entryCurrentActivity: coin.currentActivity ? structuredClone(coin.currentActivity) : null,
       entryPostPump: coin.postPump ? structuredClone(coin.postPump) : null,
+      entryPreDiscoveryPump: coin.preDiscoveryPump ? structuredClone(coin.preDiscoveryPump) : null,
       entryMarketDataIntegrity: coin.marketDataIntegrity ? structuredClone(coin.marketDataIntegrity) : null,
       entrySmartMoney: coin.smartMoney ? structuredClone(coin.smartMoney) : null,
       entryBuys5m: buys5m,
@@ -244,6 +245,7 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
         entryDiscoverySources: Array.isArray(pos.entryDiscoverySources) ? [...pos.entryDiscoverySources] : [],
         entryCurrentActivity: pos.entryCurrentActivity ? structuredClone(pos.entryCurrentActivity) : null,
         entryPostPump: pos.entryPostPump ? structuredClone(pos.entryPostPump) : null,
+        entryPreDiscoveryPump: pos.entryPreDiscoveryPump ? structuredClone(pos.entryPreDiscoveryPump) : null,
         entryMarketDataIntegrity: pos.entryMarketDataIntegrity ? structuredClone(pos.entryMarketDataIntegrity) : null,
         entrySmartMoney: pos.entrySmartMoney ? structuredClone(pos.entrySmartMoney) : null,
         milestonesReached: [...newlyReached]

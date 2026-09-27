@@ -492,7 +492,7 @@ th,td{
 
 <p class="muted">
   Latest OG scan only. Counts can overlap because one token may fail more than one STRONG BUY confirmation.
-  Volume and Smart Money fields are shown for context. Post-Pump, Current Activity, Late Momentum and Market Data Integrity are active entry protections.
+  Volume and Smart Money fields are shown for context. Post-Pump, Current Activity, Late Momentum, Market Data Integrity and Birdeye Pre-Discovery Pump are active entry protections.
 </p>
 
 <div class="grid">
@@ -549,6 +549,22 @@ th,td{
     <div class="metric-value" id="rejectMarketIntegrity">0</div>
   </div>
   <div class="metric">
+    <div class="metric-label">Pre-Discovery Pump</div>
+    <div class="metric-value" id="rejectPreDiscoveryPump">0</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Birdeye OHLCV Status</div>
+    <div class="metric-value" id="birdeyeOhlcvStatus">—</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Birdeye OHLCV Requests</div>
+    <div class="metric-value" id="birdeyeOhlcvRequests">0</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">OHLCV Cache Hits</div>
+    <div class="metric-value" id="birdeyeOhlcvCacheHits">0</div>
+  </div>
+  <div class="metric">
     <div class="metric-label">Dex Discovery Health</div>
     <div class="metric-value" id="dexDiscoveryHealth">—</div>
   </div>
@@ -576,13 +592,15 @@ th,td{
   <th>5m Volume</th>
   <th>5m Vol/Liq</th>
   <th>15m Extension</th>
+  <th>Historical 15m</th>
+  <th>Historical 30m</th>
   <th>Smart Money</th>
   <th>Blocked By</th>
   <th>Source</th>
 </tr>
 </thead>
 <tbody id="rejectionNearEntries">
-<tr><td colspan="13">Waiting for scan data...</td></tr>
+<tr><td colspan="15">Waiting for scan data...</td></tr>
 </tbody>
 </table>
 </div>

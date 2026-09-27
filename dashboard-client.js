@@ -93,6 +93,9 @@ function renderLiveTrade(d) {
 			Entry 5m Volume: ${money(position.entryVolume5m)} &nbsp; | &nbsp;
 			Entry 24h Volume: ${money(position.entryVolume24h)}<br>
 			15m Observed Extension: ${pct(position.entryPostPump?.extensionPercent)} &nbsp; | &nbsp;
+			Historical 15m: ${pct(position.entryPreDiscoveryPump?.window15m?.extensionPercent)} &nbsp; | &nbsp;
+			Historical 30m: ${pct(position.entryPreDiscoveryPump?.window30m?.extensionPercent)}<br>
+			Pre-Discovery Check: ${escapeHtml(position.entryPreDiscoveryPump?.status || "—")} &nbsp; | &nbsp;
 			Smart Money: ${escapeHtml(smartMoneyLabel(position.entrySmartMoney))}<br>
 			Source: ${escapeHtml((position.entryDiscoverySources || []).join(", ") || "—")}<br><br>
 			<strong>Strategy Reasons:</strong> ${reasons}
@@ -142,10 +145,16 @@ function renderRejectionTelemetry(d) {
 		rejectPostPump: r.postPump || 0,
 		rejectCurrentActivity: r.currentActivity || 0,
 		rejectLateMomentum: r.lateMomentum || 0,
-		rejectMarketIntegrity: r.marketDataIntegrity || 0
+		rejectMarketIntegrity: r.marketDataIntegrity || 0,
+		rejectPreDiscoveryPump: r.preDiscoveryPump || 0
 	};
 	const sm = d.discoveryTelemetry?.smartMoney || {};
+	const historical = d.discoveryTelemetry?.preDiscoveryPumpGuard || {};
+	const historicalUsage = historical.usage || {};
 	const dexHealth = d.discoveryTelemetry?.marketDataHealth || {};
+	$("birdeyeOhlcvStatus").textContent = escapeHtml(historicalUsage.lastStatus || "—");
+	$("birdeyeOhlcvRequests").textContent = number(historicalUsage.requests || 0);
+	$("birdeyeOhlcvCacheHits").textContent = number(historicalUsage.cacheHits || 0);
 	$("dexDiscoveryHealth").textContent = dexHealth.discoveryCircuitOpen
 		? "PAUSED (" + number(dexHealth.consecutiveDiscoveryFailures || 0) + " failures)"
 		: "OK";
@@ -165,7 +174,8 @@ function renderRejectionTelemetry(d) {
 		POST_PUMP: "Post-pump guard",
 		CURRENT_ACTIVITY: "Current activity",
 		LATE_MOMENTUM: "Late momentum",
-		MARKET_DATA_INTEGRITY: "Market data integrity"
+		MARKET_DATA_INTEGRITY: "Market data integrity",
+		PRE_DISCOVERY_PUMP: "Pre-discovery pump"
 	}[blocker] || blocker);
 
 	const near = Array.isArray(r.nearEntries) ? r.nearEntries : [];
@@ -180,10 +190,12 @@ function renderRejectionTelemetry(d) {
 		<td>${money(item.volume5m)}</td>
 		<td>${pct(item.volumeLiquidity5mPercent)}</td>
 		<td>${pct(item.postPumpExtensionPercent)}</td>
+		<td>${pct(item.preDiscoveryPump?.window15m?.extensionPercent)}</td>
+		<td>${pct(item.preDiscoveryPump?.window30m?.extensionPercent)}</td>
 		<td>${escapeHtml(smartMoneyLabel(item.smartMoney))}</td>
 		<td>${escapeHtml((item.blockers || []).map(blockerLabel).join(", ") || "—")}</td>
 		<td>${escapeHtml((item.discoverySources || []).join(", ") || "—")}</td>
-	</tr>`).join("") || `<tr><td colspan="13">No near-entry BUY candidates in the latest scan.</td></tr>`;
+	</tr>`).join("") || `<tr><td colspan="15">No near-entry BUY candidates in the latest scan.</td></tr>`;
 }
 
 function renderTokenDiversity(d) {

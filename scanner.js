@@ -33,6 +33,7 @@ const TRENDING_TOTAL_TOKEN_LIMIT = 8;
 const BIRDEYE_TRENDING_URL = "https://public-api.birdeye.so/defi/token_trending";
 const BIRDEYE_TRENDING_LIMIT = 20;
 const SMART_MONEY_URL = "https://public-api.birdeye.so/smart-money/v1/token/list";
+const BIRDEYE_OHLCV_URL = "https://public-api.birdeye.so/defi/v3/ohlcv";
 const SMART_MONEY_LIMIT = 20;
 const SMART_MONEY_REFRESH_MS = Math.max(
 	60 * 60 * 1000,
@@ -46,6 +47,18 @@ const MIN_ENTRY_VOLUME_5M_USD = Number.parseFloat(process.env.MIN_ENTRY_VOLUME_5
 const MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT = Number.parseFloat(process.env.MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT || "1") || 1;
 const LATE_ENTRY_1H_PERCENT = Number.parseFloat(process.env.LATE_ENTRY_1H_PERCENT || "20") || 20;
 const LATE_ENTRY_MAX_5M_PERCENT = Number.parseFloat(process.env.LATE_ENTRY_MAX_5M_PERCENT || "1.5") || 1.5;
+const BIRDEYE_OHLCV_CACHE_MS = Math.max(
+	60000,
+	(Number.parseInt(process.env.BIRDEYE_OHLCV_CACHE_SECONDS || "180", 10) || 180) * 1000
+);
+const PRE_ENTRY_PUMP_15M_PERCENT = Number.parseFloat(process.env.PRE_ENTRY_PUMP_15M_PERCENT || "8") || 8;
+const PRE_ENTRY_PUMP_30M_PERCENT = Number.parseFloat(process.env.PRE_ENTRY_PUMP_30M_PERCENT || "12") || 12;
+const PRE_ENTRY_PUMP_MAX_5M_PERCENT = Number.parseFloat(process.env.PRE_ENTRY_PUMP_MAX_5M_PERCENT || "2") || 2;
+const PRE_ENTRY_PUMP_MAX_RETRACE_PERCENT = Number.parseFloat(process.env.PRE_ENTRY_PUMP_MAX_RETRACE_PERCENT || "6") || 6;
+const BIRDEYE_OHLCV_MAX_REQUESTS_PER_DAY = Math.max(
+	10,
+	Number.parseInt(process.env.BIRDEYE_OHLCV_MAX_REQUESTS_PER_DAY || "60", 10) || 60
+);
 const MARKET_DATA_MAX_MCAP_FDV_RATIO = Math.max(
 	10,
 	Number.parseFloat(process.env.MARKET_DATA_MAX_MCAP_FDV_RATIO || "100") || 100
@@ -84,6 +97,7 @@ let lastDiscoveryTelemetry = {
 		currentActivity: 0,
 		lateMomentum: 0,
 		marketDataIntegrity: 0,
+		preDiscoveryPump: 0,
 		nearEntries: []
 	}
 };
@@ -94,6 +108,36 @@ let lastCandidateCache = {
 };
 
 const rollingPriceHistory = new Map();
+const birdeyeOhlcvCache = new Map();
+let birdeyeOhlcvRequestChain = Promise.resolve();
+let birdeyeOhlcvLastRequestAt = 0;
+let birdeyeOhlcvUsage = {
+	day: new Date().toISOString().slice(0, 10),
+	requests: 0,
+	cacheHits: 0,
+	successes: 0,
+	failures: 0,
+	budgetSkips: 0,
+	maxRequestsPerDay: BIRDEYE_OHLCV_MAX_REQUESTS_PER_DAY,
+	lastStatus: "NOT_FETCHED",
+	lastRequestAt: null
+};
+
+function refreshBirdeyeOhlcvUsageDay() {
+	const day = new Date().toISOString().slice(0, 10);
+	if (birdeyeOhlcvUsage.day === day) return;
+	birdeyeOhlcvUsage = {
+		day,
+		requests: 0,
+		cacheHits: 0,
+		successes: 0,
+		failures: 0,
+		budgetSkips: 0,
+		maxRequestsPerDay: BIRDEYE_OHLCV_MAX_REQUESTS_PER_DAY,
+		lastStatus: "NOT_FETCHED",
+		lastRequestAt: null
+	};
+}
 
 let smartMoneyCache = {
 	updatedAt: 0,
@@ -197,6 +241,187 @@ async function fetchBirdeyeTrendingTokens(signal) {
 	}
 }
 
+function birdeyeOhlcvItems(payload) {
+	const data = payload?.data;
+	if (Array.isArray(data)) return data;
+	if (Array.isArray(data?.items)) return data.items;
+	if (Array.isArray(payload?.items)) return payload.items;
+	return [];
+}
+
+function normalizeBirdeyeCandle(item) {
+	const time = Number(item?.unixTime ?? item?.unix_time ?? item?.time);
+	const open = Number(item?.o ?? item?.open);
+	const high = Number(item?.h ?? item?.high);
+	const low = Number(item?.l ?? item?.low);
+	const close = Number(item?.c ?? item?.close);
+	const volume = Number(item?.v ?? item?.volume);
+	if (!Number.isFinite(time) || !(high > 0) || !(low > 0) || !(close > 0)) return null;
+	return {
+		time,
+		open: Number.isFinite(open) ? open : close,
+		high,
+		low,
+		close,
+		volume: Number.isFinite(volume) ? volume : 0
+	};
+}
+
+function preDiscoveryPumpSnapshot(candles = [], currentPrice, current5mChange, nowSeconds = Math.floor(Date.now() / 1000)) {
+	const price = Number(currentPrice);
+	const change5m = Number(current5mChange) || 0;
+	const valid = candles
+		.map(normalizeBirdeyeCandle)
+		.filter(Boolean)
+		.sort((a, b) => a.time - b.time);
+
+	const windowStats = minutes => {
+		const cutoff = nowSeconds - minutes * 60;
+		const rows = valid.filter(row => row.time >= cutoff && row.time <= nowSeconds + 60);
+		if (!rows.length || !(price > 0)) {
+			return { minutes, candles: rows.length, low: null, high: null, extensionPercent: null, retracePercent: null };
+		}
+		const low = Math.min(...rows.map(row => row.low));
+		const high = Math.max(...rows.map(row => row.high));
+		return {
+			minutes,
+			candles: rows.length,
+			low,
+			high,
+			extensionPercent: low > 0 ? (price - low) / low * 100 : null,
+			retracePercent: high > 0 ? Math.max(0, (high - price) / high * 100) : null
+		};
+	};
+
+	const m15 = windowStats(15);
+	const m30 = windowStats(30);
+	const enoughHistory = m15.candles >= 5 || m30.candles >= 10;
+	const extended =
+		(Number(m15.extensionPercent) >= PRE_ENTRY_PUMP_15M_PERCENT) ||
+		(Number(m30.extensionPercent) >= PRE_ENTRY_PUMP_30M_PERCENT);
+	const nearRecentHigh = [m15.retracePercent, m30.retracePercent]
+		.filter(Number.isFinite)
+		.some(value => value <= PRE_ENTRY_PUMP_MAX_RETRACE_PERCENT);
+	const cooled5m = change5m <= PRE_ENTRY_PUMP_MAX_5M_PERCENT;
+
+	return {
+		source: "Birdeye OHLCV 1m",
+		status: enoughHistory ? "OK" : "INSUFFICIENT_HISTORY",
+		currentPrice: price > 0 ? price : null,
+		current5mChange: change5m,
+		window15m: m15,
+		window30m: m30,
+		thresholds: {
+			extension15mPercent: PRE_ENTRY_PUMP_15M_PERCENT,
+			extension30mPercent: PRE_ENTRY_PUMP_30M_PERCENT,
+			maxCurrent5mPercent: PRE_ENTRY_PUMP_MAX_5M_PERCENT,
+			maxRetracePercent: PRE_ENTRY_PUMP_MAX_RETRACE_PERCENT
+		},
+		enoughHistory,
+		extended,
+		nearRecentHigh,
+		cooled5m,
+		blocked: enoughHistory && extended && nearRecentHigh && cooled5m
+	};
+}
+
+async function rateLimitedBirdeyeOhlcvRequest(task) {
+	const run = birdeyeOhlcvRequestChain.then(async () => {
+		const lastBirdeyeRequestAt = Math.max(
+			birdeyeOhlcvLastRequestAt,
+			Number(birdeyeTrendingCache.updatedAt) || 0,
+			Number(smartMoneyCache.updatedAt) || 0
+		);
+		const waitMs = Math.max(0, 1100 - (Date.now() - lastBirdeyeRequestAt));
+		if (waitMs) await new Promise(resolve => setTimeout(resolve, waitMs));
+		birdeyeOhlcvLastRequestAt = Date.now();
+		return task();
+	});
+	birdeyeOhlcvRequestChain = run.catch(() => {});
+	return run;
+}
+
+async function fetchBirdeyeOhlcvCandles(tokenAddress, signal) {
+	refreshBirdeyeOhlcvUsageDay();
+	const now = Date.now();
+	const cached = birdeyeOhlcvCache.get(tokenAddress);
+	if (cached && now - cached.updatedAt < BIRDEYE_OHLCV_CACHE_MS) {
+		birdeyeOhlcvUsage.cacheHits++;
+		return { status: cached.status, candles: structuredClone(cached.candles), cached: true };
+	}
+
+	if (birdeyeOhlcvUsage.requests >= BIRDEYE_OHLCV_MAX_REQUESTS_PER_DAY) {
+		birdeyeOhlcvUsage.budgetSkips++;
+		birdeyeOhlcvUsage.lastStatus = "DAILY_BUDGET_CAP";
+		return { status: "DAILY_BUDGET_CAP", candles: [], cached: false };
+	}
+
+	const apiKey = process.env.BIRDEYE_API_KEY;
+	if (!apiKey) {
+		birdeyeOhlcvUsage.lastStatus = "NO_API_KEY";
+		return { status: "NO_API_KEY", candles: [], cached: false };
+	}
+
+	try {
+		const response = await rateLimitedBirdeyeOhlcvRequest(async () => {
+			if (signal?.aborted) return null;
+			birdeyeOhlcvUsage.requests++;
+			birdeyeOhlcvUsage.lastRequestAt = new Date().toISOString();
+			const nowSeconds = Math.floor(Date.now() / 1000);
+			return axios.get(BIRDEYE_OHLCV_URL, {
+				timeout: 10000,
+				signal,
+				params: {
+					address: tokenAddress,
+					type: "1m",
+					currency: "usd",
+					time_from: nowSeconds - 35 * 60,
+					time_to: nowSeconds,
+					mode: "range",
+					padding: false
+				},
+				headers: { Accept: "application/json", "X-API-KEY": apiKey, "x-chain": "solana" }
+			});
+		});
+		if (!response || signal?.aborted) return { status: "ABORTED", candles: [], cached: false };
+
+		const candles = birdeyeOhlcvItems(response.data).map(normalizeBirdeyeCandle).filter(Boolean);
+		const status = candles.length ? "OK" : "EMPTY";
+		birdeyeOhlcvCache.set(tokenAddress, { updatedAt: now, status, candles });
+		birdeyeOhlcvUsage.lastStatus = status;
+		if (status === "OK") birdeyeOhlcvUsage.successes++;
+		else birdeyeOhlcvUsage.failures++;
+		return { status, candles: structuredClone(candles), cached: false };
+	} catch (error) {
+		const status = String(error?.response?.status || "ERROR");
+		birdeyeOhlcvUsage.failures++;
+		birdeyeOhlcvUsage.lastStatus = status;
+		console.log("Birdeye pre-entry OHLCV unavailable: " + error.message);
+		birdeyeOhlcvCache.set(tokenAddress, { updatedAt: now, status, candles: [] });
+		return { status, candles: [], cached: false };
+	}
+}
+
+async function preEntryHistoricalPumpCheck(tokenAddress, currentPrice, current5mChange, signal) {
+	const fetched = await fetchBirdeyeOhlcvCandles(tokenAddress, signal);
+	if (fetched.status !== "OK") {
+		return {
+			source: "Birdeye OHLCV 1m",
+			status: fetched.status,
+			cached: fetched.cached,
+			blocked: false,
+			enoughHistory: false
+		};
+	}
+	const snapshot = preDiscoveryPumpSnapshot(
+		fetched.candles,
+		currentPrice,
+		current5mChange,
+		Math.floor(Date.now() / 1000)
+	);
+	return { ...snapshot, cached: fetched.cached };
+}
+
 function updateRollingPriceHistory(tokenAddress, price, now = Date.now()) {
 	price = Number(price);
 	if (!tokenAddress || !Number.isFinite(price) || price <= 0) return [];
@@ -275,9 +500,13 @@ async function refreshSmartMoney(signal) {
 	}
 
 	try {
-		const sinceTrendingRefresh = Date.now() - birdeyeTrendingCache.updatedAt;
-		if (birdeyeTrendingCache.updatedAt && sinceTrendingRefresh >= 0 && sinceTrendingRefresh < 1100) {
-			await new Promise(resolve => setTimeout(resolve, 1100 - sinceTrendingRefresh));
+		const lastBirdeyeRequestAt = Math.max(
+			Number(birdeyeTrendingCache.updatedAt) || 0,
+			Number(birdeyeOhlcvLastRequestAt) || 0
+		);
+		const sinceLastBirdeyeRequest = Date.now() - lastBirdeyeRequestAt;
+		if (lastBirdeyeRequestAt && sinceLastBirdeyeRequest >= 0 && sinceLastBirdeyeRequest < 1100) {
+			await new Promise(resolve => setTimeout(resolve, 1100 - sinceLastBirdeyeRequest));
 			if (signal?.aborted) return smartMoneyCache;
 		}
 
@@ -512,6 +741,7 @@ function entryDiagnostics(data, analysis) {
 	if (reasons.some(reason => reason.includes("CURRENT ACTIVITY GATE"))) blockers.push("CURRENT_ACTIVITY");
 	if (reasons.some(reason => reason.includes("LATE MOMENTUM GUARD"))) blockers.push("LATE_MOMENTUM");
 	if (reasons.some(reason => reason.includes("MARKET DATA INTEGRITY"))) blockers.push("MARKET_DATA_INTEGRITY");
+	if (reasons.some(reason => reason.includes("PRE-DISCOVERY PUMP"))) blockers.push("PRE_DISCOVERY_PUMP");
 
 	if (!blockers.length && analysis?.signal !== "STRONG BUY") {
 		if (Number(analysis?.score) < 8) blockers.push("SCORE_BELOW_8");
@@ -546,6 +776,7 @@ function buildRejectionTelemetry(candidates = []) {
 		currentActivity: 0,
 		lateMomentum: 0,
 		marketDataIntegrity: 0,
+		preDiscoveryPump: 0,
 		nearEntries: []
 	};
 
@@ -565,6 +796,7 @@ function buildRejectionTelemetry(candidates = []) {
 		if (blockers.includes("CURRENT_ACTIVITY")) telemetry.currentActivity++;
 		if (blockers.includes("LATE_MOMENTUM")) telemetry.lateMomentum++;
 		if (blockers.includes("MARKET_DATA_INTEGRITY")) telemetry.marketDataIntegrity++;
+		if (blockers.includes("PRE_DISCOVERY_PUMP")) telemetry.preDiscoveryPump++;
 
 		if (Number(candidate.score) >= 6 || candidate.signal === "BUY") {
 			telemetry.nearEntries.push({
@@ -580,6 +812,7 @@ function buildRejectionTelemetry(candidates = []) {
 				volumeLiquidity5mPercent: Number(candidate.currentActivity?.volumeLiquidity5mPercent) || 0,
 				postPumpExtensionPercent: Number(candidate.postPump?.extensionPercent) || 0,
 				postPumpObservations: Number(candidate.postPump?.observations) || 0,
+				preDiscoveryPump: candidate.preDiscoveryPump ? structuredClone(candidate.preDiscoveryPump) : null,
 				smartMoney: candidate.smartMoney ? { ...candidate.smartMoney } : null,
 				discoverySources: [...(candidate.discoverySources || [])]
 			});
@@ -686,6 +919,41 @@ async function analyzeDiscoveredToken(token, signal) {
 		};
 	}
 
+	let preDiscoveryPump = {
+		source: "Birdeye OHLCV 1m",
+		status: "NOT_CHECKED",
+		blocked: false,
+		enoughHistory: false
+	};
+
+	if (analysis.signal === "STRONG BUY") {
+		preDiscoveryPump = await preEntryHistoricalPumpCheck(
+			token.tokenAddress,
+			data.priceUsd,
+			data.priceChange5m,
+			signal
+		);
+
+		if (preDiscoveryPump.blocked) {
+			const extension15 = Number(preDiscoveryPump.window15m?.extensionPercent);
+			const extension30 = Number(preDiscoveryPump.window30m?.extensionPercent);
+			console.log(
+				"PRE-DISCOVERY PUMP BLOCK | " + (data.symbol || token.tokenAddress) +
+				" | 15m: " + (Number.isFinite(extension15) ? extension15.toFixed(2) : "—") +
+				"% | 30m: " + (Number.isFinite(extension30) ? extension30.toFixed(2) : "—") +
+				"% | current 5m: " + (Number(data.priceChange5m) || 0).toFixed(2) + "%"
+			);
+			analysis = {
+				...analysis,
+				signal: "AVOID",
+				reasons: [
+					...(analysis.reasons || []),
+					"PRE-DISCOVERY PUMP: Birdeye OHLCV shows recent extension before scanner observation"
+				]
+			};
+		}
+	}
+
 	const diagnostics = entryDiagnostics(data, analysis);
 
 	console.log(
@@ -704,6 +972,7 @@ async function analyzeDiscoveredToken(token, signal) {
 		entryDiagnostics: diagnostics,
 		currentActivity,
 		postPump,
+		preDiscoveryPump,
 		marketDataIntegrity,
 		smartMoney: null,
 		birdeyeRank: Number.isFinite(Number(token.birdeyeRank)) ? Number(token.birdeyeRank) : null
@@ -785,6 +1054,15 @@ async function discoverCandidates({ signal } = {}) {
 				currentActivityBlocked: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("CURRENT_ACTIVITY")).length,
 				lateMomentumBlocked: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("LATE_MOMENTUM")).length
 			},
+			preDiscoveryPumpGuard: {
+				source: "Birdeye OHLCV 1m",
+				extension15mPercent: PRE_ENTRY_PUMP_15M_PERCENT,
+				extension30mPercent: PRE_ENTRY_PUMP_30M_PERCENT,
+				maxCurrent5mPercent: PRE_ENTRY_PUMP_MAX_5M_PERCENT,
+				maxRetracePercent: PRE_ENTRY_PUMP_MAX_RETRACE_PERCENT,
+				blockedCandidates: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("PRE_DISCOVERY_PUMP")).length,
+				usage: { ...birdeyeOhlcvUsage }
+			},
 			marketDataIntegrityGate: {
 				maxMcapFdvRatio: MARKET_DATA_MAX_MCAP_FDV_RATIO,
 				maxLiquidityFdvRatio: MARKET_DATA_MAX_LIQUIDITY_FDV_RATIO,
@@ -829,6 +1107,9 @@ module.exports = {
 	buildRejectionTelemetry,
 	entryQualitySnapshot,
 	marketDataIntegritySnapshot,
+	preDiscoveryPumpSnapshot,
+	birdeyeOhlcvItems,
+	normalizeBirdeyeCandle,
 	updateRollingPriceHistory,
 	postPumpSnapshot,
 	smartMoneyItems,
