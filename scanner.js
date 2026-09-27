@@ -259,6 +259,12 @@ async function refreshSmartMoney(signal) {
 	}
 
 	try {
+		const sinceTrendingRefresh = Date.now() - birdeyeTrendingCache.updatedAt;
+		if (birdeyeTrendingCache.updatedAt && sinceTrendingRefresh >= 0 && sinceTrendingRefresh < 1100) {
+			await new Promise(resolve => setTimeout(resolve, 1100 - sinceTrendingRefresh));
+			if (signal?.aborted) return smartMoneyCache;
+		}
+
 		const response = await axios.get(SMART_MONEY_URL, {
 			timeout: 10000,
 			signal,
