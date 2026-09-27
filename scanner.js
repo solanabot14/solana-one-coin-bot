@@ -410,6 +410,34 @@ async function mapWithConcurrency(items, concurrency, worker, signal) {
 }
 
 
+function entryQualitySnapshot(data) {
+	const liquidity = Number(data?.liquidityUsd) || 0;
+	const volume5m = Number(data?.volume5m) || 0;
+	const buys5m = Number(data?.buys5m) || 0;
+	const sells5m = Number(data?.sells5m) || 0;
+	const transactions5m = buys5m + sells5m;
+	const buyRatio5m = transactions5m > 0 ? buys5m / transactions5m : 0;
+	const volumeLiquidity5mPercent = liquidity > 0 ? volume5m / liquidity * 100 : 0;
+	const change5m = Number(data?.priceChange5m) || 0;
+	const change1h = Number(data?.priceChange1h) || 0;
+
+	return {
+		volume5m,
+		volume1h: Number(data?.volume1h) || 0,
+		volumeLiquidity5mPercent,
+		transactions5m,
+		buyRatio5m,
+		activityHealthy:
+			volume5m >= MIN_ENTRY_VOLUME_5M_USD ||
+			volumeLiquidity5mPercent >= MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT,
+		lateMomentum:
+			change1h >= LATE_ENTRY_1H_PERCENT &&
+			change5m <= LATE_ENTRY_MAX_5M_PERCENT,
+		change5m,
+		change1h
+	};
+}
+
 function entryDiagnostics(data, analysis) {
 	const change5m = Number(data?.priceChange5m) || 0;
 	const change1h = Number(data?.priceChange1h) || 0;
@@ -523,19 +551,13 @@ async function analyzeDiscoveredToken(token, signal) {
 	}
 
 	let analysis = analyzeToken(data);
-	const liquidity = Number(data.liquidityUsd) || 0;
-	const volume5m = Number(data.volume5m) || 0;
-	const buys5m = Number(data.buys5m) || 0;
-	const sells5m = Number(data.sells5m) || 0;
-	const transactions5m = buys5m + sells5m;
-	const buyRatio5m = transactions5m > 0 ? buys5m / transactions5m : 0;
-	const volumeLiquidity5mPercent = liquidity > 0 ? volume5m / liquidity * 100 : 0;
+	const quality = entryQualitySnapshot(data);
 	const currentActivity = {
-		volume5m,
-		volume1h: Number(data.volume1h) || 0,
-		volumeLiquidity5mPercent,
-		transactions5m,
-		buyRatio5m
+		volume5m: quality.volume5m,
+		volume1h: quality.volume1h,
+		volumeLiquidity5mPercent: quality.volumeLiquidity5mPercent,
+		transactions5m: quality.transactions5m,
+		buyRatio5m: quality.buyRatio5m
 	};
 	const postPump = postPumpSnapshot(token.tokenAddress, data.priceUsd);
 
@@ -555,45 +577,35 @@ async function analyzeDiscoveredToken(token, signal) {
 		};
 	}
 
-	const activityHealthy =
-		volume5m >= MIN_ENTRY_VOLUME_5M_USD ||
-		volumeLiquidity5mPercent >= MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT;
-
-	if (analysis.signal === "STRONG BUY" && !activityHealthy) {
+	if (analysis.signal === "STRONG BUY" && !quality.activityHealthy) {
 		console.log(
 			"CURRENT ACTIVITY BLOCK | " + (data.symbol || token.tokenAddress) +
-			" | 5m volume: $" + volume5m.toFixed(2) +
-			" | 5m vol/liquidity: " + volumeLiquidity5mPercent.toFixed(2) + "%"
+			" | 5m volume: $" + quality.volume5m.toFixed(2) +
+			" | 5m vol/liquidity: " + quality.volumeLiquidity5mPercent.toFixed(2) + "%"
 		);
 		analysis = {
 			...analysis,
 			signal: "AVOID",
 			reasons: [
 				...(analysis.reasons || []),
-				"CURRENT ACTIVITY GATE: 5m volume $" + volume5m.toFixed(2) +
-				" and 5m vol/liquidity " + volumeLiquidity5mPercent.toFixed(2) + "% are below entry thresholds"
+				"CURRENT ACTIVITY GATE: 5m volume $" + quality.volume5m.toFixed(2) +
+				" and 5m vol/liquidity " + quality.volumeLiquidity5mPercent.toFixed(2) + "% are below entry thresholds"
 			]
 		};
 	}
 
-	const change5m = Number(data.priceChange5m) || 0;
-	const change1h = Number(data.priceChange1h) || 0;
-	const lateMomentum =
-		change1h >= LATE_ENTRY_1H_PERCENT &&
-		change5m <= LATE_ENTRY_MAX_5M_PERCENT;
-
-	if (analysis.signal === "STRONG BUY" && lateMomentum) {
+	if (analysis.signal === "STRONG BUY" && quality.lateMomentum) {
 		console.log(
 			"LATE MOMENTUM BLOCK | " + (data.symbol || token.tokenAddress) +
-			" | 1h: " + change1h.toFixed(2) + "% | 5m: " + change5m.toFixed(2) + "%"
+			" | 1h: " + quality.change1h.toFixed(2) + "% | 5m: " + quality.change5m.toFixed(2) + "%"
 		);
 		analysis = {
 			...analysis,
 			signal: "AVOID",
 			reasons: [
 				...(analysis.reasons || []),
-				"LATE MOMENTUM GUARD: 1h " + change1h.toFixed(2) +
-				"% with only " + change5m.toFixed(2) + "% in the current 5m window"
+				"LATE MOMENTUM GUARD: 1h " + quality.change1h.toFixed(2) +
+				"% with only " + quality.change5m.toFixed(2) + "% in the current 5m window"
 			]
 		};
 	}
@@ -731,6 +743,7 @@ module.exports = {
 	mapWithConcurrency,
 	entryDiagnostics,
 	buildRejectionTelemetry,
+	entryQualitySnapshot,
 	updateRollingPriceHistory,
 	postPumpSnapshot,
 	smartMoneyItems,
