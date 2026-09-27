@@ -213,12 +213,6 @@ async function fetchBirdeyeTrendingTokens(signal) {
 		return { name: "Birdeye Trending 1H", type: "organic", tokens: structuredClone(birdeyeTrendingCache.tokens) };
 	}
 
-	if (birdeyeOhlcvUsage.requests >= BIRDEYE_OHLCV_MAX_REQUESTS_PER_DAY) {
-		birdeyeOhlcvUsage.budgetSkips++;
-		birdeyeOhlcvUsage.lastStatus = "DAILY_BUDGET_CAP";
-		return { status: "DAILY_BUDGET_CAP", candles: [], cached: false };
-	}
-
 	const apiKey = process.env.BIRDEYE_API_KEY;
 	if (!apiKey) {
 		birdeyeTrendingCache = { updatedAt: now, tokens: [], lastStatus: "NO_API_KEY" };
@@ -349,6 +343,12 @@ async function fetchBirdeyeOhlcvCandles(tokenAddress, signal) {
 	if (cached && now - cached.updatedAt < BIRDEYE_OHLCV_CACHE_MS) {
 		birdeyeOhlcvUsage.cacheHits++;
 		return { status: cached.status, candles: structuredClone(cached.candles), cached: true };
+	}
+
+	if (birdeyeOhlcvUsage.requests >= BIRDEYE_OHLCV_MAX_REQUESTS_PER_DAY) {
+		birdeyeOhlcvUsage.budgetSkips++;
+		birdeyeOhlcvUsage.lastStatus = "DAILY_BUDGET_CAP";
+		return { status: "DAILY_BUDGET_CAP", candles: [], cached: false };
 	}
 
 	const apiKey = process.env.BIRDEYE_API_KEY;
