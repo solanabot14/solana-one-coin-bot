@@ -387,7 +387,7 @@ th,td{
 <h2>V3.5 Clean Research</h2>
 
 <p class="muted">
-  New OG entries are tagged V3.5. This section excludes older strategy versions so the current configuration can be evaluated without mixing historical rules.
+  New OG entries are tagged V3.5. This section excludes older strategy versions so the current configuration can be evaluated without mixing historical rules. Source attribution can overlap when the same token was discovered by more than one feed.
 </p>
 
 <div class="grid">
