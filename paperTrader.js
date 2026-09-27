@@ -299,6 +299,11 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 					? structuredClone(coin.postPump)
 					: null,
 
+			entryPreDiscoveryPump:
+				coin.preDiscoveryPump
+					? structuredClone(coin.preDiscoveryPump)
+					: null,
+
 			entryMarketDataIntegrity:
 				coin.marketDataIntegrity
 					? structuredClone(coin.marketDataIntegrity)
