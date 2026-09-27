@@ -384,23 +384,23 @@ th,td{
 
 <div class="card section">
 
-<h2>V3.5 Clean Research</h2>
+<h2>V3.6 Pump Structure Protection</h2>
 
 <p class="muted">
-  New OG entries are tagged V3.5. This section excludes older strategy versions so the current configuration can be evaluated without mixing historical rules. Source attribution can overlap when the same token was discovered by more than one feed.
+  New OG entries are tagged V3.6. This section tracks the current entry strategy separately so V3.5 remains frozen as historical research.
 </p>
 
 <div class="grid">
-  <div class="metric"><div class="metric-label">V3.5 Completed</div><div class="metric-value" id="v35Trades">0</div></div>
-  <div class="metric"><div class="metric-label">V3.5 Win Rate</div><div class="metric-value" id="v35WinRate">0%</div></div>
-  <div class="metric"><div class="metric-label">V3.5 Net P/L</div><div class="metric-value" id="v35Net">$0.00</div></div>
-  <div class="metric"><div class="metric-label">V3.5 Profit Factor</div><div class="metric-value" id="v35Factor">—</div></div>
-  <div class="metric"><div class="metric-label">Expectancy / Trade</div><div class="metric-value" id="v35Expectancy">—</div></div>
-  <div class="metric"><div class="metric-label">Payoff Ratio</div><div class="metric-value" id="v35Payoff">—</div></div>
-  <div class="metric"><div class="metric-label">Realized Max Drawdown</div><div class="metric-value" id="v35Drawdown">—</div></div>
-  <div class="metric"><div class="metric-label">Max Loss Streak</div><div class="metric-value" id="v35LossStreak">0</div></div>
-  <div class="metric"><div class="metric-label">Dataset Started</div><div class="metric-value" id="v35Started">Waiting for first V3.5 trade</div></div>
-  <div class="metric"><div class="metric-label">Dataset Start Balance</div><div class="metric-value" id="v35StartBalance">—</div></div>
+  <div class="metric"><div class="metric-label">V3.6 Completed</div><div class="metric-value" id="v36Trades">0</div></div>
+  <div class="metric"><div class="metric-label">V3.6 Win Rate</div><div class="metric-value" id="v36WinRate">0%</div></div>
+  <div class="metric"><div class="metric-label">V3.6 Net P/L</div><div class="metric-value" id="v36Net">$0.00</div></div>
+  <div class="metric"><div class="metric-label">V3.6 Profit Factor</div><div class="metric-value" id="v36Factor">—</div></div>
+  <div class="metric"><div class="metric-label">Expectancy / Trade</div><div class="metric-value" id="v36Expectancy">—</div></div>
+  <div class="metric"><div class="metric-label">Payoff Ratio</div><div class="metric-value" id="v36Payoff">—</div></div>
+  <div class="metric"><div class="metric-label">Realized Max Drawdown</div><div class="metric-value" id="v36Drawdown">—</div></div>
+  <div class="metric"><div class="metric-label">Max Loss Streak</div><div class="metric-value" id="v36LossStreak">0</div></div>
+  <div class="metric"><div class="metric-label">Dataset Started</div><div class="metric-value" id="v36Started">Waiting for first V3.6 trade</div></div>
+  <div class="metric"><div class="metric-label">Dataset Start Balance</div><div class="metric-value" id="v36StartBalance">—</div></div>
 </div>
 
 <div style="overflow-x:auto; margin-top:16px">
@@ -412,15 +412,22 @@ th,td{
 
 <div style="overflow-x:auto; margin-top:16px">
 <table>
-<thead><tr><th>V3.5 Discovery Source</th><th>Trades</th><th>Win Rate</th><th>Expectancy</th><th>Profit Factor</th><th>Net P/L</th></tr></thead>
-<tbody id="v35SourceStats"><tr><td colspan="6">Waiting for V3.5 trades.</td></tr></tbody>
+<thead><tr><th>V3.6 Discovery Source</th><th>Trades</th><th>Win Rate</th><th>Expectancy</th><th>Profit Factor</th><th>Net P/L</th></tr></thead>
+<tbody id="v36SourceStats"><tr><td colspan="6">Waiting for V3.6 trades.</td></tr></tbody>
 </table>
 </div>
 
 <div style="overflow-x:auto; margin-top:16px">
 <table>
-<thead><tr><th>V3.5 Birdeye Rank</th><th>Trades</th><th>Win Rate</th><th>Expectancy</th><th>Profit Factor</th><th>Net P/L</th></tr></thead>
-<tbody id="v35RankStats"><tr><td colspan="6">Waiting for Birdeye-ranked V3.5 trades.</td></tr></tbody>
+<thead><tr><th>V3.6 Birdeye Rank</th><th>Trades</th><th>Win Rate</th><th>Expectancy</th><th>Profit Factor</th><th>Net P/L</th></tr></thead>
+<tbody id="v36RankStats"><tr><td colspan="6">Waiting for Birdeye-ranked V3.6 trades.</td></tr></tbody>
+</table>
+</div>
+
+<div style="overflow-x:auto; margin-top:16px">
+<table>
+<thead><tr><th>Frozen Baseline</th><th>Trades</th><th>Win Rate</th><th>Expectancy</th><th>Profit Factor</th><th>Net P/L</th></tr></thead>
+<tbody id="v35ArchiveStats"><tr><td colspan="6">Waiting for archived V3.5 data.</td></tr></tbody>
 </table>
 </div>
 
