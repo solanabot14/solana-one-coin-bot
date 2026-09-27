@@ -137,7 +137,7 @@ function exceptionalRunnerReentry(coin) {
 }
 
 function diversityDecision(coin, stats) {
-  if (!stats || stats.entries === 0) {
+  if (!stats) {
     return { eligible: true, priority: 0, reason: "NEW TOKEN" };
   }
 
@@ -157,11 +157,14 @@ function diversityDecision(coin, stats) {
     return { eligible: false, priority: 99, reason: "NORMAL WINNER REST 24H" };
   }
 
-  if (stats.entries >= MAX_LOSS_ENTRIES_PER_TOKEN_24H) {
-    return { eligible: false, priority: 99, reason: "LOSS REENTRY LIMIT 24H" };
+  if (stats.losingCompletions > 0 || stats.entries > 0) {
+    if (stats.entries >= MAX_LOSS_ENTRIES_PER_TOKEN_24H) {
+      return { eligible: false, priority: 99, reason: "LOSS REENTRY LIMIT 24H" };
+    }
+    return { eligible: true, priority: 1, reason: "LOSS SECOND CHANCE" };
   }
 
-  return { eligible: true, priority: 1, reason: "LOSS SECOND CHANCE" };
+  return { eligible: true, priority: 0, reason: "NEW TOKEN" };
 }
 
 function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
