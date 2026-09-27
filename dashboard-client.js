@@ -139,7 +139,9 @@ function renderRejectionTelemetry(d) {
 		rejectAnti5m: r.antiChase5m || 0,
 		rejectAnti1h: r.antiChase1h || 0,
 		rejectAnti24h: r.antiChase24h || 0,
-		rejectPostPump: r.postPump || 0
+		rejectPostPump: r.postPump || 0,
+		rejectCurrentActivity: r.currentActivity || 0,
+		rejectLateMomentum: r.lateMomentum || 0
 	};
 	const sm = d.discoveryTelemetry?.smartMoney || {};
 	$("smartMoneyStatus").textContent = escapeHtml(sm.status || "—");
@@ -155,7 +157,9 @@ function renderRejectionTelemetry(d) {
 		ANTI_CHASE_5M: "Anti-chase 5m",
 		ANTI_CHASE_1H: "Anti-chase 1h",
 		ANTI_CHASE_24H: "Anti-chase 24h",
-		POST_PUMP: "Post-pump guard"
+		POST_PUMP: "Post-pump guard",
+		CURRENT_ACTIVITY: "Current activity",
+		LATE_MOMENTUM: "Late momentum"
 	}[blocker] || blocker);
 
 	const near = Array.isArray(r.nearEntries) ? r.nearEntries : [];

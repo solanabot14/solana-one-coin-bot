@@ -42,6 +42,10 @@ const POST_PUMP_WINDOW_MS = 15 * 60 * 1000;
 const POST_PUMP_MIN_HISTORY_MS = 4 * 60 * 1000;
 const POST_PUMP_MIN_OBSERVATIONS = 3;
 const POST_PUMP_GUARD_PERCENT = Number.parseFloat(process.env.POST_PUMP_GUARD_PERCENT || "6") || 6;
+const MIN_ENTRY_VOLUME_5M_USD = Number.parseFloat(process.env.MIN_ENTRY_VOLUME_5M_USD || "5000") || 5000;
+const MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT = Number.parseFloat(process.env.MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT || "1") || 1;
+const LATE_ENTRY_1H_PERCENT = Number.parseFloat(process.env.LATE_ENTRY_1H_PERCENT || "20") || 20;
+const LATE_ENTRY_MAX_5M_PERCENT = Number.parseFloat(process.env.LATE_ENTRY_MAX_5M_PERCENT || "1.5") || 1.5;
 const BIRDEYE_TRENDING_REFRESH_MS = Math.max(
 	60 * 60 * 1000,
 	(Number.parseInt(process.env.BIRDEYE_TRENDING_REFRESH_MINUTES || "90", 10) || 90) * 60 * 1000
@@ -69,6 +73,8 @@ let lastDiscoveryTelemetry = {
 		antiChase1h: 0,
 		antiChase24h: 0,
 		postPump: 0,
+		currentActivity: 0,
+		lateMomentum: 0,
 		nearEntries: []
 	}
 };
@@ -404,6 +410,34 @@ async function mapWithConcurrency(items, concurrency, worker, signal) {
 }
 
 
+function entryQualitySnapshot(data) {
+	const liquidity = Number(data?.liquidityUsd) || 0;
+	const volume5m = Number(data?.volume5m) || 0;
+	const buys5m = Number(data?.buys5m) || 0;
+	const sells5m = Number(data?.sells5m) || 0;
+	const transactions5m = buys5m + sells5m;
+	const buyRatio5m = transactions5m > 0 ? buys5m / transactions5m : 0;
+	const volumeLiquidity5mPercent = liquidity > 0 ? volume5m / liquidity * 100 : 0;
+	const change5m = Number(data?.priceChange5m) || 0;
+	const change1h = Number(data?.priceChange1h) || 0;
+
+	return {
+		volume5m,
+		volume1h: Number(data?.volume1h) || 0,
+		volumeLiquidity5mPercent,
+		transactions5m,
+		buyRatio5m,
+		activityHealthy:
+			volume5m >= MIN_ENTRY_VOLUME_5M_USD ||
+			volumeLiquidity5mPercent >= MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT,
+		lateMomentum:
+			change1h >= LATE_ENTRY_1H_PERCENT &&
+			change5m <= LATE_ENTRY_MAX_5M_PERCENT,
+		change5m,
+		change1h
+	};
+}
+
 function entryDiagnostics(data, analysis) {
 	const change5m = Number(data?.priceChange5m) || 0;
 	const change1h = Number(data?.priceChange1h) || 0;
@@ -419,6 +453,8 @@ function entryDiagnostics(data, analysis) {
 	if (reasons.some(reason => reason.includes("ANTI-CHASE: 1h"))) blockers.push("ANTI_CHASE_1H");
 	if (reasons.some(reason => reason.includes("ANTI-CHASE: 24h"))) blockers.push("ANTI_CHASE_24H");
 	if (reasons.some(reason => reason.includes("POST-PUMP GUARD"))) blockers.push("POST_PUMP");
+	if (reasons.some(reason => reason.includes("CURRENT ACTIVITY GATE"))) blockers.push("CURRENT_ACTIVITY");
+	if (reasons.some(reason => reason.includes("LATE MOMENTUM GUARD"))) blockers.push("LATE_MOMENTUM");
 
 	if (!blockers.length && analysis?.signal !== "STRONG BUY") {
 		if (Number(analysis?.score) < 8) blockers.push("SCORE_BELOW_8");
@@ -450,6 +486,8 @@ function buildRejectionTelemetry(candidates = []) {
 		antiChase1h: 0,
 		antiChase24h: 0,
 		postPump: 0,
+		currentActivity: 0,
+		lateMomentum: 0,
 		nearEntries: []
 	};
 
@@ -466,6 +504,8 @@ function buildRejectionTelemetry(candidates = []) {
 		if (blockers.includes("ANTI_CHASE_1H")) telemetry.antiChase1h++;
 		if (blockers.includes("ANTI_CHASE_24H")) telemetry.antiChase24h++;
 		if (blockers.includes("POST_PUMP")) telemetry.postPump++;
+		if (blockers.includes("CURRENT_ACTIVITY")) telemetry.currentActivity++;
+		if (blockers.includes("LATE_MOMENTUM")) telemetry.lateMomentum++;
 
 		if (Number(candidate.score) >= 6 || candidate.signal === "BUY") {
 			telemetry.nearEntries.push({
@@ -511,7 +551,16 @@ async function analyzeDiscoveredToken(token, signal) {
 	}
 
 	let analysis = analyzeToken(data);
+	const quality = entryQualitySnapshot(data);
+	const currentActivity = {
+		volume5m: quality.volume5m,
+		volume1h: quality.volume1h,
+		volumeLiquidity5mPercent: quality.volumeLiquidity5mPercent,
+		transactions5m: quality.transactions5m,
+		buyRatio5m: quality.buyRatio5m
+	};
 	const postPump = postPumpSnapshot(token.tokenAddress, data.priceUsd);
+
 	if (analysis.signal === "STRONG BUY" && postPump.blocked) {
 		console.log(
 			"POST-PUMP BLOCK | " + (data.symbol || token.tokenAddress) +
@@ -527,16 +576,41 @@ async function analyzeDiscoveredToken(token, signal) {
 			]
 		};
 	}
+
+	if (analysis.signal === "STRONG BUY" && !quality.activityHealthy) {
+		console.log(
+			"CURRENT ACTIVITY BLOCK | " + (data.symbol || token.tokenAddress) +
+			" | 5m volume: $" + quality.volume5m.toFixed(2) +
+			" | 5m vol/liquidity: " + quality.volumeLiquidity5mPercent.toFixed(2) + "%"
+		);
+		analysis = {
+			...analysis,
+			signal: "AVOID",
+			reasons: [
+				...(analysis.reasons || []),
+				"CURRENT ACTIVITY GATE: 5m volume $" + quality.volume5m.toFixed(2) +
+				" and 5m vol/liquidity " + quality.volumeLiquidity5mPercent.toFixed(2) + "% are below entry thresholds"
+			]
+		};
+	}
+
+	if (analysis.signal === "STRONG BUY" && quality.lateMomentum) {
+		console.log(
+			"LATE MOMENTUM BLOCK | " + (data.symbol || token.tokenAddress) +
+			" | 1h: " + quality.change1h.toFixed(2) + "% | 5m: " + quality.change5m.toFixed(2) + "%"
+		);
+		analysis = {
+			...analysis,
+			signal: "AVOID",
+			reasons: [
+				...(analysis.reasons || []),
+				"LATE MOMENTUM GUARD: 1h " + quality.change1h.toFixed(2) +
+				"% with only " + quality.change5m.toFixed(2) + "% in the current 5m window"
+			]
+		};
+	}
+
 	const diagnostics = entryDiagnostics(data, analysis);
-	const liquidity = Number(data.liquidityUsd) || 0;
-	const volume5m = Number(data.volume5m) || 0;
-	const currentActivity = {
-		volume5m,
-		volume1h: Number(data.volume1h) || 0,
-		volumeLiquidity5mPercent: liquidity > 0 ? volume5m / liquidity * 100 : 0,
-		transactions5m: diagnostics.totalTransactions,
-		buyRatio5m: diagnostics.buyRatio
-	};
 
 	console.log(
 		`PASSED FILTERS: ${data.symbol} | Score: ${analysis.score} | ` +
@@ -625,6 +699,14 @@ async function discoverCandidates({ signal } = {}) {
 				windowMinutes: 15,
 				blockedCandidates: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("POST_PUMP")).length
 			},
+			entryQualityGates: {
+				minVolume5mUsd: MIN_ENTRY_VOLUME_5M_USD,
+				minVolumeLiquidity5mPercent: MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT,
+				lateEntry1hPercent: LATE_ENTRY_1H_PERCENT,
+				lateEntryMax5mPercent: LATE_ENTRY_MAX_5M_PERCENT,
+				currentActivityBlocked: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("CURRENT_ACTIVITY")).length,
+				lateMomentumBlocked: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("LATE_MOMENTUM")).length
+			},
 			rejectionTelemetry: buildRejectionTelemetry(candidates),
 			topCandidates: candidates.slice(0, 12).map(candidate => ({
 				symbol: candidate.symbol || "-",
@@ -661,6 +743,7 @@ module.exports = {
 	mapWithConcurrency,
 	entryDiagnostics,
 	buildRejectionTelemetry,
+	entryQualitySnapshot,
 	updateRollingPriceHistory,
 	postPumpSnapshot,
 	smartMoneyItems,
