@@ -29,6 +29,7 @@ const TRENDING_META_URL = "https://api.dexscreener.com/metas/trending/v1";
 const TRENDING_META_DETAIL_BASE = "https://api.dexscreener.com/metas/meta/v1/";
 const TRENDING_META_LIMIT = 3;
 const TRENDING_PAIRS_PER_META = 10;
+const TRENDING_TOTAL_TOKEN_LIMIT = 8;
 const TOKEN_LOOKUP_CONCURRENCY = Math.max(
 	1,
 	Math.min(12, Number.parseInt(process.env.SCANNER_TOKEN_CONCURRENCY || "8", 10) || 8)
@@ -105,16 +106,19 @@ async function fetchTrendingMetaTokens(signal) {
 		);
 
 		const tokens = [];
+		const seenTokenAddresses = new Set();
 		for (const detail of details) {
 			const pairs = Array.isArray(detail?.pairs) ? detail.pairs : [];
 			let accepted = 0;
 			for (const pair of pairs) {
 				if (
 					pair?.chainId !== "solana" ||
-					!pair?.baseToken?.address
+					!pair?.baseToken?.address ||
+					seenTokenAddresses.has(pair.baseToken.address)
 				) {
 					continue;
 				}
+				seenTokenAddresses.add(pair.baseToken.address);
 				tokens.push({
 					chainId: "solana",
 					tokenAddress: pair.baseToken.address,
@@ -122,8 +126,12 @@ async function fetchTrendingMetaTokens(signal) {
 					discoveryType: "organic"
 				});
 				accepted++;
-				if (accepted >= TRENDING_PAIRS_PER_META) break;
+				if (
+					accepted >= TRENDING_PAIRS_PER_META ||
+					tokens.length >= TRENDING_TOTAL_TOKEN_LIMIT
+				) break;
 			}
+			if (tokens.length >= TRENDING_TOTAL_TOKEN_LIMIT) break;
 		}
 
 		console.log(`Trending Metas: ${tokens.length} Solana tokens received`);
