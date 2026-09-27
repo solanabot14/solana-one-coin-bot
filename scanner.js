@@ -1,4 +1,5 @@
 const axios = require("axios");
+const vm = require("node:vm");
 const { getTokenData } = require("./dexscreener");
 const { analyzeToken } = require("./strategy");
 
@@ -30,6 +31,20 @@ const TRENDING_META_DETAIL_BASE = "https://api.dexscreener.com/metas/meta/v1/";
 const TRENDING_META_LIMIT = 3;
 const TRENDING_PAIRS_PER_META = 10;
 const TRENDING_TOTAL_TOKEN_LIMIT = 8;
+const TRENDING_TIMEFRAME_SOURCES = [
+	{
+		name: "Trending 1H",
+		url: "https://dexscreener.com/solana/1h?rankBy=trendingScoreH1&order=desc",
+		type: "organic",
+		limit: 20
+	},
+	{
+		name: "Trending 5M",
+		url: "https://dexscreener.com/solana/5m?rankBy=trendingScoreM5&order=desc",
+		type: "organic",
+		limit: 10
+	}
+];
 const TOKEN_LOOKUP_CONCURRENCY = Math.max(
 	1,
 	Math.min(12, Number.parseInt(process.env.SCANNER_TOKEN_CONCURRENCY || "8", 10) || 8)
@@ -76,6 +91,85 @@ async function fetchDiscoverySource(source, signal) {
 		}));
 
 		console.log(`${source.name}: ${tokens.length} tokens received`);
+		return { name: source.name, type: source.type, tokens };
+	} catch (error) {
+		console.log(`${source.name} unavailable: ${error.message}`);
+		return { name: source.name, type: source.type, tokens: [] };
+	}
+}
+
+
+function extractDexScreenerServerData(html) {
+	if (typeof html !== "string" || !html.length) {
+		throw new Error("empty DexScreener page");
+	}
+
+	const marker = "window.__SERVER_DATA";
+	const markerIndex = html.indexOf(marker);
+	if (markerIndex < 0) throw new Error("DexScreener server data marker missing");
+
+	const equalsIndex = html.indexOf("=", markerIndex + marker.length);
+	const scriptEndIndex = html.indexOf("</script>", equalsIndex + 1);
+	if (equalsIndex < 0 || scriptEndIndex < 0) {
+		throw new Error("DexScreener server data assignment incomplete");
+	}
+
+	let expression = html.slice(equalsIndex + 1, scriptEndIndex).trim();
+	expression = expression.replace(/;\s*$/, "").trim();
+
+	if (!expression || expression.length > 5_000_000) {
+		throw new Error("DexScreener server data size invalid");
+	}
+
+	const sandbox = { data: null, URL, Date };
+	const context = vm.createContext(sandbox, {
+		codeGeneration: { strings: false, wasm: false }
+	});
+	vm.runInContext(`data = ${expression}`, context, { timeout: 100 });
+	return sandbox.data;
+}
+
+function trendingPairsToTokens(pairs = [], source) {
+	const limit = Math.max(0, Number(source?.limit) || 0);
+	const seen = new Set();
+	const tokens = [];
+
+	for (const pair of Array.isArray(pairs) ? pairs : []) {
+		const tokenAddress = pair?.baseToken?.address;
+		if (pair?.chainId !== "solana" || !tokenAddress || seen.has(tokenAddress)) continue;
+
+		seen.add(tokenAddress);
+		tokens.push({
+			chainId: "solana",
+			tokenAddress,
+			discoverySource: source.name,
+			discoveryType: source.type
+		});
+
+		if (tokens.length >= limit) break;
+	}
+
+	return tokens;
+}
+
+async function fetchTrendingTimeframeSource(source, signal) {
+	try {
+		const response = await axios.get(source.url, {
+			timeout: 10000,
+			signal,
+			responseType: "text",
+			transformResponse: [data => data],
+			headers: {
+				Accept: "text/html,application/xhtml+xml",
+				"User-Agent": "Mozilla/5.0 (compatible; SolanaOneCoinBot/1.0)"
+			}
+		});
+
+		const serverData = extractDexScreenerServerData(response.data);
+		const pairs = serverData?.route?.data?.dexScreenerData?.pairs || [];
+		const tokens = trendingPairsToTokens(pairs, source);
+
+		console.log(`${source.name}: ${tokens.length} Solana tokens received`);
 		return { name: source.name, type: source.type, tokens };
 	} catch (error) {
 		console.log(`${source.name} unavailable: ${error.message}`);
@@ -316,6 +410,7 @@ async function discoverCandidates({ signal } = {}) {
 	try {
 		const results = await Promise.all([
 			...DISCOVERY_SOURCES.map(source => fetchDiscoverySource(source, signal)),
+			...TRENDING_TIMEFRAME_SOURCES.map(source => fetchTrendingTimeframeSource(source, signal)),
 			fetchTrendingMetaTokens(signal)
 		]);
 
@@ -388,5 +483,7 @@ module.exports = {
 	mergeDiscoveryTokens,
 	mapWithConcurrency,
 	entryDiagnostics,
-	buildRejectionTelemetry
+	buildRejectionTelemetry,
+	extractDexScreenerServerData,
+	trendingPairsToTokens
 };
