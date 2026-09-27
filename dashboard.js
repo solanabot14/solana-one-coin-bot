@@ -444,6 +444,77 @@ th,td{
 
 <div class="card section">
 
+<h2>Rejection Telemetry</h2>
+
+<p class="muted">
+  Latest OG scan only. Counts can overlap because one token may fail more than one STRONG BUY confirmation.
+  This is read-only telemetry and does not change trading decisions.
+</p>
+
+<div class="grid">
+  <div class="metric">
+    <div class="metric-label">Not Strong Buy</div>
+    <div class="metric-value" id="rejectNotStrong">0</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Score Below 8</div>
+    <div class="metric-value" id="rejectScore">0</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">5m Confirmation</div>
+    <div class="metric-value" id="reject5m">0</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">1h Confirmation</div>
+    <div class="metric-value" id="reject1h">0</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Buy Ratio &lt; 55%</div>
+    <div class="metric-value" id="rejectRatio">0</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Transactions &lt; 20</div>
+    <div class="metric-value" id="rejectTx">0</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Anti-Chase 5m</div>
+    <div class="metric-value" id="rejectAnti5m">0</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Anti-Chase 1h</div>
+    <div class="metric-value" id="rejectAnti1h">0</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Anti-Chase 24h</div>
+    <div class="metric-value" id="rejectAnti24h">0</div>
+  </div>
+</div>
+
+<div style="overflow-x:auto; margin-top:16px">
+<table>
+<thead>
+<tr>
+  <th>Near Entry</th>
+  <th>Score</th>
+  <th>Signal</th>
+  <th>5m</th>
+  <th>1h</th>
+  <th>Buy Ratio</th>
+  <th>5m Tx</th>
+  <th>Blocked By</th>
+  <th>Source</th>
+</tr>
+</thead>
+<tbody id="rejectionNearEntries">
+<tr><td colspan="9">Waiting for scan data...</td></tr>
+</tbody>
+</table>
+</div>
+
+</div>
+
+<div class="card section">
+
 <h2>Token Diversity</h2>
 
 <p class="muted">

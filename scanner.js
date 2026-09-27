@@ -40,7 +40,19 @@ let lastDiscoveryTelemetry = {
 	uniqueSolanaCandidates: 0,
 	candidatesAfterSafetyFilters: 0,
 	strongBuys: 0,
-	topCandidates: []
+	topCandidates: [],
+	rejectionTelemetry: {
+		notStrongBuy: 0,
+		scoreBelow8: 0,
+		fiveMinute: 0,
+		oneHour: 0,
+		buyRatio: 0,
+		transactions: 0,
+		antiChase5m: 0,
+		antiChase1h: 0,
+		antiChase24h: 0,
+		nearEntries: []
+	}
 };
 
 let lastCandidateCache = {
@@ -168,6 +180,87 @@ async function mapWithConcurrency(items, concurrency, worker, signal) {
 	return results;
 }
 
+
+function entryDiagnostics(data, analysis) {
+	const change5m = Number(data?.priceChange5m) || 0;
+	const change1h = Number(data?.priceChange1h) || 0;
+	const change24h = Number(data?.priceChange24h) || 0;
+	const buys = Number(data?.buys5m) || 0;
+	const sells = Number(data?.sells5m) || 0;
+	const totalTransactions = buys + sells;
+	const buyRatio = totalTransactions > 0 ? buys / totalTransactions : 0;
+	const reasons = Array.isArray(analysis?.reasons) ? analysis.reasons : [];
+
+	const blockers = [];
+	if (reasons.some(reason => reason.includes("ANTI-CHASE: 5m"))) blockers.push("ANTI_CHASE_5M");
+	if (reasons.some(reason => reason.includes("ANTI-CHASE: 1h"))) blockers.push("ANTI_CHASE_1H");
+	if (reasons.some(reason => reason.includes("ANTI-CHASE: 24h"))) blockers.push("ANTI_CHASE_24H");
+
+	if (!blockers.length && analysis?.signal !== "STRONG BUY") {
+		if (Number(analysis?.score) < 8) blockers.push("SCORE_BELOW_8");
+		if (change5m < 0.50 || change5m > 6) blockers.push("5M_CONFIRMATION");
+		if (change1h < 0.80 || change1h > 30) blockers.push("1H_CONFIRMATION");
+		if (buyRatio < 0.55) blockers.push("BUY_RATIO");
+		if (totalTransactions < 20) blockers.push("TRANSACTIONS");
+	}
+
+	return {
+		blockers,
+		change5m,
+		change1h,
+		change24h,
+		buyRatio,
+		totalTransactions
+	};
+}
+
+function buildRejectionTelemetry(candidates = []) {
+	const telemetry = {
+		notStrongBuy: 0,
+		scoreBelow8: 0,
+		fiveMinute: 0,
+		oneHour: 0,
+		buyRatio: 0,
+		transactions: 0,
+		antiChase5m: 0,
+		antiChase1h: 0,
+		antiChase24h: 0,
+		nearEntries: []
+	};
+
+	for (const candidate of candidates) {
+		if (candidate.signal === "STRONG BUY") continue;
+		telemetry.notStrongBuy++;
+		const blockers = candidate.entryDiagnostics?.blockers || [];
+		if (blockers.includes("SCORE_BELOW_8")) telemetry.scoreBelow8++;
+		if (blockers.includes("5M_CONFIRMATION")) telemetry.fiveMinute++;
+		if (blockers.includes("1H_CONFIRMATION")) telemetry.oneHour++;
+		if (blockers.includes("BUY_RATIO")) telemetry.buyRatio++;
+		if (blockers.includes("TRANSACTIONS")) telemetry.transactions++;
+		if (blockers.includes("ANTI_CHASE_5M")) telemetry.antiChase5m++;
+		if (blockers.includes("ANTI_CHASE_1H")) telemetry.antiChase1h++;
+		if (blockers.includes("ANTI_CHASE_24H")) telemetry.antiChase24h++;
+
+		if (Number(candidate.score) >= 6 || candidate.signal === "BUY") {
+			telemetry.nearEntries.push({
+				symbol: candidate.symbol || "-",
+				score: Number(candidate.score) || 0,
+				signal: candidate.signal || "-",
+				blockers: [...blockers],
+				priceChange5m: candidate.entryDiagnostics?.change5m ?? null,
+				priceChange1h: candidate.entryDiagnostics?.change1h ?? null,
+				buyRatio: candidate.entryDiagnostics?.buyRatio ?? null,
+				transactions5m: candidate.entryDiagnostics?.totalTransactions ?? null,
+				discoverySources: [...(candidate.discoverySources || [])]
+			});
+		}
+	}
+
+	telemetry.nearEntries.sort((a, b) => b.score - a.score);
+	telemetry.nearEntries = telemetry.nearEntries.slice(0, 12);
+	return telemetry;
+}
+
 async function analyzeDiscoveredToken(token, signal) {
 	if (signal?.aborted) return null;
 
@@ -187,6 +280,7 @@ async function analyzeDiscoveredToken(token, signal) {
 	}
 
 	const analysis = analyzeToken(data);
+	const diagnostics = entryDiagnostics(data, analysis);
 
 	console.log(
 		`PASSED FILTERS: ${data.symbol} | Score: ${analysis.score} | ` +
@@ -200,7 +294,8 @@ async function analyzeDiscoveredToken(token, signal) {
 		signal: analysis.signal,
 		reasons: analysis.reasons,
 		discoverySources: [...token.discoverySources],
-		discoveryTypes: [...token.discoveryTypes]
+		discoveryTypes: [...token.discoveryTypes],
+		entryDiagnostics: diagnostics
 	};
 }
 
@@ -250,6 +345,7 @@ async function discoverCandidates({ signal } = {}) {
 			strongBuys: candidates.filter(candidate => candidate.signal === "STRONG BUY").length,
 			scanDurationMs: Date.now() - scanStartedAt,
 			tokenLookupConcurrency: TOKEN_LOOKUP_CONCURRENCY,
+			rejectionTelemetry: buildRejectionTelemetry(candidates),
 			topCandidates: candidates.slice(0, 12).map(candidate => ({
 				symbol: candidate.symbol || "-",
 				score: candidate.score,
@@ -282,5 +378,7 @@ module.exports = {
 	getDiscoveryTelemetry,
 	getCachedCandidates,
 	mergeDiscoveryTokens,
-	mapWithConcurrency
+	mapWithConcurrency,
+	entryDiagnostics,
+	buildRejectionTelemetry
 };
