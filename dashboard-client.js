@@ -141,9 +141,14 @@ function renderRejectionTelemetry(d) {
 		rejectAnti24h: r.antiChase24h || 0,
 		rejectPostPump: r.postPump || 0,
 		rejectCurrentActivity: r.currentActivity || 0,
-		rejectLateMomentum: r.lateMomentum || 0
+		rejectLateMomentum: r.lateMomentum || 0,
+		rejectMarketIntegrity: r.marketDataIntegrity || 0
 	};
 	const sm = d.discoveryTelemetry?.smartMoney || {};
+	const dexHealth = d.discoveryTelemetry?.marketDataHealth || {};
+	$("dexDiscoveryHealth").textContent = dexHealth.discoveryCircuitOpen
+		? "PAUSED (" + number(dexHealth.consecutiveDiscoveryFailures || 0) + " failures)"
+		: "OK";
 	$("smartMoneyStatus").textContent = escapeHtml(sm.status || "—");
 	$("smartMoneyMatches").textContent = number(sm.matchedCandidates || 0);
 	for (const [id, value] of Object.entries(counts)) $(id).textContent = number(value);
@@ -159,7 +164,8 @@ function renderRejectionTelemetry(d) {
 		ANTI_CHASE_24H: "Anti-chase 24h",
 		POST_PUMP: "Post-pump guard",
 		CURRENT_ACTIVITY: "Current activity",
-		LATE_MOMENTUM: "Late momentum"
+		LATE_MOMENTUM: "Late momentum",
+		MARKET_DATA_INTEGRITY: "Market data integrity"
 	}[blocker] || blocker);
 
 	const near = Array.isArray(r.nearEntries) ? r.nearEntries : [];

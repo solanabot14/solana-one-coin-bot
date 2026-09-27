@@ -49,6 +49,7 @@ function groupCompletedTrades(history = [], position = null) {
 				entryDiscoverySources: Array.isArray(trade.entryDiscoverySources) ? [...trade.entryDiscoverySources] : [],
 				entryCurrentActivity: trade.entryCurrentActivity ? structuredClone(trade.entryCurrentActivity) : null,
 				entryPostPump: trade.entryPostPump ? structuredClone(trade.entryPostPump) : null,
+				entryMarketDataIntegrity: trade.entryMarketDataIntegrity ? structuredClone(trade.entryMarketDataIntegrity) : null,
 				entrySmartMoney: trade.entrySmartMoney ? structuredClone(trade.entrySmartMoney) : null,
 				entryBirdeyeRank: trade.entryBirdeyeRank ?? null,
 				entryBuys5m: trade.entryBuys5m ?? null,
