@@ -51,6 +51,81 @@ function validateState(data) {
 	}
 }
 
+const JTO_REPAIR_ID = "jto-bad-quote-2026-09-27";
+const JTO_TOKEN = "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL";
+const JTO_PAIR = "G2FiE1yn9N9ZJx5e1E2LxxMnHvb1H3hCuHLPfKJ98smA";
+
+function repairKnownJtoBadQuote(data) {
+	const p = data?.position;
+	if (!p || p.tokenAddress !== JTO_TOKEN || p.pairAddress !== JTO_PAIR) {
+		return { changed: false, data };
+	}
+
+	const repairs = Array.isArray(data.repairs) ? data.repairs : [];
+	if (repairs.some(repair => repair?.id === JTO_REPAIR_ID)) {
+		return { changed: false, data };
+	}
+
+	const entryPrice = Number(p.entryPrice);
+	const highestPrice = Number(p.highestPrice);
+	if (!(entryPrice >= 0.63 && entryPrice <= 0.64) || !(highestPrice > 1000)) {
+		return { changed: false, data };
+	}
+
+	const positionId = p.id;
+	const buy = data.history.find(trade =>
+		trade?.type === "BUY" &&
+		trade.positionId === positionId &&
+		trade.tokenAddress === JTO_TOKEN
+	);
+	if (!buy || !(Number(buy.quantity) > 0) || !(Number(buy.amountInvested) > 0)) {
+		return { changed: false, data };
+	}
+
+	const badSells = data.history.filter(trade =>
+		trade?.type === "SELL" &&
+		trade.positionId === positionId &&
+		["TAKE PROFIT 1", "TAKE PROFIT 2"].includes(trade.reason) &&
+		Number(trade.exitPrice) > 1000
+	);
+	if (!badSells.length) {
+		return { changed: false, data };
+	}
+
+	const fictitiousSaleValue = badSells.reduce(
+		(sum, trade) => sum + (Number(trade.saleValue) || 0),
+		0
+	);
+	const repairedCash = Number(data.cashBalance) - fictitiousSaleValue;
+	if (!Number.isFinite(repairedCash) || repairedCash < 0) {
+		throw new Error("JTO repair refused: calculated cash would be invalid.");
+	}
+
+	const next = structuredClone(data);
+	next.cashBalance = repairedCash;
+	next.position.quantity = Number(buy.quantity);
+	next.position.amountInvested = Number(buy.amountInvested);
+	next.position.firstTakeProfitDone = false;
+	next.position.secondTakeProfitDone = false;
+	next.position.highestPrice = Number(next.position.entryPrice);
+	next.history = next.history.filter(trade => !badSells.some(bad => bad === trade));
+	next.repairs = Array.isArray(next.repairs) ? next.repairs : [];
+	next.repairs.push({
+		id: JTO_REPAIR_ID,
+		time: new Date().toISOString(),
+		positionId,
+		tokenAddress: JTO_TOKEN,
+		pairAddress: JTO_PAIR,
+		removedSellCount: badSells.length,
+		removedSaleValue: fictitiousSaleValue,
+		previousHighestPrice: highestPrice,
+		restoredEntryPrice: Number(next.position.entryPrice),
+		restoredQuantity: Number(next.position.quantity),
+		restoredAmountInvested: Number(next.position.amountInvested)
+	});
+
+	return { changed: true, data: next };
+}
 function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 	let state = {
 		startingBalance: 100,
@@ -62,6 +137,27 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 	if (io.existsSync(dataFile)) {
 		state = JSON.parse(io.readFileSync(dataFile, "utf8"));
 		validateState(state);
+
+		const repair = repairKnownJtoBadQuote(state);
+		if (repair.changed) {
+			validateState(repair.data);
+			const temporary = dataFile + "." + process.pid + "." + randomUUID() + ".repair.tmp";
+			try {
+				io.mkdirSync(path.dirname(dataFile), { recursive: true });
+				io.writeFileSync(temporary, JSON.stringify(repair.data, null, 2), { flag: "wx", flush: true });
+				io.renameSync(temporary, dataFile);
+			} finally {
+				if (io.existsSync(temporary)) io.unlinkSync(temporary);
+			}
+			state = repair.data;
+			console.log(
+				"JTO SURGICAL REPAIR | Removed " +
+				state.repairs.at(-1).removedSellCount +
+				" corrupted partial sells | Reversed $" +
+				state.repairs.at(-1).removedSaleValue.toFixed(2) +
+				" fictitious cash"
+			);
+		}
 	}
 
 	function commit(next) {
@@ -496,7 +592,8 @@ const current = () =>
 
 module.exports = {
 	createPaperTrader,
-	defaultDataFile
+	defaultDataFile,
+	repairKnownJtoBadQuote
 };
 
 for (const method of [
