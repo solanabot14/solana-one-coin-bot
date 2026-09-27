@@ -6,6 +6,7 @@ const bot = require("./bot");
 const { getPortfolio } = require("./paperTrader");
 const { getTokenData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
+const scanner = require("./scanner");
 const janSlotEngine = require("./janSlotEngine");
 const janMvpBot = require("./janMvpBot");
 
@@ -382,6 +383,66 @@ th,td{
 
 <div class="card section">
 
+<h2>Discovery Mix</h2>
+
+<p class="muted">
+  Read-only view of the latest DexScreener discovery scan. Boosted tokens remain eligible, but they are now one source among broader organic discovery feeds.
+</p>
+
+<div class="grid">
+  <div class="metric">
+    <div class="metric-label">Unique Solana Tokens</div>
+    <div class="metric-value" id="discoveryUnique">0</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Passed Safety Filters</div>
+    <div class="metric-value" id="discoveryPassed">0</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Strong Buys</div>
+    <div class="metric-value" id="discoveryStrong">0</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Last Scan</div>
+    <div class="metric-value" id="discoveryUpdated">—</div>
+  </div>
+</div>
+
+<div style="overflow-x:auto; margin-top:16px">
+<table>
+<thead>
+<tr>
+  <th>Source</th>
+  <th>Type</th>
+  <th>Tokens Received</th>
+</tr>
+</thead>
+<tbody id="discoverySources">
+<tr><td colspan="3">Waiting for scan data...</td></tr>
+</tbody>
+</table>
+</div>
+
+<div style="overflow-x:auto; margin-top:16px">
+<table>
+<thead>
+<tr>
+  <th>Top Candidate</th>
+  <th>Score</th>
+  <th>Signal</th>
+  <th>Discovery Source</th>
+</tr>
+</thead>
+<tbody id="discoveryCandidates">
+<tr><td colspan="4">Waiting for scan data...</td></tr>
+</tbody>
+</table>
+</div>
+
+</div>
+
+<div class="card section">
+
 <h2>Token Diversity</h2>
 
 <p class="muted">
@@ -635,6 +696,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const data = await buildDashboardData(portfolio(), marketData);
         if (janControls?.getDashboardState) data.slotSimulation = janControls.getDashboardState();
         else if (slotEngine?.getDashboardState) data.slotSimulation = slotEngine.getDashboardState();
+        data.discoveryTelemetry = scanner.getDiscoveryTelemetry();
         return json(res, data);
       }
       if (route === "/dashboard-client.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(client); }
