@@ -1200,10 +1200,10 @@ function buildRejectionTelemetry(candidates = []) {
 	return telemetry;
 }
 
-async function analyzeDiscoveredToken(token, signal) {
+async function analyzeDiscoveredToken(token, signal, prefetchedData = null) {
 	if (signal?.aborted) return null;
 
-	const data = await getTokenData(token.tokenAddress, { signal });
+	const data = prefetchedData || await getTokenData(token.tokenAddress, { signal });
 	if (!data || signal?.aborted) return null;
 
 	console.log(
@@ -1442,42 +1442,71 @@ async function discoverCandidates({ signal } = {}) {
 
 		console.log(`Unique Solana candidates: ${solanaTokens.length}`);
 
-		const analyzed = await mapWithConcurrency(
+		const rawSnapshots = await mapWithConcurrency(
 			solanaTokens,
 			TOKEN_LOOKUP_CONCURRENCY,
-			token => analyzeDiscoveredToken(token, signal),
+			async token => {
+				const data = await getTokenData(token.tokenAddress, { signal });
+				if (!data || signal?.aborted) return null;
+				return {
+					token,
+					tokenAddress: token.tokenAddress,
+					...data,
+					discoverySources: [...token.discoverySources],
+					discoveryTypes: [...token.discoveryTypes],
+					birdeyeRank: Number.isFinite(Number(token.birdeyeRank)) ? Number(token.birdeyeRank) : null
+				};
+			},
 			signal
 		);
 
 		if (signal?.aborted) return [];
 
-		const safetyCandidates = analyzed.filter(Boolean);
-		const dexActivityTop = rankDexActivityCandidates(safetyCandidates, DEX_ACTIVITY_TOP_LIMIT);
-		const birdeyeTrendingCandidates = safetyCandidates.filter(hasBirdeyeTrendingSource);
+		const rawCandidates = rawSnapshots.filter(Boolean);
+		const rawDexCandidates = rawCandidates.filter(hasDexActivitySource);
+		const dexActivityTopRaw = rankDexActivityCandidates(rawDexCandidates, DEX_ACTIVITY_TOP_LIMIT);
+		const birdeyeRaw = rawCandidates.filter(hasBirdeyeTrendingSource);
 
-		const selectedByToken = new Map();
-		for (const candidate of birdeyeTrendingCandidates) {
-			selectedByToken.set(candidate.tokenAddress, candidate);
-		}
-		for (const candidate of dexActivityTop) {
-			selectedByToken.set(candidate.tokenAddress, candidate);
-		}
-		const candidates = Array.from(selectedByToken.values());
+		const selectedRawByToken = new Map();
+		for (const candidate of birdeyeRaw) selectedRawByToken.set(candidate.tokenAddress, candidate);
+		for (const candidate of dexActivityTopRaw) selectedRawByToken.set(candidate.tokenAddress, candidate);
+		const selectedRawCandidates = Array.from(selectedRawByToken.values());
 
 		console.log(
-			"DEX ACTIVITY TOP 20 | Raw Dex safety candidates: " + safetyCandidates.filter(hasDexActivitySource).length +
-			" | Selected: " + dexActivityTop.length +
-			" | Birdeye retained: " + birdeyeTrendingCandidates.length +
-			" | Union: " + candidates.length
+			"DEX ACTIVITY TOP 20 | Raw Dex candidates: " + rawDexCandidates.length +
+			" | Selected before safety: " + dexActivityTopRaw.length +
+			" | Birdeye raw: " + birdeyeRaw.length +
+			" | Pre-safety union: " + selectedRawCandidates.length
 		);
-		if (dexActivityTop.length) {
+		if (dexActivityTopRaw.length) {
 			console.log(
 				"DEX ACTIVITY LEADERS | " +
-				dexActivityTop.slice(0, 5).map(candidate =>
+				dexActivityTopRaw.slice(0, 5).map(candidate =>
 					(candidate.symbol || "-") + ":" + Number(candidate.dexActivity?.score || 0).toFixed(1)
 				).join(" | ")
 			);
 		}
+
+		const analyzedSelected = await mapWithConcurrency(
+			selectedRawCandidates,
+			TOKEN_LOOKUP_CONCURRENCY,
+			raw => analyzeDiscoveredToken(raw.token, signal, raw),
+			signal
+		);
+
+		if (signal?.aborted) return [];
+
+		const candidates = analyzedSelected.filter(Boolean);
+		const safetyCandidates = candidates;
+		const dexActivityTop = candidates
+			.filter(candidate => dexActivityTopRaw.some(raw => raw.tokenAddress === candidate.tokenAddress));
+		const birdeyeTrendingCandidates = candidates.filter(hasBirdeyeTrendingSource);
+
+		console.log(
+			"DEX ACTIVITY POST-SAFETY | Dex survivors: " + dexActivityTop.length +
+			" | Birdeye survivors: " + birdeyeTrendingCandidates.length +
+			" | Final union: " + candidates.length
+		);
 
 		if (candidates.length) {
 			await refreshSmartMoney(signal);
@@ -1506,16 +1535,19 @@ async function discoverCandidates({ signal } = {}) {
 				received: result.tokens.length
 			})),
 			uniqueSolanaCandidates: solanaTokens.length,
-			candidatesAfterSafetyFilters: safetyCandidates.length,
+			candidatesAfterSafetyFilters: candidates.length,
 			selectedCandidates: candidates.length,
 			strongBuys: candidates.filter(candidate => candidate.signal === "STRONG BUY").length,
 			dexActivity: {
 				topLimit: DEX_ACTIVITY_TOP_LIMIT,
-				rawDexCandidates: safetyCandidates.filter(hasDexActivitySource).length,
-				selectedDexCandidates: dexActivityTop.length,
+				rawDexCandidates: rawDexCandidates.length,
+				selectedDexCandidatesBeforeSafety: dexActivityTopRaw.length,
+				selectedDexCandidatesAfterSafety: dexActivityTop.length,
+				birdeyeCandidatesRaw: birdeyeRaw.length,
 				birdeyeCandidatesRetained: birdeyeTrendingCandidates.length,
+				preSafetyUnionCandidates: selectedRawCandidates.length,
 				unionCandidates: candidates.length,
-				leaders: dexActivityTop.slice(0, 20).map(candidate => ({
+				leaders: dexActivityTopRaw.slice(0, 20).map(candidate => ({
 					symbol: candidate.symbol || "-",
 					score: Number(candidate.dexActivity?.score || 0),
 					volume5m: Number(candidate.volume5m) || 0,
