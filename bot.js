@@ -339,6 +339,23 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
 
     const currentPrice = Number(freshData.priceUsd);
     if (!Number.isFinite(currentPrice) || currentPrice <= 0) return;
+
+    const manualExitPositionId = String(process.env.MANUAL_EXIT_POSITION_ID || "").trim();
+    if (manualExitPositionId && expectedPosition === manualExitPositionId) {
+      console.log(`MANUAL EXIT TARGET MATCH | ${position.symbol} | ${expectedPosition}`);
+      const result = sell(currentPrice, 100, {
+        expectedPosition,
+        reason: "MANUAL EXIT"
+      });
+      if (result.success) {
+        console.log(`MANUAL EXIT COMPLETED | ${position.symbol} | Price: ${currentPrice}`);
+        void notifier.notifyTrade("MANUAL EXIT", result.trade);
+      } else {
+        console.log(`MANUAL EXIT FAILED | ${position.symbol} | ${result.message}`);
+      }
+      return;
+    }
+
     updateHigh(expectedPosition, currentPrice);
     position = getPortfolio().position;
     const entryPrice = Number(position.entryPrice);
