@@ -720,6 +720,24 @@ async function fetchTrendingMetaTokens(signal) {
 	}
 }
 
+function discoveryPriorityForSources(discoverySources = []) {
+	const sources = Array.isArray(discoverySources) ? discoverySources : [];
+	const hasBirdeye = sources.includes("Birdeye Trending 1H");
+	const hasDexScreener = sources.some(source =>
+		source === "Latest Profiles" ||
+		source === "Recent Profile Updates" ||
+		source === "Community Takeovers" ||
+		source === "Latest Boosts" ||
+		source === "Trending Metas"
+	);
+
+	// Lower is better. DexScreener is primary discovery; Birdeye acts as confirmation.
+	if (hasDexScreener && hasBirdeye) return 0;
+	if (hasDexScreener) return 1;
+	if (hasBirdeye) return 2;
+	return 3;
+}
+
 function mergeDiscoveryTokens(sourceResults = []) {
 	const uniqueSolanaTokens = new Map();
 
@@ -1249,6 +1267,7 @@ async function analyzeDiscoveredToken(token, signal) {
 		reasons: analysis.reasons,
 		discoverySources: [...token.discoverySources],
 		discoveryTypes: [...token.discoveryTypes],
+		discoveryPriority: discoveryPriorityForSources(token.discoverySources),
 		entryDiagnostics: diagnostics,
 		currentActivity,
 		postPump,
@@ -1296,7 +1315,10 @@ async function discoverCandidates({ signal } = {}) {
 			}
 		}
 
-		candidates.sort((a, b) => b.score - a.score);
+		candidates.sort((a, b) =>
+			Number(b.score || 0) - Number(a.score || 0) ||
+			Number(a.discoveryPriority ?? 3) - Number(b.discoveryPriority ?? 3)
+		);
 
 		const cacheUpdatedAt = new Date().toISOString();
 		lastCandidateCache = {
@@ -1372,7 +1394,8 @@ async function discoverCandidates({ signal } = {}) {
 				symbol: candidate.symbol || "-",
 				score: candidate.score,
 				signal: candidate.signal,
-				discoverySources: [...candidate.discoverySources]
+				discoverySources: [...candidate.discoverySources],
+				discoveryPriority: Number(candidate.discoveryPriority ?? 3)
 			}))
 		};
 
@@ -1400,6 +1423,7 @@ module.exports = {
 	getDiscoveryTelemetry,
 	getCachedCandidates,
 	mergeDiscoveryTokens,
+	discoveryPriorityForSources,
 	mapWithConcurrency,
 	entryDiagnostics,
 	buildRejectionTelemetry,
