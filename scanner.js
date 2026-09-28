@@ -982,7 +982,7 @@ function entryDiagnostics(data, analysis) {
 		if (change5m < 0.35 || change5m > 6) blockers.push("5M_CONFIRMATION");
 		if (change1h < 0.80 || change1h > 30) blockers.push("1H_CONFIRMATION");
 		if (buyRatio < 0.55) blockers.push("BUY_RATIO");
-		if (totalTransactions < 30) blockers.push("TRANSACTIONS");
+		if (totalTransactions < 20) blockers.push("TRANSACTIONS");
 	}
 
 	return {
@@ -1254,6 +1254,19 @@ async function analyzeDiscoveredToken(token, signal) {
 		`PASSED FILTERS: ${data.symbol} | Score: ${analysis.score} | ` +
 		`Signal: ${analysis.signal} | Sources: ${token.discoverySources.join(", ")}`
 	);
+
+	if (Number(analysis.score) >= 8 && analysis.signal !== "STRONG BUY") {
+		console.log(
+			"NEAR ENTRY BLOCKERS | " + (data.symbol || token.tokenAddress) +
+			" | Score: " + Number(analysis.score || 0) +
+			" | Blockers: " + (diagnostics.blockers.length ? diagnostics.blockers.join(",") : "NONE") +
+			" | 5m: " + Number(diagnostics.change5m || 0).toFixed(2) + "%" +
+			" | 1h: " + Number(diagnostics.change1h || 0).toFixed(2) + "%" +
+			" | Buy ratio: " + (Number(diagnostics.buyRatio || 0) * 100).toFixed(1) + "%" +
+			" | Tx5m: " + Number(diagnostics.totalTransactions || 0) +
+			" | Volume5m: $" + Number(quality.volume5m || 0).toFixed(2)
+		);
+	}
 
 	return {
 		tokenAddress: token.tokenAddress,
