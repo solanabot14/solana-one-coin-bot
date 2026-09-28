@@ -231,7 +231,8 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
 
     rankedCandidates.sort((a, b) =>
       a.diversity.priority - b.diversity.priority ||
-      Number(b.coin.score || 0) - Number(a.coin.score || 0)
+      Number(b.coin.score || 0) - Number(a.coin.score || 0) ||
+      Number(a.coin.discoveryPriority ?? 3) - Number(b.coin.discoveryPriority ?? 3)
     );
 
     const availableCandidates = rankedCandidates.map(item => item.coin);
