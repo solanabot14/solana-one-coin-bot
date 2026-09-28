@@ -105,7 +105,7 @@ function analyzeToken(data) {
 	}
 
 	// BUY / SELL PRESSURE
-	if (totalTransactions < 20) {
+	if (totalTransactions < 30) {
 		score -= 2;
 		reasons.push("Not enough recent transactions");
 	} else if (buyRatio >= 0.60 && buyRatio <= 0.75) {
@@ -124,7 +124,7 @@ function analyzeToken(data) {
 
 	// POSSIBLE BUYING FRENZY
 	if (
-		totalTransactions >= 20 &&
+		totalTransactions >= 30 &&
 		buyRatio > 0.80 &&
 		change5m > 4
 	) {
@@ -144,7 +144,7 @@ function analyzeToken(data) {
 		change1h >= 0.80 &&
 		change1h <= 30 &&
 		buyRatio >= 0.55 &&
-		totalTransactions >= 20;
+		totalTransactions >= 30;
 
 	if (
 		score >= 8 &&
