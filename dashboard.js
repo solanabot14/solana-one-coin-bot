@@ -3,7 +3,7 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const bot = require("./bot");
-const { getPortfolio } = require("./paperTrader");
+const { getPortfolio, sell, positionKey } = require("./paperTrader");
 const { getTokenData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
 const scanner = require("./scanner");
@@ -859,9 +859,45 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const hostname = new URL("http://" + req.headers.host).hostname;
         if (!["127.0.0.1", "localhost", "[::1]"].includes(hostname)) return json(res, { error: "Invalid host" }, 403);
       }
-      if (route === "/api/start" || route === "/api/stop") {
+      if (route === "/api/start" || route === "/api/stop" || route === "/api/manual-exit") {
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
         if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+
+        if (route === "/api/manual-exit") {
+          const currentPortfolio = portfolio();
+          const position = currentPortfolio.position;
+          if (!position) return json(res, { success: false, error: "No OG position is open." }, 409);
+
+          const expectedPosition = positionKey(position);
+          const freshData = await marketData(position.tokenAddress, {
+            pairAddress: position.pairAddress || undefined
+          });
+          const currentPrice = Number(freshData?.priceUsd);
+          if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+            return json(res, { success: false, error: "Fresh exit price unavailable." }, 503);
+          }
+
+          const result = sell(currentPrice, 100, {
+            expectedPosition,
+            reason: "MANUAL EXIT"
+          });
+          if (!result.success) return json(res, result, 409);
+
+          console.log(
+            "MANUAL EXIT | " + position.symbol +
+            " | Price: " + currentPrice +
+            " | Position: " + expectedPosition
+          );
+
+          return json(res, {
+            success: true,
+            symbol: position.symbol,
+            exitPrice: currentPrice,
+            reason: "MANUAL EXIT",
+            trade: result.trade
+          });
+        }
+
         if (route === "/api/start") {
           controls.startBot();
           janControls.start();
