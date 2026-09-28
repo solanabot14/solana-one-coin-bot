@@ -62,8 +62,7 @@ const POST_PUMP_WINDOW_MS = 15 * 60 * 1000;
 const POST_PUMP_MIN_HISTORY_MS = 4 * 60 * 1000;
 const POST_PUMP_MIN_OBSERVATIONS = 3;
 const POST_PUMP_GUARD_PERCENT = Number.parseFloat(process.env.POST_PUMP_GUARD_PERCENT || "6") || 6;
-const MIN_ENTRY_VOLUME_5M_USD = Number.parseFloat(process.env.MIN_ENTRY_VOLUME_5M_USD || "20000") || 5000;
-const MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT = Number.parseFloat(process.env.MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT || "3") || 1;
+const MIN_ENTRY_VOLUME_5M_USD = Number.parseFloat(process.env.MIN_ENTRY_VOLUME_5M_USD || "20000") || 20000;
 const LATE_ENTRY_1H_PERCENT = Number.parseFloat(process.env.LATE_ENTRY_1H_PERCENT || "20") || 20;
 const LATE_ENTRY_MAX_5M_PERCENT = Number.parseFloat(process.env.LATE_ENTRY_MAX_5M_PERCENT || "1.5") || 1.5;
 const BIRDEYE_OHLCV_CACHE_MS = Math.max(
@@ -947,8 +946,7 @@ function entryQualitySnapshot(data) {
 		transactions5m,
 		buyRatio5m,
 		activityHealthy:
-			volume5m >= MIN_ENTRY_VOLUME_5M_USD &&
-			volumeLiquidity5mPercent >= MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT,
+			volume5m >= MIN_ENTRY_VOLUME_5M_USD,
 		lateMomentum:
 			change1h >= LATE_ENTRY_1H_PERCENT &&
 			change5m <= LATE_ENTRY_MAX_5M_PERCENT,
@@ -1114,8 +1112,7 @@ async function analyzeDiscoveredToken(token, signal) {
 	if (analysis.signal === "STRONG BUY" && !quality.activityHealthy) {
 		console.log(
 			"CURRENT ACTIVITY BLOCK | " + (data.symbol || token.tokenAddress) +
-			" | 5m volume: $" + quality.volume5m.toFixed(2) +
-			" | 5m vol/liquidity: " + quality.volumeLiquidity5mPercent.toFixed(2) + "%"
+			" | 5m volume: $" + quality.volume5m.toFixed(2)
 		);
 		analysis = {
 			...analysis,
@@ -1123,8 +1120,7 @@ async function analyzeDiscoveredToken(token, signal) {
 			reasons: [
 				...(analysis.reasons || []),
 				"CURRENT ACTIVITY GATE: requires 5m volume >= $" + MIN_ENTRY_VOLUME_5M_USD.toFixed(0) +
-				" AND 5m vol/liquidity >= " + MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT.toFixed(2) +
-				"%; observed $" + quality.volume5m.toFixed(2) + " and " + quality.volumeLiquidity5mPercent.toFixed(2) + "%"
+				"; observed $" + quality.volume5m.toFixed(2)
 			]
 		};
 	}
@@ -1350,9 +1346,8 @@ async function discoverCandidates({ signal } = {}) {
 				blockedCandidates: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("POST_PUMP")).length
 			},
 			entryQualityGates: {
-				activityRule: "BOTH_REQUIRED",
+				activityRule: "ABSOLUTE_5M_VOLUME_ONLY",
 				minVolume5mUsd: MIN_ENTRY_VOLUME_5M_USD,
-				minVolumeLiquidity5mPercent: MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT,
 				lateEntry1hPercent: LATE_ENTRY_1H_PERCENT,
 				lateEntryMax5mPercent: LATE_ENTRY_MAX_5M_PERCENT,
 				currentActivityBlocked: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("CURRENT_ACTIVITY")).length,
