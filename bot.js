@@ -5,6 +5,7 @@ const telegram = require("./telegram");
 
 const POSITION_MONITOR_MS = 2000;
 const SCANNER_INTERVAL_MS = 120000;
+const ENTRY_CONFIRMATION_MS = 60 * 1000;
 const TOKEN_COOLDOWN_MS = 60 * 60 * 1000;
 const TOKEN_DIVERSITY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MAX_LOSS_ENTRIES_PER_TOKEN_24H = 2;
@@ -250,7 +251,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
       `DIVERSITY SELECT | ${bestCoin.symbol} | ${bestEntry.diversity.reason} | Priority ${bestEntry.diversity.priority}`
     );
 
-    console.log("\nBOT SELECTED:");
+    console.log("\nBOT SELECTED FOR CONFIRMATION:");
     console.log(`${bestCoin.symbol} - ${bestCoin.name}`);
     console.log(`Score: ${bestCoin.score}`);
     console.log(`Signal: ${bestCoin.signal}`);
@@ -263,7 +264,48 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
       console.log(`Smart Money: Net $ ${Number(bestCoin.smartMoney.netFlow || 0).toFixed(2)} | Traders: ${Number(bestCoin.smartMoney.smartTraders || 0)}`);
     }
 
-    const trade = buy(bestCoin);
+    console.log(`ENTRY CONFIRMATION START | ${bestCoin.symbol} | Waiting ${ENTRY_CONFIRMATION_MS / 1000}s for fresh requalification`);
+    await new Promise(resolve => (timers.setTimeout || globalThis.setTimeout)(resolve, ENTRY_CONFIRMATION_MS));
+
+    if (!isActive(session) || getPortfolio().position) return;
+
+    const confirmedCoin = await scanner.analyzeDiscoveredToken(bestCoin, session.signal);
+    if (!isActive(session) || getPortfolio().position) return;
+
+    if (!confirmedCoin || confirmedCoin.signal !== "STRONG BUY") {
+      console.log(
+        `ENTRY CONFIRMATION FAIL | ${bestCoin.symbol} | Signal: ${confirmedCoin?.signal || "NO DATA"} | 5m: ${Number(confirmedCoin?.priceChange5m || 0).toFixed(2)}% | Buy Ratio: ${(
+          (() => {
+            const buys = Number(confirmedCoin?.buys5m) || 0;
+            const sells = Number(confirmedCoin?.sells5m) || 0;
+            return buys + sells > 0 ? buys / (buys + sells) * 100 : 0;
+          })()
+        ).toFixed(1)}%`
+      );
+      return;
+    }
+
+    confirmedCoin.smartMoney = bestCoin.smartMoney ? structuredClone(bestCoin.smartMoney) : null;
+    confirmedCoin.entryConfirmation = {
+      requiredMs: ENTRY_CONFIRMATION_MS,
+      passedAt: new Date().toISOString(),
+      initialPrice: Number(bestCoin.priceUsd) || null,
+      confirmedPrice: Number(confirmedCoin.priceUsd) || null,
+      priceMovePercent:
+        Number(bestCoin.priceUsd) > 0 && Number(confirmedCoin.priceUsd) > 0
+          ? (Number(confirmedCoin.priceUsd) - Number(bestCoin.priceUsd)) / Number(bestCoin.priceUsd) * 100
+          : null,
+      initial5m: Number(bestCoin.priceChange5m) || 0,
+      confirmed5m: Number(confirmedCoin.priceChange5m) || 0,
+      initialScore: Number(bestCoin.score) || 0,
+      confirmedScore: Number(confirmedCoin.score) || 0
+    };
+
+    console.log(
+      `ENTRY CONFIRMATION PASS | ${confirmedCoin.symbol} | Score: ${confirmedCoin.score} | 5m: ${Number(confirmedCoin.priceChange5m || 0).toFixed(2)}% | Price move during confirmation: ${Number(confirmedCoin.entryConfirmation.priceMovePercent || 0).toFixed(2)}%`
+    );
+
+    const trade = buy(confirmedCoin);
     if (trade.success) void notifier.notifyTrade("BUY", trade.trade);
     console.log("\nPAPER TRADE:", trade);
     console.log("\nPORTFOLIO:", getPortfolio());
@@ -389,7 +431,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("BOT STARTED | Entry V3.9 Verified Wrapped Asset Security + Activity Confirmation + Pump Structure Protection | Risk V3.4 Profit Lock + Runner");
+    console.log("BOT STARTED | Entry V4.0 60s Requalification + Verified Wrapped Asset Security + Activity Confirmation + Pump Structure Protection | Risk V3.4 Profit Lock + Runner");
     positionInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
     scannerInterval = timers.setInterval(() => tick("scanner", session), SCANNER_INTERVAL_MS);
     void tick("monitor", session);
