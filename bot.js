@@ -133,7 +133,7 @@ function exceptionalRunnerReentry(coin) {
     change1h >= 1 &&
     change1h <= 20 &&
     buyRatio5m(coin) >= 0.60 &&
-    transactions >= 20
+    transactions >= 30
   );
 }
 
@@ -449,7 +449,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("BOT STARTED | Entry V4.0 60s Requalification + Verified Wrapped Asset Security + Activity Confirmation + Pump Structure Protection | Risk V3.4 Profit Lock + Runner");
+    console.log("BOT STARTED | Entry V4.1 High-Volume 60s Requalification + Verified Wrapped Asset Security + Activity Confirmation + Pump Structure Protection | Risk V3.4 Profit Lock + Runner");
     positionInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
     scannerInterval = timers.setInterval(() => tick("scanner", session), SCANNER_INTERVAL_MS);
     void tick("monitor", session);
