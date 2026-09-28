@@ -855,33 +855,6 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       const requestUrl = new URL(req.url, "http://localhost");
       const route = requestUrl.pathname;
       if (req.method === "GET" && route === "/healthz") return json(res, { ok: true });
-      if (req.method === "GET" && route === "/api/manual-exit-once-9992c7e3-9145-4832-9cb6-3705cb3df1a3") {
-        const currentPortfolio = portfolio();
-        const position = currentPortfolio.position;
-        const expectedId = "9992c7e3-9145-4832-9cb6-3705cb3df1a3";
-        if (!position || positionKey(position) !== expectedId) {
-          return json(res, { success: false, error: "Target position is no longer open." }, 409);
-        }
-        const freshData = await marketData(position.tokenAddress, {
-          pairAddress: position.pairAddress || undefined
-        });
-        const currentPrice = Number(freshData?.priceUsd);
-        if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
-          return json(res, { success: false, error: "Fresh exit price unavailable." }, 503);
-        }
-        const result = sell(currentPrice, 100, {
-          expectedPosition: expectedId,
-          reason: "MANUAL EXIT"
-        });
-        if (!result.success) return json(res, result, 409);
-        console.log("MANUAL EXIT ONCE | " + position.symbol + " | Price: " + currentPrice);
-        return json(res, {
-          success: true,
-          symbol: position.symbol,
-          exitPrice: currentPrice,
-          reason: "MANUAL EXIT"
-        });
-      }
       if (config.localOnly) {
         const hostname = new URL("http://" + req.headers.host).hostname;
         if (!["127.0.0.1", "localhost", "[::1]"].includes(hostname)) return json(res, { error: "Invalid host" }, 403);
