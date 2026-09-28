@@ -62,8 +62,8 @@ const POST_PUMP_WINDOW_MS = 15 * 60 * 1000;
 const POST_PUMP_MIN_HISTORY_MS = 4 * 60 * 1000;
 const POST_PUMP_MIN_OBSERVATIONS = 3;
 const POST_PUMP_GUARD_PERCENT = Number.parseFloat(process.env.POST_PUMP_GUARD_PERCENT || "6") || 6;
-const MIN_ENTRY_VOLUME_5M_USD = Number.parseFloat(process.env.MIN_ENTRY_VOLUME_5M_USD || "5000") || 5000;
-const MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT = Number.parseFloat(process.env.MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT || "1") || 1;
+const MIN_ENTRY_VOLUME_5M_USD = Number.parseFloat(process.env.MIN_ENTRY_VOLUME_5M_USD || "20000") || 5000;
+const MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT = Number.parseFloat(process.env.MIN_ENTRY_VOLUME_LIQUIDITY_5M_PERCENT || "3") || 1;
 const LATE_ENTRY_1H_PERCENT = Number.parseFloat(process.env.LATE_ENTRY_1H_PERCENT || "20") || 20;
 const LATE_ENTRY_MAX_5M_PERCENT = Number.parseFloat(process.env.LATE_ENTRY_MAX_5M_PERCENT || "1.5") || 1.5;
 const BIRDEYE_OHLCV_CACHE_MS = Math.max(
@@ -984,7 +984,7 @@ function entryDiagnostics(data, analysis) {
 		if (change5m < 0.35 || change5m > 6) blockers.push("5M_CONFIRMATION");
 		if (change1h < 0.80 || change1h > 30) blockers.push("1H_CONFIRMATION");
 		if (buyRatio < 0.55) blockers.push("BUY_RATIO");
-		if (totalTransactions < 20) blockers.push("TRANSACTIONS");
+		if (totalTransactions < 30) blockers.push("TRANSACTIONS");
 	}
 
 	return {
