@@ -1412,6 +1412,7 @@ module.exports = {
 	normalizeBirdeyeCandle,
 	updateRollingPriceHistory,
 	postPumpSnapshot,
+	analyzeDiscoveredToken,
 	smartMoneyItems,
 	normalizeSmartMoneyItem,
 	birdeyeTrendingItems,
