@@ -126,7 +126,7 @@ function repairKnownJtoBadQuote(data) {
 
 	return { changed: true, data: next };
 }
-const CURRENT_ENTRY_STRATEGY = "V4.3";
+const CURRENT_ENTRY_STRATEGY = "V4.4";
 
 function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 	let state = {
