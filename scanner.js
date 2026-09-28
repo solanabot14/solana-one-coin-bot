@@ -737,6 +737,143 @@ function discoveryPriorityForSources(discoverySources = []) {
 	return 3;
 }
 
+const DEX_ACTIVITY_TOP_LIMIT = 20;
+const DEX_ACTIVITY_SOURCES = new Set([
+	"Latest Profiles",
+	"Recent Profile Updates",
+	"Community Takeovers",
+	"Latest Boosts",
+	"Trending Metas"
+]);
+
+function clamp01(value) {
+	return Math.max(0, Math.min(1, Number(value) || 0));
+}
+
+function hasDexActivitySource(candidate) {
+	return (candidate?.discoverySources || []).some(source => DEX_ACTIVITY_SOURCES.has(source));
+}
+
+function hasBirdeyeTrendingSource(candidate) {
+	return (candidate?.discoverySources || []).includes("Birdeye Trending 1H");
+}
+
+function percentileRank(values = [], target = 0) {
+	const sorted = values
+		.map(Number)
+		.filter(Number.isFinite)
+		.sort((a, b) => a - b);
+	if (!sorted.length) return 0;
+	if (sorted.length === 1) return 0.5;
+
+	let below = 0;
+	let equal = 0;
+	for (const value of sorted) {
+		if (value < target) below++;
+		else if (value === target) equal++;
+	}
+	return clamp01((below + equal * 0.5) / sorted.length);
+}
+
+function dexMomentum5mComponent(change5m) {
+	const value = Number(change5m) || 0;
+	if (value <= 0) return 0;
+	if (value < 0.35) return clamp01(0.5 * (value / 0.35));
+	if (value <= 3) return 1;
+	if (value <= 4) return 0.9;
+	if (value <= 6) return clamp01(0.9 - 0.6 * ((value - 4) / 2));
+	return 0;
+}
+
+function dexMomentum1hComponent(change1h) {
+	const value = Number(change1h) || 0;
+	if (value <= 0) return 0;
+	if (value < 0.8) return clamp01(0.4 * (value / 0.8));
+	if (value <= 15) return 1;
+	if (value <= 30) return clamp01(1 - 0.6 * ((value - 15) / 15));
+	return 0.2;
+}
+
+function dexBuyPressureComponent(buyRatio) {
+	const value = Number(buyRatio) || 0;
+	if (value < 0.45) return 0;
+	if (value < 0.55) return clamp01(0.5 * ((value - 0.45) / 0.10));
+	if (value <= 0.75) return 1;
+	if (value <= 0.90) return clamp01(1 - 0.2 * ((value - 0.75) / 0.15));
+	return 0.6;
+}
+
+function dexVolumeAccelerationComponent(volume5m, volume1h) {
+	const v5 = Math.max(0, Number(volume5m) || 0);
+	const v1h = Math.max(0, Number(volume1h) || 0);
+	if (!(v1h > 0)) return 0;
+	const expected5mAtHourlyPace = v1h / 12;
+	if (!(expected5mAtHourlyPace > 0)) return 0;
+	const accelerationRatio = v5 / expected5mAtHourlyPace;
+	return clamp01(accelerationRatio / 2);
+}
+
+function rankDexActivityCandidates(candidates = [], limit = DEX_ACTIVITY_TOP_LIMIT) {
+	const dexCandidates = candidates.filter(hasDexActivitySource);
+	if (!dexCandidates.length) return [];
+
+	const volumeLogs = dexCandidates.map(candidate => Math.log1p(Math.max(0, Number(candidate.volume5m) || 0)));
+	const transactionLogs = dexCandidates.map(candidate => {
+		const tx = (Number(candidate.buys5m) || 0) + (Number(candidate.sells5m) || 0);
+		return Math.log1p(Math.max(0, tx));
+	});
+
+	for (const candidate of dexCandidates) {
+		const volume5m = Math.max(0, Number(candidate.volume5m) || 0);
+		const volume1h = Math.max(0, Number(candidate.volume1h) || 0);
+		const transactions5m = Math.max(0, (Number(candidate.buys5m) || 0) + (Number(candidate.sells5m) || 0));
+		const buyRatio5m = transactions5m > 0 ? (Number(candidate.buys5m) || 0) / transactions5m : 0;
+		const change5m = Number(candidate.priceChange5m) || 0;
+		const change1h = Number(candidate.priceChange1h) || 0;
+
+		const volumePercentile = percentileRank(volumeLogs, Math.log1p(volume5m));
+		const transactionsPercentile = percentileRank(transactionLogs, Math.log1p(transactions5m));
+		const volumeAcceleration = dexVolumeAccelerationComponent(volume5m, volume1h);
+		const momentum5m = dexMomentum5mComponent(change5m);
+		const momentum1h = dexMomentum1hComponent(change1h);
+		const buyPressure = dexBuyPressureComponent(buyRatio5m);
+
+		let score =
+			35 * volumePercentile +
+			20 * transactionsPercentile +
+			15 * volumeAcceleration +
+			15 * momentum5m +
+			10 * momentum1h +
+			5 * buyPressure;
+
+		if (change5m < 0) score -= 15;
+		if (change5m > 6) score -= 20;
+		if (change1h < 0) score -= 10;
+		if (change1h > 30) score -= 10;
+
+		candidate.dexActivity = {
+			score: Math.max(0, Math.min(100, Number(score.toFixed(2)))),
+			volumePercentile: Number(volumePercentile.toFixed(4)),
+			transactionsPercentile: Number(transactionsPercentile.toFixed(4)),
+			volumeAcceleration: Number(volumeAcceleration.toFixed(4)),
+			momentum5m: Number(momentum5m.toFixed(4)),
+			momentum1h: Number(momentum1h.toFixed(4)),
+			buyPressure: Number(buyPressure.toFixed(4)),
+			volume5m,
+			volume1h,
+			transactions5m,
+			buyRatio5m
+		};
+	}
+
+	return [...dexCandidates]
+		.sort((a, b) =>
+			Number(b.dexActivity?.score || 0) - Number(a.dexActivity?.score || 0) ||
+			Number(b.volume5m || 0) - Number(a.volume5m || 0)
+		)
+		.slice(0, Math.max(1, Number(limit) || DEX_ACTIVITY_TOP_LIMIT));
+}
+
 function mergeDiscoveryTokens(sourceResults = []) {
 	const uniqueSolanaTokens = new Map();
 
@@ -1314,7 +1451,33 @@ async function discoverCandidates({ signal } = {}) {
 
 		if (signal?.aborted) return [];
 
-		const candidates = analyzed.filter(Boolean);
+		const safetyCandidates = analyzed.filter(Boolean);
+		const dexActivityTop = rankDexActivityCandidates(safetyCandidates, DEX_ACTIVITY_TOP_LIMIT);
+		const birdeyeTrendingCandidates = safetyCandidates.filter(hasBirdeyeTrendingSource);
+
+		const selectedByToken = new Map();
+		for (const candidate of birdeyeTrendingCandidates) {
+			selectedByToken.set(candidate.tokenAddress, candidate);
+		}
+		for (const candidate of dexActivityTop) {
+			selectedByToken.set(candidate.tokenAddress, candidate);
+		}
+		const candidates = Array.from(selectedByToken.values());
+
+		console.log(
+			"DEX ACTIVITY TOP 20 | Raw Dex safety candidates: " + safetyCandidates.filter(hasDexActivitySource).length +
+			" | Selected: " + dexActivityTop.length +
+			" | Birdeye retained: " + birdeyeTrendingCandidates.length +
+			" | Union: " + candidates.length
+		);
+		if (dexActivityTop.length) {
+			console.log(
+				"DEX ACTIVITY LEADERS | " +
+				dexActivityTop.slice(0, 5).map(candidate =>
+					(candidate.symbol || "-") + ":" + Number(candidate.dexActivity?.score || 0).toFixed(1)
+				).join(" | ")
+			);
+		}
 
 		if (candidates.length) {
 			await refreshSmartMoney(signal);
@@ -1343,8 +1506,26 @@ async function discoverCandidates({ signal } = {}) {
 				received: result.tokens.length
 			})),
 			uniqueSolanaCandidates: solanaTokens.length,
-			candidatesAfterSafetyFilters: candidates.length,
+			candidatesAfterSafetyFilters: safetyCandidates.length,
+			selectedCandidates: candidates.length,
 			strongBuys: candidates.filter(candidate => candidate.signal === "STRONG BUY").length,
+			dexActivity: {
+				topLimit: DEX_ACTIVITY_TOP_LIMIT,
+				rawDexCandidates: safetyCandidates.filter(hasDexActivitySource).length,
+				selectedDexCandidates: dexActivityTop.length,
+				birdeyeCandidatesRetained: birdeyeTrendingCandidates.length,
+				unionCandidates: candidates.length,
+				leaders: dexActivityTop.slice(0, 20).map(candidate => ({
+					symbol: candidate.symbol || "-",
+					score: Number(candidate.dexActivity?.score || 0),
+					volume5m: Number(candidate.volume5m) || 0,
+					volume1h: Number(candidate.volume1h) || 0,
+					transactions5m: (Number(candidate.buys5m) || 0) + (Number(candidate.sells5m) || 0),
+					change5m: Number(candidate.priceChange5m) || 0,
+					change1h: Number(candidate.priceChange1h) || 0,
+					discoverySources: [...(candidate.discoverySources || [])]
+				}))
+			},
 			scanDurationMs: Date.now() - scanStartedAt,
 			tokenLookupConcurrency: TOKEN_LOOKUP_CONCURRENCY,
 			smartMoney: {
@@ -1448,5 +1629,10 @@ module.exports = {
 	smartMoneyItems,
 	normalizeSmartMoneyItem,
 	birdeyeTrendingItems,
-	birdeyeTrendingToTokens
+	birdeyeTrendingToTokens,
+	rankDexActivityCandidates,
+	dexVolumeAccelerationComponent,
+	dexMomentum5mComponent,
+	dexMomentum1hComponent,
+	dexBuyPressureComponent
 };
