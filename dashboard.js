@@ -933,7 +933,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           : [];
         return json(res, {
           generatedAt: new Date().toISOString(),
-          currentStrategy: "V4.2 Absolute-Volume Entry Confirmation",
+          currentStrategy: "V4.3 20-Tx Absolute-Volume Entry Confirmation",
           riskEngine: "V3.4 Profit Lock + Runner",
           livePosition: data.live || null,
           completedTrades,
