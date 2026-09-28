@@ -933,7 +933,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           : [];
         return json(res, {
           generatedAt: new Date().toISOString(),
-          currentStrategy: "V3.6 Pump Structure Protection",
+          currentStrategy: "V3.6.1 Controlled Entry Relaxation",
           riskEngine: "V3.4 Profit Lock + Runner",
           livePosition: data.live || null,
           completedTrades,
