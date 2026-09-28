@@ -963,7 +963,7 @@ function entryDiagnostics(data, analysis) {
 
 	if (!blockers.length && analysis?.signal !== "STRONG BUY") {
 		if (Number(analysis?.score) < 8) blockers.push("SCORE_BELOW_8");
-		if (change5m < 0.50 || change5m > 6) blockers.push("5M_CONFIRMATION");
+		if (change5m < 0.35 || change5m > 6) blockers.push("5M_CONFIRMATION");
 		if (change1h < 0.80 || change1h > 30) blockers.push("1H_CONFIRMATION");
 		if (buyRatio < 0.55) blockers.push("BUY_RATIO");
 		if (totalTransactions < 20) blockers.push("TRANSACTIONS");
