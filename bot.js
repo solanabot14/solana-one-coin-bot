@@ -465,7 +465,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("BOT STARTED | Entry V5.1 Zero-Extra-Credit Age-Aware Momentum + 90% LP Lock + DexActivity + 5K-Volume + 60s Requalification | Risk V3.4 Profit Lock + Runner");
+    console.log("BOT STARTED | Entry V5.2 Free-Tier Helius + Age-Aware Momentum + 90% LP Lock + DexActivity + 5K-Volume + 60s Requalification | Risk V3.4 Profit Lock + Runner");
     positionInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
     scannerInterval = timers.setInterval(() => tick("scanner", session), SCANNER_INTERVAL_MS);
     void tick("monitor", session);
