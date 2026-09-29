@@ -9,6 +9,16 @@ const HELIUS_FLOW_MAX_REQUESTS_PER_DAY = Math.max(
 	10,
 	Math.min(120, Number.parseInt(process.env.HELIUS_FLOW_MAX_REQUESTS_PER_DAY || "100", 10) || 100)
 );
+const HELIUS_MIN_REQUEST_INTERVAL_MS = Math.max(
+	900,
+	Number.parseInt(process.env.HELIUS_MIN_REQUEST_INTERVAL_MS || "1100", 10) || 1100
+);
+const HELIUS_MAX_429_RETRIES = Math.max(
+	0,
+	Math.min(2, Number.parseInt(process.env.HELIUS_MAX_429_RETRIES || "1", 10) || 1)
+);
+let heliusRequestChain = Promise.resolve();
+let heliusLastRequestAt = 0;
 const flowCache = new Map();
 let flowUsage = {
 	day: new Date().toISOString().slice(0, 10),
@@ -16,13 +26,15 @@ let flowUsage = {
 	cacheHits: 0,
 	budgetSkips: 0,
 	successes: 0,
-	failures: 0
+	failures: 0,
+	rateLimited: 0,
+	retries: 0
 };
 
 function refreshFlowUsageDay() {
 	const day = new Date().toISOString().slice(0, 10);
 	if (flowUsage.day === day) return;
-	flowUsage = { day, requests: 0, cacheHits: 0, budgetSkips: 0, successes: 0, failures: 0 };
+	flowUsage = { day, requests: 0, cacheHits: 0, budgetSkips: 0, successes: 0, failures: 0, rateLimited: 0, retries: 0 };
 }
 
 function isParsedSwap(tx) {
@@ -54,31 +66,83 @@ function summarizeHeliusTransactions(transactions = [], nowSeconds = Math.floor(
 	};
 }
 
+function sleep(ms) {
+	return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function parseRetryAfterMs(error, attempt) {
+	const raw = error?.response?.headers?.["retry-after"];
+	const seconds = Number.parseFloat(raw);
+	if (Number.isFinite(seconds) && seconds >= 0) {
+		return Math.min(5000, Math.max(1000, Math.round(seconds * 1000)));
+	}
+	return Math.min(5000, 1200 * Math.pow(2, attempt));
+}
+
+async function queuedHeliusGet(url, signal) {
+	let release;
+	const previous = heliusRequestChain;
+	heliusRequestChain = new Promise(resolve => { release = resolve; });
+
+	await previous;
+	try {
+		const waitMs = Math.max(0, HELIUS_MIN_REQUEST_INTERVAL_MS - (Date.now() - heliusLastRequestAt));
+		if (waitMs > 0) await sleep(waitMs);
+		if (signal?.aborted) {
+			return { status: "ABORTED", transactions: [] };
+		}
+
+		let attempt = 0;
+		while (true) {
+			if (flowUsage.requests >= HELIUS_FLOW_MAX_REQUESTS_PER_DAY) {
+				flowUsage.budgetSkips++;
+				return { status: "FREE_BUDGET_LIMIT", transactions: [] };
+			}
+
+			try {
+				flowUsage.requests++;
+				heliusLastRequestAt = Date.now();
+				const response = await axios.get(url, { timeout: 8000, signal });
+				flowUsage.successes++;
+				return {
+					status: "OK",
+					transactions: Array.isArray(response.data) ? response.data : []
+				};
+			} catch (error) {
+				const status = error?.response?.status || null;
+				if (status === 429) {
+					flowUsage.rateLimited++;
+					if (attempt < HELIUS_MAX_429_RETRIES && flowUsage.requests < HELIUS_FLOW_MAX_REQUESTS_PER_DAY) {
+						flowUsage.retries++;
+						const retryMs = parseRetryAfterMs(error, attempt);
+						attempt++;
+						await sleep(retryMs);
+						continue;
+					}
+				}
+				flowUsage.failures++;
+				return {
+					status: "UNAVAILABLE",
+					transactions: [],
+					errorStatus: status
+				};
+			}
+		}
+	} finally {
+		release();
+	}
+}
+
 async function fetchAddressTransactions(address, apiKey, signal) {
 	if (flowUsage.requests >= HELIUS_FLOW_MAX_REQUESTS_PER_DAY) {
 		flowUsage.budgetSkips++;
 		return { status: "FREE_BUDGET_LIMIT", transactions: [] };
 	}
 
-	try {
-		flowUsage.requests++;
-		const url =
-			"https://api.helius.xyz/v0/addresses/" + encodeURIComponent(address) +
-			"/transactions?api-key=" + encodeURIComponent(apiKey) + "&limit=50";
-		const response = await axios.get(url, { timeout: 8000, signal });
-		flowUsage.successes++;
-		return {
-			status: "OK",
-			transactions: Array.isArray(response.data) ? response.data : []
-		};
-	} catch (error) {
-		flowUsage.failures++;
-		return {
-			status: "UNAVAILABLE",
-			transactions: [],
-			errorStatus: error?.response?.status || null
-		};
-	}
+	const url =
+		"https://api.helius.xyz/v0/addresses/" + encodeURIComponent(address) +
+		"/transactions?api-key=" + encodeURIComponent(apiKey) + "&limit=50";
+	return queuedHeliusGet(url, signal);
 }
 
 async function heliusFlowSnapshot(tokenAddress, { pairAddress = null, signal } = {}) {
@@ -154,7 +218,12 @@ async function heliusFlowSnapshot(tokenAddress, { pairAddress = null, signal } =
 
 function getHeliusFlowUsage() {
 	refreshFlowUsageDay();
-	return { ...structuredClone(flowUsage), maxRequestsPerDay: HELIUS_FLOW_MAX_REQUESTS_PER_DAY };
+	return {
+		...structuredClone(flowUsage),
+		maxRequestsPerDay: HELIUS_FLOW_MAX_REQUESTS_PER_DAY,
+		minRequestIntervalMs: HELIUS_MIN_REQUEST_INTERVAL_MS,
+		max429Retries: HELIUS_MAX_429_RETRIES
+	};
 }
 
 module.exports = {
