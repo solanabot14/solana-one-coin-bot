@@ -127,7 +127,7 @@ function exceptionalRunnerReentry(coin) {
   const transactions = (Number(coin?.buys5m) || 0) + (Number(coin?.sells5m) || 0);
   return (
     coin?.signal === "STRONG BUY" &&
-    Number(coin?.score) >= 10 &&
+    Number(coin?.score) >= 75 &&
     change5m >= 0.50 &&
     change5m < 4 &&
     change1h >= 1 &&
@@ -135,6 +135,18 @@ function exceptionalRunnerReentry(coin) {
     buyRatio5m(coin) >= 0.60 &&
     transactions >= 20
   );
+}
+
+function v5CandidatePriority(coin) {
+  const base = Number(coin?.score) || 0;
+  const smart = coin?.smartMoney || null;
+  if (!smart) return base;
+
+  const netFlow = Number(smart.netFlow) || 0;
+  const traders = Number(smart.smartTraders) || 0;
+  const flowBonus = netFlow > 0 ? Math.min(5, Math.log10(1 + netFlow) * 1.25) : Math.max(-5, -Math.log10(1 + Math.abs(netFlow)) * 1.25);
+  const traderBonus = Math.min(3, traders * 0.5);
+  return base + flowBonus + traderBonus;
 }
 
 function diversityDecision(coin, stats) {
@@ -231,7 +243,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
 
     rankedCandidates.sort((a, b) =>
       a.diversity.priority - b.diversity.priority ||
-      Number(b.coin.score || 0) - Number(a.coin.score || 0) ||
+      v5CandidatePriority(b.coin) - v5CandidatePriority(a.coin) ||
       Number(a.coin.discoveryPriority ?? 3) - Number(b.coin.discoveryPriority ?? 3)
     );
 
@@ -453,7 +465,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("BOT STARTED | Entry V4.9 Relaxed 5m + 90% LP Lock + Pre-Safety DexActivity Top20 + Birdeye Top20 + 5K-Volume 60s Requalification + Verified Wrapped Asset Security + Activity Confirmation + Pump Structure Protection | Risk V3.4 Profit Lock + Runner");
+    console.log("BOT STARTED | Entry V5.0 Age-Aware Weighted Momentum + Helius Flow + 90% LP Lock + DexActivity/Birdeye + 5K-Volume + 60s Requalification | Risk V3.4 Profit Lock + Runner");
     positionInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
     scannerInterval = timers.setInterval(() => tick("scanner", session), SCANNER_INTERVAL_MS);
     void tick("monitor", session);

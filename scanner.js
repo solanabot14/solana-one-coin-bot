@@ -1,6 +1,7 @@
 const axios = require("axios");
 const { getTokenData, getMarketDataHealth } = require("./dexscreener");
-const { analyzeToken } = require("./strategy");
+const { analyzeTokenV5 } = require("./strategyV5");
+const { heliusFlowSnapshot } = require("./heliusFlow");
 
 const DISCOVERY_SOURCES = [
 	{
@@ -117,7 +118,7 @@ let lastDiscoveryTelemetry = {
 	topCandidates: [],
 	rejectionTelemetry: {
 		notStrongBuy: 0,
-		scoreBelow8: 0,
+		scoreBelow70: 0,
 		fiveMinute: 0,
 		oneHour: 0,
 		buyRatio: 0,
@@ -1069,7 +1070,7 @@ async function liquiditySecuritySnapshot(tokenAddress, signal) {
 		if (!mintMatches) reasons.push("RUGCHECK_TOKEN_ID_MISMATCH");
 		if (!Number.isFinite(lpLockedPct)) reasons.push("LP_LOCK_UNVERIFIED");
 		else if (lpLockedPct < MIN_LP_LOCKED_PERCENT) {
-			reasons.push("LP_NOT_100_PERCENT_LOCKED");
+			reasons.push("LP_BELOW_MINIMUM_LOCK");
 		}
 
 		const snapshot = {
@@ -1176,6 +1177,7 @@ function entryDiagnostics(data, analysis) {
 	const totalTransactions = buys + sells;
 	const buyRatio = totalTransactions > 0 ? buys / totalTransactions : 0;
 	const reasons = Array.isArray(analysis?.reasons) ? analysis.reasons : [];
+	const v5 = analysis?.v5 || {};
 
 	const blockers = [];
 	if (reasons.some(reason => reason.includes("ANTI-CHASE: 5m"))) blockers.push("ANTI_CHASE_5M");
@@ -1191,11 +1193,11 @@ function entryDiagnostics(data, analysis) {
 	if (reasons.some(reason => reason.includes("LIQUIDITY SECURITY"))) blockers.push("LIQUIDITY_SECURITY");
 
 	if (!blockers.length && analysis?.signal !== "STRONG BUY") {
-		if (Number(analysis?.score) < 8) blockers.push("SCORE_BELOW_8");
-		if (change5m <= 0 || change5m > 6) blockers.push("5M_CONFIRMATION");
-		if (change1h < 0.80 || change1h > 30) blockers.push("1H_CONFIRMATION");
-		if (buyRatio < 0.55) blockers.push("BUY_RATIO");
-		if (totalTransactions < 20) blockers.push("TRANSACTIONS");
+		if (Number(analysis?.score) < 70) blockers.push("SCORE_BELOW_70");
+		if (change5m <= 0 || change5m >= 4) blockers.push("5M_CONFIRMATION");
+		if (v5.dynamic1hPass === false || change1h > 30) blockers.push("1H_CONFIRMATION");
+		if (buyRatio < 0.52) blockers.push("BUY_RATIO");
+		if (totalTransactions < Number(v5.minTransactions || 20)) blockers.push("TRANSACTIONS");
 	}
 
 	return {
@@ -1204,14 +1206,15 @@ function entryDiagnostics(data, analysis) {
 		change1h,
 		change24h,
 		buyRatio,
-		totalTransactions
+		totalTransactions,
+		v5: structuredClone(v5)
 	};
 }
 
 function buildRejectionTelemetry(candidates = []) {
 	const telemetry = {
 		notStrongBuy: 0,
-		scoreBelow8: 0,
+		scoreBelow70: 0,
 		fiveMinute: 0,
 		oneHour: 0,
 		buyRatio: 0,
@@ -1234,7 +1237,7 @@ function buildRejectionTelemetry(candidates = []) {
 		if (candidate.signal === "STRONG BUY") continue;
 		telemetry.notStrongBuy++;
 		const blockers = candidate.entryDiagnostics?.blockers || [];
-		if (blockers.includes("SCORE_BELOW_8")) telemetry.scoreBelow8++;
+		if (blockers.includes("SCORE_BELOW_70")) telemetry.scoreBelow70++;
 		if (blockers.includes("5M_CONFIRMATION")) telemetry.fiveMinute++;
 		if (blockers.includes("1H_CONFIRMATION")) telemetry.oneHour++;
 		if (blockers.includes("BUY_RATIO")) telemetry.buyRatio++;
@@ -1251,7 +1254,7 @@ function buildRejectionTelemetry(candidates = []) {
 		if (blockers.includes("TOKEN_SECURITY")) telemetry.tokenSecurity++;
 		if (blockers.includes("LIQUIDITY_SECURITY")) telemetry.liquiditySecurity++;
 
-		if (Number(candidate.score) >= 6 || candidate.signal === "BUY") {
+		if (Number(candidate.score) >= 58 || candidate.signal === "BUY") {
 			telemetry.nearEntries.push({
 				symbol: candidate.symbol || "-",
 				score: Number(candidate.score) || 0,
@@ -1296,7 +1299,29 @@ async function analyzeDiscoveredToken(token, signal, prefetchedData = null) {
 		return null;
 	}
 
-	let analysis = analyzeToken(data);
+	let analysis = analyzeTokenV5(data);
+	let heliusFlow = {
+		status: "NOT_CHECKED",
+		source: "Helius Enhanced Transactions",
+		pairAddress: data.pairAddress || null,
+		swapsLast5m: 0,
+		uniqueMakers5m: 0,
+		uniqueMakerRatio: 0
+	};
+
+	// V5 calls Helius only for near-qualified candidates, keeping API use focused.
+	if (Number(analysis.score) >= 58 && analysis.signal !== "AVOID") {
+		heliusFlow = await heliusFlowSnapshot(data.pairAddress, { signal });
+		analysis = analyzeTokenV5(data, { heliusFlow });
+		if (heliusFlow.status === "OK") {
+			console.log(
+				"V5 HELIUS FLOW | " + (data.symbol || token.tokenAddress) +
+				" | swaps5m: " + heliusFlow.swapsLast5m +
+				" | unique makers: " + heliusFlow.uniqueMakers5m +
+				" | unique ratio: " + (Number(heliusFlow.uniqueMakerRatio || 0) * 100).toFixed(1) + "%"
+			);
+		}
+	}
 	const quality = entryQualitySnapshot(data);
 	const currentActivity = {
 		volume5m: quality.volume5m,
@@ -1505,7 +1530,7 @@ async function analyzeDiscoveredToken(token, signal, prefetchedData = null) {
 		`Signal: ${analysis.signal} | Sources: ${token.discoverySources.join(", ")}`
 	);
 
-	if (Number(analysis.score) >= 8 && analysis.signal !== "STRONG BUY") {
+	if (Number(analysis.score) >= 58 && analysis.signal !== "STRONG BUY") {
 		console.log(
 			"NEAR ENTRY BLOCKERS | " + (data.symbol || token.tokenAddress) +
 			" | Score: " + Number(analysis.score || 0) +
@@ -1534,6 +1559,8 @@ async function analyzeDiscoveredToken(token, signal, prefetchedData = null) {
 		tokenSecurity,
 		liquiditySecurity,
 		marketDataIntegrity,
+		heliusFlow,
+		v5Strategy: analysis.v5 ? structuredClone(analysis.v5) : null,
 		smartMoney: null,
 		birdeyeRank: Number.isFinite(Number(token.birdeyeRank)) ? Number(token.birdeyeRank) : null
 	};
