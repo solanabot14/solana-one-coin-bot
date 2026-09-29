@@ -139,7 +139,7 @@ function analyzeToken(data) {
 	let signal = "WAIT";
 
 	const earlyEntryConditions =
-		change5m >= 0.35 &&
+		change5m > 0 &&
 		change5m <= 6 &&
 		change1h >= 0.80 &&
 		change1h <= 30 &&
