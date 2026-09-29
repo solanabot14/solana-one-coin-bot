@@ -42,7 +42,7 @@ const TOKEN_SECURITY_CACHE_MS = Math.max(
 const RUGCHECK_SUMMARY_BASE_URL = "https://api.rugcheck.xyz/v1/tokens/";
 const MIN_LP_LOCKED_PERCENT = Math.min(
 	100,
-	Math.max(0, Number.parseFloat(process.env.MIN_LP_LOCKED_PERCENT || "100") || 100)
+	Math.max(0, Number.parseFloat(process.env.MIN_LP_LOCKED_PERCENT || "90") || 90)
 );
 const LIQUIDITY_SECURITY_CACHE_MS = Math.max(
 	60 * 1000,
