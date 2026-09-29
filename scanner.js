@@ -1366,7 +1366,7 @@ async function analyzeDiscoveredToken(token, signal, prefetchedData = null) {
 		uniqueMakers5m: 0,
 		uniqueMakerRatio: 0
 	};
-	if (Number(analysis.score) >= 58 && analysis.signal !== "AVOID") {
+	if (Number(analysis.score) >= 52 && analysis.signal !== "AVOID") {
 		heliusFlow = await heliusFlowSnapshot(token.tokenAddress || data.tokenAddress, { pairAddress: data.pairAddress, signal });
 		analysis = analyzeTokenV5(data, { heliusFlow });
 		if (heliusFlow.status === "OK") {
