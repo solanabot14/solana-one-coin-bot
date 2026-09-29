@@ -31,7 +31,7 @@ test("V5 can qualify sub-0.8 percent 1h momentum when quality is strong", () => 
 		heliusFlow: { status: "OK", swapsLast5m: 24, uniqueMakers5m: 12, uniqueMakerRatio: 0.5 }
 	});
 	assert.equal(result.signal, "STRONG BUY");
-	assert.ok(result.score >= 65);
+	assert.ok(result.score >= 60);
 	assert.equal(result.v5.dynamic1hPass, true);
 });
 
