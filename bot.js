@@ -453,7 +453,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("BOT STARTED | Entry V4.8 Relaxed 5m + 100% LP Lock + Pre-Safety DexActivity Top20 + Birdeye Top20 + 5K-Volume 60s Requalification + Verified Wrapped Asset Security + Activity Confirmation + Pump Structure Protection | Risk V3.4 Profit Lock + Runner");
+    console.log("BOT STARTED | Entry V4.9 Relaxed 5m + 90% LP Lock + Pre-Safety DexActivity Top20 + Birdeye Top20 + 5K-Volume 60s Requalification + Verified Wrapped Asset Security + Activity Confirmation + Pump Structure Protection | Risk V3.4 Profit Lock + Runner");
     positionInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
     scannerInterval = timers.setInterval(() => tick("scanner", session), SCANNER_INTERVAL_MS);
     void tick("monitor", session);
