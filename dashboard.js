@@ -933,7 +933,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           : [];
         return json(res, {
           generatedAt: new Date().toISOString(),
-          currentStrategy: "V5.0 Age-Aware Momentum + Helius Flow + 90% LP Lock",
+          currentStrategy: "V5.1 Zero-Extra-Credit Age-Aware Momentum + 90% LP Lock",
           riskEngine: "V3.4 Profit Lock + Runner",
           livePosition: data.live || null,
           completedTrades,
