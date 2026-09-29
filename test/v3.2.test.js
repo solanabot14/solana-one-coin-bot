@@ -23,9 +23,11 @@ function strongCandidate(overrides = {}) {
 	};
 }
 
-test("V3.2 STRONG BUY requires the new entry floors", () => {
+test("V4.8 removes the fixed 0.35 percent 5m floor but still requires positive momentum", () => {
 	assert.equal(analyzeToken(strongCandidate()).signal, "STRONG BUY");
-	assert.notEqual(analyzeToken(strongCandidate({ priceChange5m: 0.49 })).signal, "STRONG BUY");
+	assert.equal(analyzeToken(strongCandidate({ priceChange5m: 0.20 })).signal, "STRONG BUY");
+	assert.notEqual(analyzeToken(strongCandidate({ priceChange5m: 0 })).signal, "STRONG BUY");
+	assert.notEqual(analyzeToken(strongCandidate({ priceChange5m: -0.10 })).signal, "STRONG BUY");
 	assert.notEqual(analyzeToken(strongCandidate({ priceChange1h: 0.79 })).signal, "STRONG BUY");
 	assert.notEqual(analyzeToken(strongCandidate({ buys5m: 54, sells5m: 46 })).signal, "STRONG BUY");
 });
