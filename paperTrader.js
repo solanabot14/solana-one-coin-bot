@@ -126,7 +126,7 @@ function repairKnownJtoBadQuote(data) {
 
 	return { changed: true, data: next };
 }
-const CURRENT_ENTRY_STRATEGY = "V4.9";
+const CURRENT_ENTRY_STRATEGY = "V5.0";
 
 function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 	let state = {
@@ -322,6 +322,16 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 			entrySmartMoney:
 				coin.smartMoney
 					? structuredClone(coin.smartMoney)
+					: null,
+
+			entryHeliusFlow:
+				coin.heliusFlow
+					? structuredClone(coin.heliusFlow)
+					: null,
+
+			entryV5Strategy:
+				coin.v5Strategy
+					? structuredClone(coin.v5Strategy)
 					: null,
 
 			entryBirdeyeRank:
