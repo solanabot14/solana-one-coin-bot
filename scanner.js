@@ -1367,13 +1367,22 @@ async function analyzeDiscoveredToken(token, signal, prefetchedData = null) {
 		uniqueMakerRatio: 0
 	};
 	if (Number(analysis.score) >= 58 && analysis.signal !== "AVOID") {
-		heliusFlow = await heliusFlowSnapshot(data.pairAddress, { signal });
+		heliusFlow = await heliusFlowSnapshot(token.tokenAddress || data.tokenAddress, { pairAddress: data.pairAddress, signal });
 		analysis = analyzeTokenV5(data, { heliusFlow });
 		if (heliusFlow.status === "OK") {
 			console.log(
-				"V5.3 HELIUS FLOW | " + (data.symbol || token.tokenAddress) +
+				"V5.4 HELIUS FLOW | " + (data.symbol || token.tokenAddress) +
 				" | swaps5m: " + heliusFlow.swapsLast5m +
 				" | unique makers: " + heliusFlow.uniqueMakers5m +
+				" | samples5m: " + Number(heliusFlow.sampleTransactions || 0) +
+				" | queried: " + (heliusFlow.fallbackUsed ? "PAIR_FALLBACK" : "TOKEN_MINT") +
+				" | daily requests: " + Number(heliusFlow.usage?.requests || 0)
+			);
+		} else {
+			console.log(
+				"V5.4 HELIUS STATUS | " + (data.symbol || token.tokenAddress) +
+				" | status: " + heliusFlow.status +
+				" | http: " + (heliusFlow.errorStatus || "-") +
 				" | daily requests: " + Number(heliusFlow.usage?.requests || 0)
 			);
 		}
