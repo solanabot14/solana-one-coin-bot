@@ -1,7 +1,7 @@
 const axios = require("axios");
 const { getTokenData, getMarketDataHealth } = require("./dexscreener");
 const { analyzeTokenV5 } = require("./strategyV5");
-const { heliusFlowSnapshot } = require("./heliusFlow");
+const ZERO_EXTRA_CREDIT_MODE = true;
 
 const DISCOVERY_SOURCES = [
 	{
@@ -243,6 +243,9 @@ function birdeyeTrendingToTokens(items = [], limit = BIRDEYE_TRENDING_LIMIT) {
 }
 
 async function fetchBirdeyeTrendingTokens(signal) {
+	if (ZERO_EXTRA_CREDIT_MODE) {
+		return { name: "Birdeye Trending 1H", type: "organic", tokens: [], disabled: "ZERO_EXTRA_CREDIT_MODE" };
+	}
 	const now = Date.now();
 	const ageMs = now - birdeyeTrendingCache.updatedAt;
 
@@ -461,6 +464,9 @@ async function rateLimitedBirdeyeOhlcvRequest(task) {
 }
 
 async function fetchBirdeyeOhlcvCandles(tokenAddress, signal) {
+	if (ZERO_EXTRA_CREDIT_MODE) {
+		return { status: "DISABLED_ZERO_EXTRA_CREDIT", candles: [], cached: false };
+	}
 	refreshBirdeyeOhlcvUsageDay();
 	const now = Date.now();
 	const cached = birdeyeOhlcvCache.get(tokenAddress);
@@ -617,6 +623,10 @@ function normalizeSmartMoneyItem(item) {
 }
 
 async function refreshSmartMoney(signal) {
+	if (ZERO_EXTRA_CREDIT_MODE) {
+		smartMoneyCache = { updatedAt: Date.now(), lastStatus: "DISABLED_ZERO_EXTRA_CREDIT", items: new Map() };
+		return smartMoneyCache;
+	}
 	const now = Date.now();
 	if (smartMoneyCache.updatedAt && now - smartMoneyCache.updatedAt < SMART_MONEY_REFRESH_MS) {
 		return smartMoneyCache;
@@ -1300,28 +1310,14 @@ async function analyzeDiscoveredToken(token, signal, prefetchedData = null) {
 	}
 
 	let analysis = analyzeTokenV5(data);
-	let heliusFlow = {
-		status: "NOT_CHECKED",
-		source: "Helius Enhanced Transactions",
+	const heliusFlow = {
+		status: "DISABLED_ZERO_EXTRA_CREDIT",
+		source: "Disabled by V5.1 zero-extra-credit policy",
 		pairAddress: data.pairAddress || null,
 		swapsLast5m: 0,
 		uniqueMakers5m: 0,
 		uniqueMakerRatio: 0
 	};
-
-	// V5 calls Helius only for near-qualified candidates, keeping API use focused.
-	if (Number(analysis.score) >= 58 && analysis.signal !== "AVOID") {
-		heliusFlow = await heliusFlowSnapshot(data.pairAddress, { signal });
-		analysis = analyzeTokenV5(data, { heliusFlow });
-		if (heliusFlow.status === "OK") {
-			console.log(
-				"V5 HELIUS FLOW | " + (data.symbol || token.tokenAddress) +
-				" | swaps5m: " + heliusFlow.swapsLast5m +
-				" | unique makers: " + heliusFlow.uniqueMakers5m +
-				" | unique ratio: " + (Number(heliusFlow.uniqueMakerRatio || 0) * 100).toFixed(1) + "%"
-			);
-		}
-	}
 	const quality = entryQualitySnapshot(data);
 	const currentActivity = {
 		volume5m: quality.volume5m,
@@ -1669,6 +1665,7 @@ async function discoverCandidates({ signal } = {}) {
 		};
 
 		lastDiscoveryTelemetry = {
+			zeroExtraCreditMode: ZERO_EXTRA_CREDIT_MODE,
 			updatedAt: cacheUpdatedAt,
 			sources: results.map(result => ({
 				name: result.name,
