@@ -21,6 +21,14 @@ const MARKET_DATA_MAX_MCAP_FDV_RATIO = 100;
 
 const tokenSecurityCache = new Map();
 const liquiditySecurityCache = new Map();
+let lastDiscoveryTelemetry = {
+	updatedAt: null,
+	strategy: "V3.1R",
+	uniqueSolanaCandidates: 0,
+	candidatesAfterSafetyFilters: 0,
+	strongBuys: 0,
+	topCandidates: []
+};
 
 const VERIFIED_WRAPPED_ASSETS = new Map([
 	[
@@ -180,6 +188,7 @@ async function discoverCandidates({ signal } = {}) {
 
 		const solanaTokens = Array.from(uniqueSolanaTokens.values());
 		console.log(`Unique Solana candidates: ${solanaTokens.length}`);
+		lastDiscoveryTelemetry.uniqueSolanaCandidates = solanaTokens.length;
 		const candidates = [];
 
 		for (const token of solanaTokens) {
@@ -235,6 +244,19 @@ async function discoverCandidates({ signal } = {}) {
 
 		candidates.sort((a, b) => b.score - a.score);
 		console.log(`Candidates after V3.1R filters: ${candidates.length}`);
+		lastDiscoveryTelemetry = {
+			updatedAt: new Date().toISOString(),
+			strategy: "V3.1R",
+			uniqueSolanaCandidates: solanaTokens.length,
+			candidatesAfterSafetyFilters: candidates.length,
+			strongBuys: candidates.filter(candidate => candidate.signal === "STRONG BUY").length,
+			topCandidates: candidates.slice(0, 10).map(candidate => ({
+				symbol: candidate.symbol,
+				tokenAddress: candidate.tokenAddress,
+				score: candidate.score,
+				signal: candidate.signal
+			}))
+		};
 		return candidates;
 	} catch (error) {
 		console.error("Scanner error:", error.message);
@@ -246,5 +268,6 @@ module.exports = {
 	discoverCandidates,
 	tokenSecuritySnapshot,
 	liquiditySecuritySnapshot,
-	marketDataIntegritySnapshot
+	marketDataIntegritySnapshot,
+	getDiscoveryTelemetry: () => structuredClone(lastDiscoveryTelemetry)
 };
