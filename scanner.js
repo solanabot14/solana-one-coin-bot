@@ -1152,7 +1152,48 @@ function marketDataIntegritySnapshot(data, expectedTokenAddress = null) {
 	};
 }
 
-function entryQualitySnapshot(data) {
+function adaptiveVolumeRequirement(data, analysis, heliusFlow) {
+	const fallback = MIN_ENTRY_VOLUME_5M_USD;
+	const regime = analysis?.v5?.regime?.name || "UNKNOWN";
+	const acceleration = Number(analysis?.v5?.volumeAcceleration) || 0;
+	const swaps = Number(heliusFlow?.swapsLast5m) || 0;
+	const uniqueMakers = Number(heliusFlow?.uniqueMakers5m) || 0;
+	const heliusConfirmed =
+		heliusFlow?.status === "OK" &&
+		swaps >= 4 &&
+		uniqueMakers >= 3;
+
+	if (!heliusConfirmed) {
+		return {
+			requiredVolume5m: fallback,
+			mode: "FIXED_FALLBACK",
+			regime,
+			acceleration,
+			heliusConfirmed: false
+		};
+	}
+
+	let requiredVolume5m = fallback;
+	if (regime === "LAUNCH") {
+		requiredVolume5m = acceleration >= 1.25 ? 1500 : 2500;
+	} else if (regime === "EARLY") {
+		requiredVolume5m = acceleration >= 1.20 ? 2000 : 3000;
+	} else if (regime === "EXPANSION") {
+		requiredVolume5m = acceleration >= 1.10 ? 3000 : 4000;
+	} else if (regime === "ESTABLISHED") {
+		requiredVolume5m = acceleration >= 1.00 ? 4000 : fallback;
+	}
+
+	return {
+		requiredVolume5m,
+		mode: requiredVolume5m < fallback ? "ADAPTIVE" : "FIXED_FALLBACK",
+		regime,
+		acceleration,
+		heliusConfirmed: true
+	};
+}
+
+function entryQualitySnapshot(data, analysis = null, heliusFlow = null) {
 	const liquidity = Number(data?.liquidityUsd) || 0;
 	const volume5m = Number(data?.volume5m) || 0;
 	const buys5m = Number(data?.buys5m) || 0;
@@ -1162,6 +1203,7 @@ function entryQualitySnapshot(data) {
 	const volumeLiquidity5mPercent = liquidity > 0 ? volume5m / liquidity * 100 : 0;
 	const change5m = Number(data?.priceChange5m) || 0;
 	const change1h = Number(data?.priceChange1h) || 0;
+	const adaptiveVolume = adaptiveVolumeRequirement(data, analysis, heliusFlow);
 
 	return {
 		volume5m,
@@ -1169,8 +1211,13 @@ function entryQualitySnapshot(data) {
 		volumeLiquidity5mPercent,
 		transactions5m,
 		buyRatio5m,
+		requiredVolume5m: adaptiveVolume.requiredVolume5m,
+		volumeGateMode: adaptiveVolume.mode,
+		volumeRegime: adaptiveVolume.regime,
+		volumeAcceleration: adaptiveVolume.acceleration,
+		heliusVolumeConfirmed: adaptiveVolume.heliusConfirmed,
 		activityHealthy:
-			volume5m >= MIN_ENTRY_VOLUME_5M_USD,
+			volume5m >= adaptiveVolume.requiredVolume5m,
 		lateMomentum:
 			change1h >= LATE_ENTRY_1H_PERCENT &&
 			change5m <= LATE_ENTRY_MAX_5M_PERCENT,
@@ -1331,13 +1378,18 @@ async function analyzeDiscoveredToken(token, signal, prefetchedData = null) {
 			);
 		}
 	}
-	const quality = entryQualitySnapshot(data);
+	const quality = entryQualitySnapshot(data, analysis, heliusFlow);
 	const currentActivity = {
 		volume5m: quality.volume5m,
 		volume1h: quality.volume1h,
 		volumeLiquidity5mPercent: quality.volumeLiquidity5mPercent,
 		transactions5m: quality.transactions5m,
-		buyRatio5m: quality.buyRatio5m
+		buyRatio5m: quality.buyRatio5m,
+		requiredVolume5m: quality.requiredVolume5m,
+		volumeGateMode: quality.volumeGateMode,
+		volumeRegime: quality.volumeRegime,
+		volumeAcceleration: quality.volumeAcceleration,
+		heliusVolumeConfirmed: quality.heliusVolumeConfirmed
 	};
 	const postPump = postPumpSnapshot(token.tokenAddress, data.priceUsd);
 	const marketDataIntegrity = marketDataIntegritySnapshot(data, token.tokenAddress);
@@ -1361,15 +1413,20 @@ async function analyzeDiscoveredToken(token, signal, prefetchedData = null) {
 	if (analysis.signal === "STRONG BUY" && !quality.activityHealthy) {
 		console.log(
 			"CURRENT ACTIVITY BLOCK | " + (data.symbol || token.tokenAddress) +
-			" | 5m volume: $" + quality.volume5m.toFixed(2)
+			" | 5m volume: $" + quality.volume5m.toFixed(2) +
+			" | required: $" + quality.requiredVolume5m.toFixed(0) +
+			" | mode: " + quality.volumeGateMode +
+			" | regime: " + quality.volumeRegime
 		);
 		analysis = {
 			...analysis,
 			signal: "AVOID",
 			reasons: [
 				...(analysis.reasons || []),
-				"CURRENT ACTIVITY GATE: requires 5m volume >= $" + MIN_ENTRY_VOLUME_5M_USD.toFixed(0) +
-				"; observed $" + quality.volume5m.toFixed(2)
+				"CURRENT ACTIVITY GATE: requires adaptive 5m volume >= $" + quality.requiredVolume5m.toFixed(0) +
+				"; observed $" + quality.volume5m.toFixed(2) +
+				"; mode " + quality.volumeGateMode +
+				"; regime " + quality.volumeRegime
 			]
 		};
 	}
@@ -1809,6 +1866,7 @@ module.exports = {
 	entryDiagnostics,
 	buildRejectionTelemetry,
 	entryQualitySnapshot,
+	adaptiveVolumeRequirement,
 	marketDataIntegritySnapshot,
 	liquiditySecuritySnapshot,
 	tokenSecuritySnapshot,
