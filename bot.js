@@ -106,7 +106,11 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     let position = portfolio.position;
     const expectedPosition = positionKey(position);
     const tokenAddress = position.tokenAddress;
-    const freshData = await getTokenData(tokenAddress, { signal: session.signal });
+    const freshData = await getTokenData(tokenAddress, {
+      signal: session.signal,
+      pairAddress: position.pairAddress || undefined,
+      referencePrice: Number(position.highestPrice || position.entryPrice) || undefined
+    });
     if (!isActive(session) || positionKey(getPortfolio().position) !== expectedPosition) return;
     if (!freshData) {
       console.log(`POSITION DATA UNAVAILABLE | ${position.symbol}`);
@@ -181,7 +185,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("BOT STARTED | Risk Management V2");
+    console.log("BOT STARTED | Entry V3.1R Safe Revival | Original V3.1 Entry + Modern Security + Quote Sanity + 10% Compounding");
     positionInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
     scannerInterval = timers.setInterval(() => tick("scanner", session), SCANNER_INTERVAL_MS);
     void tick("monitor", session);
