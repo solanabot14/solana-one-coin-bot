@@ -120,7 +120,7 @@ function analyzeTokenV5(data, { heliusFlow = null, now = Date.now() } = {}) {
 		transactions >= regime.minTransactions;
 
 	let signal = "WAIT";
-	if (score >= 65 && coreConditions) signal = "STRONG BUY";
+	if (score >= 60 && coreConditions) signal = "STRONG BUY";
 	else if (score >= 58) signal = "BUY";
 	else if (score < 35) signal = "AVOID";
 
