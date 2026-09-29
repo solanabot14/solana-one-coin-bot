@@ -119,7 +119,7 @@ let lastDiscoveryTelemetry = {
 	topCandidates: [],
 	rejectionTelemetry: {
 		notStrongBuy: 0,
-		scoreBelow65: 0,
+		scoreBelow60: 0,
 		fiveMinute: 0,
 		oneHour: 0,
 		buyRatio: 0,
@@ -1262,7 +1262,7 @@ function entryDiagnostics(data, analysis) {
 	if (reasons.some(reason => reason.includes("LIQUIDITY SECURITY"))) blockers.push("LIQUIDITY_SECURITY");
 
 	if (!blockers.length && analysis?.signal !== "STRONG BUY") {
-		if (Number(analysis?.score) < 65) blockers.push("SCORE_BELOW_65");
+		if (Number(analysis?.score) < 60) blockers.push("SCORE_BELOW_60");
 		if (change5m <= 0 || change5m >= 4) blockers.push("5M_CONFIRMATION");
 		if (v5.dynamic1hPass === false || change1h > 30) blockers.push("1H_CONFIRMATION");
 		if (buyRatio < 0.52) blockers.push("BUY_RATIO");
@@ -1283,7 +1283,7 @@ function entryDiagnostics(data, analysis) {
 function buildRejectionTelemetry(candidates = []) {
 	const telemetry = {
 		notStrongBuy: 0,
-		scoreBelow65: 0,
+		scoreBelow60: 0,
 		fiveMinute: 0,
 		oneHour: 0,
 		buyRatio: 0,
@@ -1306,7 +1306,7 @@ function buildRejectionTelemetry(candidates = []) {
 		if (candidate.signal === "STRONG BUY") continue;
 		telemetry.notStrongBuy++;
 		const blockers = candidate.entryDiagnostics?.blockers || [];
-		if (blockers.includes("SCORE_BELOW_65")) telemetry.scoreBelow65++;
+		if (blockers.includes("SCORE_BELOW_60")) telemetry.scoreBelow60++;
 		if (blockers.includes("5M_CONFIRMATION")) telemetry.fiveMinute++;
 		if (blockers.includes("1H_CONFIRMATION")) telemetry.oneHour++;
 		if (blockers.includes("BUY_RATIO")) telemetry.buyRatio++;
