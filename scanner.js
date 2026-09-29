@@ -39,6 +39,15 @@ const TOKEN_SECURITY_CACHE_MS = Math.max(
 	5 * 60 * 1000,
 	(Number.parseInt(process.env.TOKEN_SECURITY_CACHE_MINUTES || "30", 10) || 30) * 60 * 1000
 );
+const RUGCHECK_SUMMARY_BASE_URL = "https://api.rugcheck.xyz/v1/tokens/";
+const MIN_LP_LOCKED_PERCENT = Math.min(
+	100,
+	Math.max(0, Number.parseFloat(process.env.MIN_LP_LOCKED_PERCENT || "100") || 100)
+);
+const LIQUIDITY_SECURITY_CACHE_MS = Math.max(
+	60 * 1000,
+	(Number.parseInt(process.env.LIQUIDITY_SECURITY_CACHE_MINUTES || "15", 10) || 15) * 60 * 1000
+);
 
 // Narrow, exact-mint exceptions only. Never infer trust from token name/symbol.
 // wXMR is a documented bridge asset whose mint/freeze authorities are part of
@@ -123,6 +132,7 @@ let lastDiscoveryTelemetry = {
 		preDiscoveryPump: 0,
 		postPumpRebound: 0,
 		tokenSecurity: 0,
+		liquiditySecurity: 0,
 		nearEntries: []
 	}
 };
@@ -135,6 +145,7 @@ let lastCandidateCache = {
 const rollingPriceHistory = new Map();
 const birdeyeOhlcvCache = new Map();
 const tokenSecurityCache = new Map();
+const liquiditySecurityCache = new Map();
 let birdeyeOhlcvRequestChain = Promise.resolve();
 let birdeyeOhlcvLastRequestAt = 0;
 let birdeyeOhlcvUsage = {
@@ -1025,6 +1036,65 @@ async function tokenSecuritySnapshot(tokenAddress, signal) {
 	}
 }
 
+async function liquiditySecuritySnapshot(tokenAddress, signal) {
+	const now = Date.now();
+	const cached = liquiditySecurityCache.get(tokenAddress);
+	if (cached && now - cached.updatedAt < LIQUIDITY_SECURITY_CACHE_MS) {
+		return { ...structuredClone(cached.snapshot), cached: true };
+	}
+
+	const base = {
+		source: "RugCheck token summary",
+		status: "NOT_CHECKED",
+		tokenAddress,
+		lpLockedPct: null,
+		requiredLockedPct: MIN_LP_LOCKED_PERCENT,
+		blocked: true,
+		reasons: [],
+		cached: false
+	};
+
+	try {
+		const url = RUGCHECK_SUMMARY_BASE_URL + encodeURIComponent(tokenAddress) + "/report/summary";
+		const response = await axios.get(url, {
+			timeout: 10000,
+			signal,
+			headers: { accept: "application/json" }
+		});
+		const payload = response.data || {};
+		const lpLockedPct = Number(payload.lpLockedPct);
+		const mintMatches = !payload.mint || payload.mint === tokenAddress;
+
+		const reasons = [];
+		if (!mintMatches) reasons.push("RUGCHECK_TOKEN_ID_MISMATCH");
+		if (!Number.isFinite(lpLockedPct)) reasons.push("LP_LOCK_UNVERIFIED");
+		else if (lpLockedPct < MIN_LP_LOCKED_PERCENT) {
+			reasons.push("LP_NOT_100_PERCENT_LOCKED");
+		}
+
+		const snapshot = {
+			...base,
+			status: reasons.length ? "BLOCKED" : "OK",
+			lpLockedPct: Number.isFinite(lpLockedPct) ? lpLockedPct : null,
+			blocked: reasons.length > 0,
+			reasons
+		};
+		liquiditySecurityCache.set(tokenAddress, { updatedAt: now, snapshot });
+		return snapshot;
+	} catch (error) {
+		const snapshot = {
+			...base,
+			status: String(error?.response?.status || "ERROR"),
+			reasons: ["LP_LOCK_VERIFICATION_UNAVAILABLE"]
+		};
+		liquiditySecurityCache.set(tokenAddress, { updatedAt: now, snapshot });
+		console.log(
+			"LIQUIDITY SECURITY CHECK UNAVAILABLE | " + tokenAddress + " | " + error.message
+		);
+		return snapshot;
+	}
+}
+
 function marketDataIntegritySnapshot(data, expectedTokenAddress = null) {
 	const price = Number(data?.priceUsd);
 	const liquidity = Number(data?.liquidityUsd);
@@ -1045,13 +1115,18 @@ function marketDataIntegritySnapshot(data, expectedTokenAddress = null) {
 		}
 	}
 
+	const warnings = [];
 	if (fdv > 0 && liquidity > 0 && liquidity / fdv > MARKET_DATA_MAX_LIQUIDITY_FDV_RATIO) {
-		reasons.push("LIQUIDITY_FDV_INCONSISTENT");
+		// DexScreener FDV can be absent/stale/wrong for wrapped or unusual supply models.
+		// Treat this ratio as telemetry only; identity, pair presence and extreme MCAP/FDV
+		// contradictions remain hard integrity failures.
+		warnings.push("LIQUIDITY_FDV_INCONSISTENT");
 	}
 
 	return {
 		ok: reasons.length === 0,
 		reasons,
+		warnings,
 		source: data?.marketDataSource || "DexScreener",
 		dexId: data?.dexId || null,
 		pairAddress: data?.pairAddress || null,
@@ -1113,10 +1188,11 @@ function entryDiagnostics(data, analysis) {
 	if (reasons.some(reason => reason.includes("PRE-DISCOVERY PUMP"))) blockers.push("PRE_DISCOVERY_PUMP");
 	if (reasons.some(reason => reason.includes("POST-PUMP REBOUND"))) blockers.push("POST_PUMP_REBOUND");
 	if (reasons.some(reason => reason.includes("TOKEN SECURITY"))) blockers.push("TOKEN_SECURITY");
+	if (reasons.some(reason => reason.includes("LIQUIDITY SECURITY"))) blockers.push("LIQUIDITY_SECURITY");
 
 	if (!blockers.length && analysis?.signal !== "STRONG BUY") {
 		if (Number(analysis?.score) < 8) blockers.push("SCORE_BELOW_8");
-		if (change5m < 0.35 || change5m > 6) blockers.push("5M_CONFIRMATION");
+		if (change5m <= 0 || change5m > 6) blockers.push("5M_CONFIRMATION");
 		if (change1h < 0.80 || change1h > 30) blockers.push("1H_CONFIRMATION");
 		if (buyRatio < 0.55) blockers.push("BUY_RATIO");
 		if (totalTransactions < 20) blockers.push("TRANSACTIONS");
@@ -1150,6 +1226,7 @@ function buildRejectionTelemetry(candidates = []) {
 		preDiscoveryPump: 0,
 		postPumpRebound: 0,
 		tokenSecurity: 0,
+		liquiditySecurity: 0,
 		nearEntries: []
 	};
 
@@ -1172,6 +1249,7 @@ function buildRejectionTelemetry(candidates = []) {
 		if (blockers.includes("PRE_DISCOVERY_PUMP")) telemetry.preDiscoveryPump++;
 		if (blockers.includes("POST_PUMP_REBOUND")) telemetry.postPumpRebound++;
 		if (blockers.includes("TOKEN_SECURITY")) telemetry.tokenSecurity++;
+		if (blockers.includes("LIQUIDITY_SECURITY")) telemetry.liquiditySecurity++;
 
 		if (Number(candidate.score) >= 6 || candidate.signal === "BUY") {
 			telemetry.nearEntries.push({
@@ -1385,6 +1463,41 @@ async function analyzeDiscoveredToken(token, signal, prefetchedData = null) {
 		}
 	}
 
+	let liquiditySecurity = {
+		source: "RugCheck token summary",
+		status: "NOT_CHECKED",
+		tokenAddress: token.tokenAddress,
+		lpLockedPct: null,
+		requiredLockedPct: MIN_LP_LOCKED_PERCENT,
+		blocked: false,
+		reasons: [],
+		cached: false
+	};
+
+	if (analysis.signal === "STRONG BUY") {
+		liquiditySecurity = await liquiditySecuritySnapshot(token.tokenAddress, signal);
+		if (liquiditySecurity.blocked) {
+			console.log(
+				"LIQUIDITY SECURITY BLOCK | " + (data.symbol || token.tokenAddress) +
+				" | Locked: " + (
+					Number.isFinite(Number(liquiditySecurity.lpLockedPct))
+						? Number(liquiditySecurity.lpLockedPct).toFixed(4) + "%"
+						: "UNVERIFIED"
+				) +
+				" | Required: " + MIN_LP_LOCKED_PERCENT.toFixed(2) + "%" +
+				" | " + liquiditySecurity.reasons.join(", ")
+			);
+			analysis = {
+				...analysis,
+				signal: "AVOID",
+				reasons: [
+					...(analysis.reasons || []),
+					"LIQUIDITY SECURITY: " + liquiditySecurity.reasons.join(", ")
+				]
+			};
+		}
+	}
+
 	const diagnostics = entryDiagnostics(data, analysis);
 
 	console.log(
@@ -1419,6 +1532,7 @@ async function analyzeDiscoveredToken(token, signal, prefetchedData = null) {
 		postPump,
 		preDiscoveryPump,
 		tokenSecurity,
+		liquiditySecurity,
 		marketDataIntegrity,
 		smartMoney: null,
 		birdeyeRank: Number.isFinite(Number(token.birdeyeRank)) ? Number(token.birdeyeRank) : null
@@ -1604,6 +1718,13 @@ async function discoverCandidates({ signal } = {}) {
 				verifiedWrappedMints: Array.from(VERIFIED_WRAPPED_ASSETS.keys()),
 				failMode: "OPEN_ON_RPC_ERROR"
 			},
+			liquiditySecurityGate: {
+				source: "RugCheck token summary",
+				requiredLockedPct: MIN_LP_LOCKED_PERCENT,
+				cacheMinutes: Math.round(LIQUIDITY_SECURITY_CACHE_MS / 60000),
+				blockedCandidates: candidates.filter(candidate => candidate.entryDiagnostics?.blockers?.includes("LIQUIDITY_SECURITY")).length,
+				failMode: "CLOSED_ON_UNVERIFIED"
+			},
 			marketDataIntegrityGate: {
 				maxMcapFdvRatio: MARKET_DATA_MAX_MCAP_FDV_RATIO,
 				maxLiquidityFdvRatio: MARKET_DATA_MAX_LIQUIDITY_FDV_RATIO,
@@ -1650,6 +1771,7 @@ module.exports = {
 	buildRejectionTelemetry,
 	entryQualitySnapshot,
 	marketDataIntegritySnapshot,
+	liquiditySecuritySnapshot,
 	tokenSecuritySnapshot,
 	preDiscoveryPumpSnapshot,
 	failedStructureSnapshot,
