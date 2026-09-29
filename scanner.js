@@ -30,6 +30,11 @@ let lastDiscoveryTelemetry = {
 	topCandidates: []
 };
 
+let lastCandidateCache = {
+	updatedAt: null,
+	candidates: []
+};
+
 const VERIFIED_WRAPPED_ASSETS = new Map([
 	[
 		"WXMRyRZhsa19ety5erZhHg4N3xj3EVN92u94422teJp",
@@ -241,9 +246,14 @@ async function discoverCandidates({ signal } = {}) {
 		}
 
 		candidates.sort((a, b) => b.score - a.score);
+		const cacheUpdatedAt = new Date().toISOString();
+		lastCandidateCache = {
+			updatedAt: cacheUpdatedAt,
+			candidates: structuredClone(candidates)
+		};
 		console.log(`Candidates after V3.1R2 filters: ${candidates.length}`);
 		lastDiscoveryTelemetry = {
-			updatedAt: new Date().toISOString(),
+			updatedAt: cacheUpdatedAt,
 			strategy: "V3.1R2",
 			uniqueSolanaCandidates: solanaTokens.length,
 			candidatesAfterSafetyFilters: candidates.length,
@@ -267,5 +277,6 @@ module.exports = {
 	tokenSecuritySnapshot,
 	liquiditySecuritySnapshot,
 	marketDataIntegritySnapshot,
-	getDiscoveryTelemetry: () => structuredClone(lastDiscoveryTelemetry)
+	getDiscoveryTelemetry: () => structuredClone(lastDiscoveryTelemetry),
+	getCachedCandidates: () => structuredClone(lastCandidateCache)
 };
