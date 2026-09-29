@@ -23,7 +23,7 @@ const tokenSecurityCache = new Map();
 const liquiditySecurityCache = new Map();
 let lastDiscoveryTelemetry = {
 	updatedAt: null,
-	strategy: "V3.1R",
+	strategy: "V3.1R2",
 	uniqueSolanaCandidates: 0,
 	candidatesAfterSafetyFilters: 0,
 	strongBuys: 0,
@@ -216,21 +216,19 @@ async function discoverCandidates({ signal } = {}) {
 
 				const tokenSecurity = await tokenSecuritySnapshot(token.tokenAddress, signal);
 				if (tokenSecurity.blocked) {
-					console.log(`TOKEN SECURITY BLOCK | ${data.symbol} | ${tokenSecurity.reasons.join(", ")}`);
-					continue;
+					console.log(`TOKEN SECURITY WARNING | ${data.symbol} | ${tokenSecurity.reasons.join(", ")} | paper trading: not blocking`);
 				}
 
 				const liquiditySecurity = await liquiditySecuritySnapshot(token.tokenAddress, signal);
 				if (liquiditySecurity.blocked) {
 					console.log(
-						`LIQUIDITY SECURITY BLOCK | ${data.symbol} | ${liquiditySecurity.reasons.join(", ")} | LP locked: ${liquiditySecurity.lpLockedPct ?? "unverified"}`
+						`LIQUIDITY SECURITY WARNING | ${data.symbol} | ${liquiditySecurity.reasons.join(", ")} | LP locked: ${liquiditySecurity.lpLockedPct ?? "unverified"} | paper trading: not blocking`
 					);
-					continue;
 				}
 			}
 
 			console.log(
-				`PASSED V3.1R: ${data.symbol} | Score: ${analysis.score} | Signal: ${analysis.signal}`
+				`PASSED V3.1R2: ${data.symbol} | Score: ${analysis.score} | Signal: ${analysis.signal}`
 			);
 
 			candidates.push({
@@ -243,10 +241,10 @@ async function discoverCandidates({ signal } = {}) {
 		}
 
 		candidates.sort((a, b) => b.score - a.score);
-		console.log(`Candidates after V3.1R filters: ${candidates.length}`);
+		console.log(`Candidates after V3.1R2 filters: ${candidates.length}`);
 		lastDiscoveryTelemetry = {
 			updatedAt: new Date().toISOString(),
-			strategy: "V3.1R",
+			strategy: "V3.1R2",
 			uniqueSolanaCandidates: solanaTokens.length,
 			candidatesAfterSafetyFilters: candidates.length,
 			strongBuys: candidates.filter(candidate => candidate.signal === "STRONG BUY").length,
