@@ -23,7 +23,7 @@ function analyzeToken(data) {
 		totalTransactions > 0 ? buys / totalTransactions : 0;
 
 	// ==========================================
-	// STRATEGY V3.2
+	// STRATEGY V3.1
 	// EARLY MOMENTUM + ANTI-CHASE
 	// ==========================================
 
@@ -74,7 +74,7 @@ function analyzeToken(data) {
 	}
 
 	// 5M MOMENTUM
-	// V3.2 keeps the same scoring but requires stronger entry confirmation.
+	// V3.1 starts recognizing momentum slightly earlier.
 	if (change5m >= 0.25 && change5m <= 5) {
 		score += 4;
 		reasons.push("Early 5m momentum detected");
@@ -139,11 +139,11 @@ function analyzeToken(data) {
 	let signal = "WAIT";
 
 	const earlyEntryConditions =
-		change5m > 0 &&
+		change5m >= 0.25 &&
 		change5m <= 6 &&
-		change1h >= 0.80 &&
+		change1h > 0 &&
 		change1h <= 30 &&
-		buyRatio >= 0.55 &&
+		buyRatio >= 0.52 &&
 		totalTransactions >= 20;
 
 	if (
