@@ -25,11 +25,18 @@ function refreshFlowUsageDay() {
 	flowUsage = { day, requests: 0, cacheHits: 0, budgetSkips: 0, successes: 0, failures: 0 };
 }
 
+function isParsedSwap(tx) {
+	return (
+		String(tx?.type || "").toUpperCase() === "SWAP" ||
+		Boolean(tx?.events?.swap)
+	);
+}
+
 function summarizeHeliusTransactions(transactions = [], nowSeconds = Math.floor(Date.now() / 1000)) {
 	const recent = (Array.isArray(transactions) ? transactions : []).filter(tx =>
 		Number(tx?.timestamp) >= nowSeconds - FLOW_WINDOW_SECONDS
 	);
-	const swaps = recent.filter(tx => String(tx?.type || "").toUpperCase() === "SWAP");
+	const swaps = recent.filter(isParsedSwap);
 	const makers = new Set(
 		swaps
 			.map(tx => tx?.feePayer)
@@ -47,62 +54,102 @@ function summarizeHeliusTransactions(transactions = [], nowSeconds = Math.floor(
 	};
 }
 
-async function heliusFlowSnapshot(pairAddress, { signal } = {}) {
-	if (!pairAddress) {
-		return { status: "NO_PAIR", swapsLast5m: 0, uniqueMakers5m: 0, uniqueMakerRatio: 0 };
-	}
-	const apiKey = process.env.HELIUS_API_KEY;
-	if (!apiKey) {
-		return { status: "NO_API_KEY", swapsLast5m: 0, uniqueMakers5m: 0, uniqueMakerRatio: 0 };
-	}
-	const now = Date.now();
-	refreshFlowUsageDay();
-	const cached = flowCache.get(pairAddress);
-	if (cached && now - cached.updatedAt < FLOW_CACHE_MS) {
-		flowUsage.cacheHits++;
-		return { ...structuredClone(cached.snapshot), cached: true, usage: structuredClone(flowUsage) };
-	}
+async function fetchAddressTransactions(address, apiKey, signal) {
 	if (flowUsage.requests >= HELIUS_FLOW_MAX_REQUESTS_PER_DAY) {
 		flowUsage.budgetSkips++;
-		return {
-			status: "FREE_BUDGET_LIMIT",
-			source: "Helius Enhanced Transactions",
-			pairAddress,
-			swapsLast5m: 0,
-			uniqueMakers5m: 0,
-			uniqueMakerRatio: 0,
-			usage: structuredClone(flowUsage)
-		};
+		return { status: "FREE_BUDGET_LIMIT", transactions: [] };
 	}
 
 	try {
 		flowUsage.requests++;
 		const url =
-			"https://api.helius.xyz/v0/addresses/" + encodeURIComponent(pairAddress) +
+			"https://api.helius.xyz/v0/addresses/" + encodeURIComponent(address) +
 			"/transactions?api-key=" + encodeURIComponent(apiKey) + "&limit=50";
 		const response = await axios.get(url, { timeout: 8000, signal });
-		const snapshot = {
-			...summarizeHeliusTransactions(response.data),
-			source: "Helius Enhanced Transactions",
-			pairAddress,
-			cached: false
-		};
 		flowUsage.successes++;
-		flowCache.set(pairAddress, { updatedAt: now, snapshot });
-		return { ...snapshot, usage: structuredClone(flowUsage) };
+		return {
+			status: "OK",
+			transactions: Array.isArray(response.data) ? response.data : []
+		};
 	} catch (error) {
 		flowUsage.failures++;
 		return {
 			status: "UNAVAILABLE",
+			transactions: [],
+			errorStatus: error?.response?.status || null
+		};
+	}
+}
+
+async function heliusFlowSnapshot(tokenAddress, { pairAddress = null, signal } = {}) {
+	const primaryAddress = tokenAddress || pairAddress;
+	if (!primaryAddress) {
+		return { status: "NO_ADDRESS", swapsLast5m: 0, uniqueMakers5m: 0, uniqueMakerRatio: 0 };
+	}
+
+	const apiKey = process.env.HELIUS_API_KEY;
+	if (!apiKey) {
+		return { status: "NO_API_KEY", swapsLast5m: 0, uniqueMakers5m: 0, uniqueMakerRatio: 0 };
+	}
+
+	refreshFlowUsageDay();
+	const cacheKey = tokenAddress || pairAddress;
+	const now = Date.now();
+	const cached = flowCache.get(cacheKey);
+	if (cached && now - cached.updatedAt < FLOW_CACHE_MS) {
+		flowUsage.cacheHits++;
+		return { ...structuredClone(cached.snapshot), cached: true, usage: structuredClone(flowUsage) };
+	}
+
+	const primary = await fetchAddressTransactions(primaryAddress, apiKey, signal);
+	if (primary.status !== "OK") {
+		return {
+			status: primary.status,
 			source: "Helius Enhanced Transactions",
+			queriedAddress: primaryAddress,
+			tokenAddress: tokenAddress || null,
 			pairAddress,
 			swapsLast5m: 0,
 			uniqueMakers5m: 0,
 			uniqueMakerRatio: 0,
-			errorStatus: error?.response?.status || null,
+			errorStatus: primary.errorStatus || null,
 			usage: structuredClone(flowUsage)
 		};
 	}
+
+	let summary = summarizeHeliusTransactions(primary.transactions);
+	let queriedAddress = primaryAddress;
+	let fallbackUsed = false;
+
+	// A token mint is the preferred query. Some AMM activity may be indexed more
+	// completely against the pool account, so use one bounded fallback only when
+	// the mint query has no recent samples at all.
+	if (
+		tokenAddress &&
+		pairAddress &&
+		pairAddress !== tokenAddress &&
+		summary.sampleTransactions === 0 &&
+		flowUsage.requests < HELIUS_FLOW_MAX_REQUESTS_PER_DAY
+	) {
+		const fallback = await fetchAddressTransactions(pairAddress, apiKey, signal);
+		if (fallback.status === "OK") {
+			summary = summarizeHeliusTransactions(fallback.transactions);
+			queriedAddress = pairAddress;
+			fallbackUsed = true;
+		}
+	}
+
+	const snapshot = {
+		...summary,
+		source: "Helius Enhanced Transactions",
+		tokenAddress: tokenAddress || null,
+		pairAddress,
+		queriedAddress,
+		fallbackUsed,
+		cached: false
+	};
+	flowCache.set(cacheKey, { updatedAt: now, snapshot });
+	return { ...snapshot, usage: structuredClone(flowUsage) };
 }
 
 function getHeliusFlowUsage() {
@@ -113,5 +160,6 @@ function getHeliusFlowUsage() {
 module.exports = {
 	heliusFlowSnapshot,
 	summarizeHeliusTransactions,
+	isParsedSwap,
 	getHeliusFlowUsage
 };
