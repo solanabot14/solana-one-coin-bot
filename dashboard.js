@@ -249,7 +249,7 @@ th,td{
   <div>
     <h1>Solana One Coin Bot</h1>
     <div class="subtitle">
-      Entry V3.1R • Original V3.1 Exits • 10% Compounding • Paper Trading
+      Entry V3.1R2 • Original V3.1 Exits • 10% Compounding • Paper Trading
     </div>
   </div>
 
@@ -933,7 +933,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           : [];
         return json(res, {
           generatedAt: new Date().toISOString(),
-          currentStrategy: "V3.1R Safe Revival | Original V3.1 Entry + Modern Security + Quote Sanity + 10% Compounding",
+          currentStrategy: "V3.1R2 Safe Revival | Original V3.1 Entry + Security Warnings + Quote Sanity + 10% Compounding",
           riskEngine: "Original V3.1: Hard Stop + TP1 + TP2 + Trailing + Momentum Exit",
           livePosition: data.live || null,
           completedTrades,
