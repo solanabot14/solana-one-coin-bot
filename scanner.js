@@ -1371,7 +1371,7 @@ async function analyzeDiscoveredToken(token, signal, prefetchedData = null) {
 		analysis = analyzeTokenV5(data, { heliusFlow });
 		if (heliusFlow.status === "OK") {
 			console.log(
-				"V5.2 HELIUS FLOW | " + (data.symbol || token.tokenAddress) +
+				"V5.3 HELIUS FLOW | " + (data.symbol || token.tokenAddress) +
 				" | swaps5m: " + heliusFlow.swapsLast5m +
 				" | unique makers: " + heliusFlow.uniqueMakers5m +
 				" | daily requests: " + Number(heliusFlow.usage?.requests || 0)
