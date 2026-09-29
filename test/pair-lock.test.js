@@ -73,3 +73,95 @@ test("pair lock rejects a saved pair whose base token no longer matches", async 
 	const data = await market.getTokenData("TOKEN", { pairAddress: "ENTRY_PAIR" });
 	assert.equal(data, null);
 });
+
+
+function loadMarketWithResponder(responder) {
+	const requests = [];
+	const sandbox = {
+		module: { exports: {} },
+		console,
+		process: { env: {} },
+		require(name) {
+			assert.equal(name, "axios");
+			return {
+				get: async (url, options) => {
+					requests.push({ url, options });
+					return responder(url, options);
+				}
+			};
+		}
+	};
+	vm.runInNewContext(
+		fs.readFileSync(path.join(__dirname, "../dexscreener.js"), "utf8"),
+		sandbox
+	);
+	return { market: sandbox.module.exports, requests };
+}
+
+test("pair shock uses a liquid alternate quote instead of an absurd locked-pair price", async () => {
+	const exact = {
+		chainId: "solana",
+		pairAddress: "ENTRY_PAIR",
+		baseToken: { address: "TOKEN", symbol: "T" },
+		quoteToken: { symbol: "USDT" },
+		liquidity: { usd: 1200 },
+		priceUsd: "0.000001"
+	};
+	const alternate = {
+		chainId: "solana",
+		pairAddress: "HEALTHY_PAIR",
+		baseToken: { address: "TOKEN", symbol: "T" },
+		quoteToken: { symbol: "USDC" },
+		liquidity: { usd: 500000 },
+		priceUsd: "1.02",
+		volume: { m5: 5000, h1: 50000, h24: 500000 }
+	};
+
+	const { market, requests } = loadMarketWithResponder(async url => {
+		if (url.includes("/pairs/solana/ENTRY_PAIR")) return { data: { pairs: [exact] } };
+		if (url.includes("/tokens/TOKEN")) return { data: { pairs: [exact, alternate] } };
+		throw new Error("Unexpected URL " + url);
+	});
+
+	const data = await market.getTokenData("TOKEN", {
+		pairAddress: "ENTRY_PAIR",
+		referencePrice: 1
+	});
+
+	assert.equal(data.priceUsd, "1.02");
+	assert.equal(data.pairAddress, "HEALTHY_PAIR");
+	assert.equal(data.pairSanityFallbackApplied, true);
+	assert.equal(requests.length, 2);
+});
+
+test("pair shock is accepted when an independent liquid pair confirms the move", async () => {
+	const exact = {
+		chainId: "solana",
+		pairAddress: "ENTRY_PAIR",
+		baseToken: { address: "TOKEN", symbol: "T" },
+		liquidity: { usd: 500000 },
+		priceUsd: "0.40"
+	};
+	const alternate = {
+		chainId: "solana",
+		pairAddress: "HEALTHY_PAIR",
+		baseToken: { address: "TOKEN", symbol: "T" },
+		liquidity: { usd: 400000 },
+		priceUsd: "0.42"
+	};
+
+	const { market } = loadMarketWithResponder(async url => {
+		if (url.includes("/pairs/solana/ENTRY_PAIR")) return { data: { pairs: [exact] } };
+		if (url.includes("/tokens/TOKEN")) return { data: { pairs: [exact, alternate] } };
+		throw new Error("Unexpected URL " + url);
+	});
+
+	const data = await market.getTokenData("TOKEN", {
+		pairAddress: "ENTRY_PAIR",
+		referencePrice: 1
+	});
+
+	assert.equal(data.priceUsd, "0.40");
+	assert.equal(data.pairAddress, "ENTRY_PAIR");
+	assert.equal(data.pairSanityVerified, true);
+});
