@@ -185,7 +185,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("BOT STARTED | Entry V3.1R Safe Revival | Original V3.1 Entry + Modern Security + Quote Sanity + 10% Compounding");
+    console.log("BOT STARTED | Entry V3.1R2 Safe Revival | Original V3.1 Entry + Security Warnings + Quote Sanity + 10% Compounding");
     positionInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
     scannerInterval = timers.setInterval(() => tick("scanner", session), SCANNER_INTERVAL_MS);
     void tick("monitor", session);
