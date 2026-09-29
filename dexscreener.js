@@ -9,6 +9,61 @@ const DEX_DISCOVERY_CIRCUIT_COOLDOWN_MS = Math.max(
 	(Number.parseInt(process.env.DEX_DISCOVERY_CIRCUIT_SECONDS || "60", 10) || 60) * 1000
 );
 
+const PAIR_PRICE_SHOCK_PERCENT = Math.max(
+	20,
+	Number.parseFloat(process.env.PAIR_PRICE_SHOCK_PERCENT || "50") || 50
+);
+const PAIR_REFERENCE_MAX_DEVIATION_PERCENT = Math.max(
+	5,
+	Number.parseFloat(process.env.PAIR_REFERENCE_MAX_DEVIATION_PERCENT || "20") || 20
+);
+const PAIR_REFERENCE_MIN_LIQUIDITY_USD = Math.max(
+	1000,
+	Number.parseFloat(process.env.PAIR_REFERENCE_MIN_LIQUIDITY_USD || "10000") || 10000
+);
+const MARKET_DATA_QUARANTINE_MS = Math.max(
+	60000,
+	(Number.parseInt(process.env.MARKET_DATA_QUARANTINE_MINUTES || "15", 10) || 15) * 60 * 1000
+);
+
+const tokenMarketDataQuarantine = new Map();
+
+function percentDeviation(value, reference) {
+	const current = Number(value);
+	const baseline = Number(reference);
+	if (!(current > 0) || !(baseline > 0)) return Infinity;
+	return Math.abs(current - baseline) / baseline * 100;
+}
+
+function quarantineToken(tokenAddress, reason) {
+	tokenMarketDataQuarantine.set(tokenAddress, {
+		until: Date.now() + MARKET_DATA_QUARANTINE_MS,
+		reason: String(reason || "MARKET_DATA_ANOMALY")
+	});
+}
+
+function activeTokenQuarantine(tokenAddress) {
+	const entry = tokenMarketDataQuarantine.get(tokenAddress);
+	if (!entry) return null;
+	if (Date.now() >= entry.until) {
+		tokenMarketDataQuarantine.delete(tokenAddress);
+		return null;
+	}
+	return entry;
+}
+
+function validReferencePairs(pairs, tokenAddress, excludedPairAddress) {
+	return (Array.isArray(pairs) ? pairs : [])
+		.filter(pair =>
+			pair?.chainId === "solana" &&
+			pair?.baseToken?.address === tokenAddress &&
+			pair?.pairAddress !== excludedPairAddress &&
+			Number(pair?.priceUsd) > 0 &&
+			Number(pair?.liquidity?.usd) >= PAIR_REFERENCE_MIN_LIQUIDITY_USD
+		)
+		.sort((a, b) => Number(b?.liquidity?.usd || 0) - Number(a?.liquidity?.usd || 0));
+}
+
 const health = {
 	consecutiveDiscoveryFailures: 0,
 	circuitOpenedAt: 0,
@@ -54,7 +109,11 @@ function getMarketDataHealth() {
 		lastSuccessAt: health.lastSuccessAt,
 		lastErrorAt: health.lastErrorAt,
 		lastErrorStatus: health.lastErrorStatus,
-		lastErrorMessage: health.lastErrorMessage
+		lastErrorMessage: health.lastErrorMessage,
+		activeMarketDataQuarantines: Array.from(tokenMarketDataQuarantine.values())
+			.filter(entry => Date.now() < entry.until).length,
+		pairPriceShockPercent: PAIR_PRICE_SHOCK_PERCENT,
+		pairReferenceMaxDeviationPercent: PAIR_REFERENCE_MAX_DEVIATION_PERCENT
 	};
 }
 
@@ -88,8 +147,17 @@ function pairToTokenData(pair, tokenAddress) {
 	};
 }
 
-async function getTokenData(tokenAddress, { signal, pairAddress } = {}) {
+async function getTokenData(tokenAddress, { signal, pairAddress, referencePrice } = {}) {
 	const discovery = !pairAddress;
+	const quarantine = discovery ? activeTokenQuarantine(tokenAddress) : null;
+	if (quarantine) {
+		console.log(
+			"MARKET DATA QUARANTINE | Skipping new entry data | " + tokenAddress +
+			" | reason: " + quarantine.reason +
+			" | remaining: " + Math.max(1, Math.ceil((quarantine.until - Date.now()) / 1000)) + "s"
+		);
+		return null;
+	}
 	if (discovery && circuitOpen()) {
 		console.log(
 			"DEX DISCOVERY CIRCUIT OPEN | Skipping new-token quote | cooldown " +
@@ -121,6 +189,86 @@ async function getTokenData(tokenAddress, { signal, pairAddress } = {}) {
 			if (!data) {
 				console.log("PAIR LOCK MISMATCH | " + tokenAddress + " | Pair: " + pairAddress);
 				return null;
+			}
+
+			const expectedPrice = Number(referencePrice);
+			const lockedPrice = Number(data.priceUsd);
+			const priceShock =
+				expectedPrice > 0 &&
+				lockedPrice > 0 &&
+				percentDeviation(lockedPrice, expectedPrice) >= PAIR_PRICE_SHOCK_PERCENT;
+
+			if (priceShock) {
+				console.log(
+					"PAIR PRICE SHOCK | " + (data.symbol || tokenAddress) +
+					" | locked: $" + lockedPrice +
+					" | reference: $" + expectedPrice +
+					" | deviation: " + percentDeviation(lockedPrice, expectedPrice).toFixed(2) + "%"
+				);
+
+				try {
+					const tokenUrl = "https://api.dexscreener.com/latest/dex/tokens/" + encodeURIComponent(tokenAddress);
+					const tokenResponse = await axios.get(tokenUrl, { timeout: 10000, signal });
+					const references = validReferencePairs(tokenResponse.data?.pairs, tokenAddress, pairAddress);
+					const referencePair = references[0] || null;
+					const referenceData = referencePair ? pairToTokenData(referencePair, tokenAddress) : null;
+					const alternatePrice = Number(referenceData?.priceUsd);
+
+					if (referenceData && alternatePrice > 0) {
+						const lockedVsAlternate = percentDeviation(lockedPrice, alternatePrice);
+						const alternateVsExpected = percentDeviation(alternatePrice, expectedPrice);
+
+						if (
+							lockedVsAlternate > PAIR_REFERENCE_MAX_DEVIATION_PERCENT &&
+							alternateVsExpected <= PAIR_REFERENCE_MAX_DEVIATION_PERCENT
+						) {
+							quarantineToken(tokenAddress, "PAIR_PRICE_DISAGREEMENT");
+							console.log(
+								"PAIR PRICE SANITY FALLBACK | " + (data.symbol || tokenAddress) +
+								" | rejected locked quote $" + lockedPrice +
+								" | verified alternate $" + alternatePrice +
+								" | alternate liquidity $" + Number(referenceData.liquidityUsd || 0).toFixed(2)
+							);
+							recordSuccess();
+							return {
+								...referenceData,
+								marketDataSource: "DexScreener Verified Alternate",
+								pairSanityFallbackApplied: true,
+								lockedPairAddress: pairAddress,
+								lockedPairPriceUsd: lockedPrice,
+								referencePriceUsd: expectedPrice
+							};
+						}
+
+						if (lockedVsAlternate <= PAIR_REFERENCE_MAX_DEVIATION_PERCENT) {
+							console.log(
+								"PAIR PRICE SHOCK CONFIRMED | " + (data.symbol || tokenAddress) +
+								" | locked $" + lockedPrice +
+								" | alternate $" + alternatePrice
+							);
+							recordSuccess();
+							return {
+								...data,
+								pairSanityVerified: true,
+								referencePairPriceUsd: alternatePrice
+							};
+						}
+					}
+
+					quarantineToken(tokenAddress, "UNVERIFIED_PAIR_PRICE_SHOCK");
+					console.log(
+						"PAIR PRICE SHOCK QUARANTINED | " + (data.symbol || tokenAddress) +
+						" | refusing unverified quote $" + lockedPrice
+					);
+					return null;
+				} catch (verificationError) {
+					quarantineToken(tokenAddress, "PAIR_PRICE_VERIFICATION_FAILED");
+					console.log(
+						"PAIR PRICE VERIFICATION FAILED | " + (data.symbol || tokenAddress) +
+						" | refusing shock quote | " + verificationError.message
+					);
+					return null;
+				}
 			}
 
 			recordSuccess();
