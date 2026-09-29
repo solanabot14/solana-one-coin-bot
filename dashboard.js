@@ -249,7 +249,7 @@ th,td{
   <div>
     <h1>Solana One Coin Bot</h1>
     <div class="subtitle">
-      Entry V5.9 • Risk V3.4 • Profit Lock + Runner • Paper Trading
+      Entry V3.1R • Original V3.1 Exits • 10% Compounding • Paper Trading
     </div>
   </div>
 
@@ -933,8 +933,8 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           : [];
         return json(res, {
           generatedAt: new Date().toISOString(),
-          currentStrategy: "V5.9 Paper-Testing + 1h Activity Gate + Helius Optional + Pre-Helius 52 + Age-Aware Momentum + 90% LP Lock + 90m Stagnation Exit",
-          riskEngine: "V3.4 Profit Lock + Runner",
+          currentStrategy: "V3.1R Safe Revival | Original V3.1 Entry + Modern Security + Quote Sanity + 10% Compounding",
+          riskEngine: "Original V3.1: Hard Stop + TP1 + TP2 + Trailing + Momentum Exit",
           livePosition: data.live || null,
           completedTrades,
           swarmClosedTrades: swarmExecutions,
