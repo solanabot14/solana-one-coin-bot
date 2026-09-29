@@ -36,7 +36,7 @@ function shouldStagnationExit(position, {
   momentum5m,
   now = Date.now()
 } = {}) {
-  if (!position || position.strategyVersion !== "V5.8") return false;
+  if (!position || position.strategyVersion !== "V5.9") return false;
   if (position.firstTakeProfitDone || position.secondTakeProfitDone) return false;
 
   const entryMs = Date.parse(position.entryTime);
@@ -504,7 +504,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("BOT STARTED | Entry V5.8 Paper-Testing + Helius Optional + Pre-Helius 52 + Dex Adaptive Volume + Age-Aware Momentum + 90% LP Lock + 90m Stagnation Exit + 60s Requalification | Risk V3.4 Profit Lock + Runner");
+    console.log("BOT STARTED | Entry V5.9 Paper-Testing + 1h Activity Gate + Helius Optional + Pre-Helius 52 + Age-Aware Momentum + 90% LP Lock + 90m Stagnation Exit + 60s Requalification | Risk V3.4 Profit Lock + Runner");
     positionInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
     scannerInterval = timers.setInterval(() => tick("scanner", session), SCANNER_INTERVAL_MS);
     void tick("monitor", session);

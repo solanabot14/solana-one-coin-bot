@@ -74,6 +74,7 @@ const POST_PUMP_MIN_HISTORY_MS = 4 * 60 * 1000;
 const POST_PUMP_MIN_OBSERVATIONS = 3;
 const POST_PUMP_GUARD_PERCENT = Number.parseFloat(process.env.POST_PUMP_GUARD_PERCENT || "6") || 6;
 const MIN_ENTRY_VOLUME_5M_USD = Number.parseFloat(process.env.MIN_ENTRY_VOLUME_5M_USD || "5000") || 5000;
+const MIN_ENTRY_VOLUME_1H_USD = Number.parseFloat(process.env.MIN_ENTRY_VOLUME_1H_USD || "5000") || 5000;
 const LATE_ENTRY_1H_PERCENT = Number.parseFloat(process.env.LATE_ENTRY_1H_PERCENT || "20") || 20;
 const LATE_ENTRY_MAX_5M_PERCENT = Number.parseFloat(process.env.LATE_ENTRY_MAX_5M_PERCENT || "1.5") || 1.5;
 const BIRDEYE_OHLCV_CACHE_MS = Math.max(
@@ -1152,60 +1153,23 @@ function marketDataIntegritySnapshot(data, expectedTokenAddress = null) {
 	};
 }
 
-function adaptiveVolumeRequirement(data, analysis, heliusFlow) {
-	const fallback = MIN_ENTRY_VOLUME_5M_USD;
+function hourlyActivityRequirement(data, analysis) {
 	const regime = analysis?.v5?.regime?.name || "UNKNOWN";
-	const acceleration = Number(analysis?.v5?.volumeAcceleration) || 0;
-	const buys5m = Number(data?.buys5m) || 0;
-	const sells5m = Number(data?.sells5m) || 0;
-	const transactions5m = buys5m + sells5m;
-	const buyRatio5m = transactions5m > 0 ? buys5m / transactions5m : 0;
-	const minTransactions = Number(analysis?.v5?.minTransactions || 20);
-	const dexQualityConfirmed =
-		transactions5m >= minTransactions &&
-		buyRatio5m >= 0.52;
-	const swaps = Number(heliusFlow?.swapsLast5m) || 0;
-	const uniqueMakers = Number(heliusFlow?.uniqueMakers5m) || 0;
-	const heliusConfirmed =
-		heliusFlow?.status === "OK" &&
-		swaps >= 4 &&
-		uniqueMakers >= 3;
-
-	if (!dexQualityConfirmed) {
-		return {
-			requiredVolume5m: fallback,
-			mode: "FIXED_FALLBACK",
-			regime,
-			acceleration,
-			dexQualityConfirmed: false,
-			heliusConfirmed
-		};
-	}
-
-	let requiredVolume5m = fallback;
-	if (regime === "LAUNCH") {
-		requiredVolume5m = acceleration >= 1.25 ? 1500 : 2500;
-	} else if (regime === "EARLY") {
-		requiredVolume5m = acceleration >= 1.20 ? 2000 : 3000;
-	} else if (regime === "EXPANSION") {
-		requiredVolume5m = acceleration >= 1.10 ? 3000 : 4000;
-	} else if (regime === "ESTABLISHED") {
-		requiredVolume5m = acceleration >= 1.00 ? 4000 : fallback;
-	}
+	const volume1h = Number(data?.volume1h) || 0;
 
 	return {
-		requiredVolume5m,
-		mode: requiredVolume5m < fallback ? "ADAPTIVE_DEX" : "FIXED_FALLBACK",
+		requiredVolume1h: MIN_ENTRY_VOLUME_1H_USD,
+		volume1h,
+		mode: "HOURLY_ACTIVITY",
 		regime,
-		acceleration,
-		dexQualityConfirmed: true,
-		heliusConfirmed
+		healthy: volume1h >= MIN_ENTRY_VOLUME_1H_USD
 	};
 }
 
 function entryQualitySnapshot(data, analysis = null, heliusFlow = null) {
 	const liquidity = Number(data?.liquidityUsd) || 0;
 	const volume5m = Number(data?.volume5m) || 0;
+	const volume1h = Number(data?.volume1h) || 0;
 	const buys5m = Number(data?.buys5m) || 0;
 	const sells5m = Number(data?.sells5m) || 0;
 	const transactions5m = buys5m + sells5m;
@@ -1213,22 +1177,23 @@ function entryQualitySnapshot(data, analysis = null, heliusFlow = null) {
 	const volumeLiquidity5mPercent = liquidity > 0 ? volume5m / liquidity * 100 : 0;
 	const change5m = Number(data?.priceChange5m) || 0;
 	const change1h = Number(data?.priceChange1h) || 0;
-	const adaptiveVolume = adaptiveVolumeRequirement(data, analysis, heliusFlow);
+	const hourlyActivity = hourlyActivityRequirement(data, analysis);
+	const heliusConfirmed =
+		heliusFlow?.status === "OK" &&
+		(Number(heliusFlow?.swapsLast5m) || 0) >= 4 &&
+		(Number(heliusFlow?.uniqueMakers5m) || 0) >= 3;
 
 	return {
 		volume5m,
-		volume1h: Number(data?.volume1h) || 0,
+		volume1h,
 		volumeLiquidity5mPercent,
 		transactions5m,
 		buyRatio5m,
-		requiredVolume5m: adaptiveVolume.requiredVolume5m,
-		volumeGateMode: adaptiveVolume.mode,
-		volumeRegime: adaptiveVolume.regime,
-		volumeAcceleration: adaptiveVolume.acceleration,
-		dexVolumeConfirmed: adaptiveVolume.dexQualityConfirmed,
-		heliusVolumeConfirmed: adaptiveVolume.heliusConfirmed,
-		activityHealthy:
-			volume5m >= adaptiveVolume.requiredVolume5m,
+		requiredVolume1h: hourlyActivity.requiredVolume1h,
+		volumeGateMode: hourlyActivity.mode,
+		volumeRegime: hourlyActivity.regime,
+		heliusVolumeConfirmed: heliusConfirmed,
+		activityHealthy: hourlyActivity.healthy,
 		lateMomentum:
 			change1h >= LATE_ENTRY_1H_PERCENT &&
 			change5m <= LATE_ENTRY_MAX_5M_PERCENT,
@@ -1405,11 +1370,9 @@ async function analyzeDiscoveredToken(token, signal, prefetchedData = null) {
 		volumeLiquidity5mPercent: quality.volumeLiquidity5mPercent,
 		transactions5m: quality.transactions5m,
 		buyRatio5m: quality.buyRatio5m,
-		requiredVolume5m: quality.requiredVolume5m,
+		requiredVolume1h: quality.requiredVolume1h,
 		volumeGateMode: quality.volumeGateMode,
 		volumeRegime: quality.volumeRegime,
-		volumeAcceleration: quality.volumeAcceleration,
-		dexVolumeConfirmed: quality.dexVolumeConfirmed,
 		heliusVolumeConfirmed: quality.heliusVolumeConfirmed
 	};
 	const postPump = postPumpSnapshot(token.tokenAddress, data.priceUsd);
@@ -1434,8 +1397,9 @@ async function analyzeDiscoveredToken(token, signal, prefetchedData = null) {
 	if (analysis.signal === "STRONG BUY" && !quality.activityHealthy) {
 		console.log(
 			"CURRENT ACTIVITY BLOCK | " + (data.symbol || token.tokenAddress) +
-			" | 5m volume: $" + quality.volume5m.toFixed(2) +
-			" | required: $" + quality.requiredVolume5m.toFixed(0) +
+			" | 1h volume: $" + quality.volume1h.toFixed(2) +
+			" | required 1h: $" + quality.requiredVolume1h.toFixed(0) +
+			" | 5m volume telemetry: $" + quality.volume5m.toFixed(2) +
 			" | mode: " + quality.volumeGateMode +
 			" | regime: " + quality.volumeRegime
 		);
@@ -1444,8 +1408,9 @@ async function analyzeDiscoveredToken(token, signal, prefetchedData = null) {
 			signal: "AVOID",
 			reasons: [
 				...(analysis.reasons || []),
-				"CURRENT ACTIVITY GATE: requires adaptive 5m volume >= $" + quality.requiredVolume5m.toFixed(0) +
-				"; observed $" + quality.volume5m.toFixed(2) +
+				"CURRENT ACTIVITY GATE: requires 1h volume >= $" + quality.requiredVolume1h.toFixed(0) +
+				"; observed 1h $" + quality.volume1h.toFixed(2) +
+				"; 5m volume $" + quality.volume5m.toFixed(2) + " is telemetry only" +
 				"; mode " + quality.volumeGateMode +
 				"; regime " + quality.volumeRegime
 			]
@@ -1887,7 +1852,7 @@ module.exports = {
 	entryDiagnostics,
 	buildRejectionTelemetry,
 	entryQualitySnapshot,
-	adaptiveVolumeRequirement,
+	hourlyActivityRequirement,
 	marketDataIntegritySnapshot,
 	liquiditySecuritySnapshot,
 	tokenSecuritySnapshot,
