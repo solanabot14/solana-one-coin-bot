@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const { marketDataIntegritySnapshot } = require("../scanner");
 const { pairToTokenData } = require("../dexscreener");
 
-test("blocks ZEC-like contradictory market metadata without caring about high unit price", () => {
+test("keeps ZEC-like liquidity/FDV inconsistency as warning while still blocking extreme MCAP/FDV contradiction", () => {
 	const snapshot = marketDataIntegritySnapshot({
 		tokenAddress: "TOKEN",
 		pairAddress: "PAIR",
@@ -16,7 +16,8 @@ test("blocks ZEC-like contradictory market metadata without caring about high un
 
 	assert.equal(snapshot.ok, false);
 	assert.ok(snapshot.reasons.includes("EXTREME_MCAP_FDV_RATIO"));
-	assert.ok(snapshot.reasons.includes("LIQUIDITY_FDV_INCONSISTENT"));
+	assert.ok(snapshot.warnings.includes("LIQUIDITY_FDV_INCONSISTENT"));
+	assert.ok(!snapshot.reasons.includes("LIQUIDITY_FDV_INCONSISTENT"));
 });
 
 test("does not reject a legitimate expensive token solely because its unit price is high", () => {
