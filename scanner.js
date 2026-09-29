@@ -1156,6 +1156,14 @@ function adaptiveVolumeRequirement(data, analysis, heliusFlow) {
 	const fallback = MIN_ENTRY_VOLUME_5M_USD;
 	const regime = analysis?.v5?.regime?.name || "UNKNOWN";
 	const acceleration = Number(analysis?.v5?.volumeAcceleration) || 0;
+	const buys5m = Number(data?.buys5m) || 0;
+	const sells5m = Number(data?.sells5m) || 0;
+	const transactions5m = buys5m + sells5m;
+	const buyRatio5m = transactions5m > 0 ? buys5m / transactions5m : 0;
+	const minTransactions = Number(analysis?.v5?.minTransactions || 20);
+	const dexQualityConfirmed =
+		transactions5m >= minTransactions &&
+		buyRatio5m >= 0.52;
 	const swaps = Number(heliusFlow?.swapsLast5m) || 0;
 	const uniqueMakers = Number(heliusFlow?.uniqueMakers5m) || 0;
 	const heliusConfirmed =
@@ -1163,13 +1171,14 @@ function adaptiveVolumeRequirement(data, analysis, heliusFlow) {
 		swaps >= 4 &&
 		uniqueMakers >= 3;
 
-	if (!heliusConfirmed) {
+	if (!dexQualityConfirmed) {
 		return {
 			requiredVolume5m: fallback,
 			mode: "FIXED_FALLBACK",
 			regime,
 			acceleration,
-			heliusConfirmed: false
+			dexQualityConfirmed: false,
+			heliusConfirmed
 		};
 	}
 
@@ -1186,10 +1195,11 @@ function adaptiveVolumeRequirement(data, analysis, heliusFlow) {
 
 	return {
 		requiredVolume5m,
-		mode: requiredVolume5m < fallback ? "ADAPTIVE" : "FIXED_FALLBACK",
+		mode: requiredVolume5m < fallback ? "ADAPTIVE_DEX" : "FIXED_FALLBACK",
 		regime,
 		acceleration,
-		heliusConfirmed: true
+		dexQualityConfirmed: true,
+		heliusConfirmed
 	};
 }
 
@@ -1215,6 +1225,7 @@ function entryQualitySnapshot(data, analysis = null, heliusFlow = null) {
 		volumeGateMode: adaptiveVolume.mode,
 		volumeRegime: adaptiveVolume.regime,
 		volumeAcceleration: adaptiveVolume.acceleration,
+		dexVolumeConfirmed: adaptiveVolume.dexQualityConfirmed,
 		heliusVolumeConfirmed: adaptiveVolume.heliusConfirmed,
 		activityHealthy:
 			volume5m >= adaptiveVolume.requiredVolume5m,
@@ -1398,6 +1409,7 @@ async function analyzeDiscoveredToken(token, signal, prefetchedData = null) {
 		volumeGateMode: quality.volumeGateMode,
 		volumeRegime: quality.volumeRegime,
 		volumeAcceleration: quality.volumeAcceleration,
+		dexVolumeConfirmed: quality.dexVolumeConfirmed,
 		heliusVolumeConfirmed: quality.heliusVolumeConfirmed
 	};
 	const postPump = postPumpSnapshot(token.tokenAddress, data.priceUsd);
