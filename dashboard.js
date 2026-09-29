@@ -933,7 +933,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           : [];
         return json(res, {
           generatedAt: new Date().toISOString(),
-          currentStrategy: "V4.8 Relaxed 5m + 100% LP Lock + DexActivity Top20 + Birdeye Top20",
+          currentStrategy: "V4.9 Relaxed 5m + 90% LP Lock + DexActivity Top20 + Birdeye Top20",
           riskEngine: "V3.4 Profit Lock + Runner",
           livePosition: data.live || null,
           completedTrades,
