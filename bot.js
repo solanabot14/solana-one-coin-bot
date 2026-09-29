@@ -25,6 +25,29 @@ const MOMENTUM_EXIT_STRONG_LOSS = -5;
 const MOMENTUM_EXIT_STRONG_5M = -1;
 const MOMENTUM_EXIT_BUY_RATIO = 0.45;
 const MOMENTUM_EXIT_MIN_TRANSACTIONS = 10;
+const STAGNATION_EXIT_MS = 90 * 60 * 1000;
+const STAGNATION_MAX_PEAK_PERCENT = 10;
+const STAGNATION_MAX_CURRENT_PROFIT_PERCENT = 5;
+const STAGNATION_MAX_5M_MOMENTUM_PERCENT = 0.5;
+
+function shouldStagnationExit(position, {
+  profitPercent,
+  highestProfitPercent,
+  momentum5m,
+  now = Date.now()
+} = {}) {
+  if (!position || position.strategyVersion !== "V5.8") return false;
+  if (position.firstTakeProfitDone || position.secondTakeProfitDone) return false;
+
+  const entryMs = Date.parse(position.entryTime);
+  if (!Number.isFinite(entryMs) || now - entryMs < STAGNATION_EXIT_MS) return false;
+
+  return (
+    Number(highestProfitPercent) < STAGNATION_MAX_PEAK_PERCENT &&
+    Number(profitPercent) < STAGNATION_MAX_CURRENT_PROFIT_PERCENT &&
+    Number(momentum5m) <= STAGNATION_MAX_5M_MOMENTUM_PERCENT
+  );
+}
 
 
 function recentTokenStats(history = [], now = Date.now()) {
@@ -404,6 +427,22 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     const momentumExitB = profitPercent <= MOMENTUM_EXIT_STRONG_LOSS && momentum5m <= MOMENTUM_EXIT_STRONG_5M;
     if (momentumExitA || momentumExitB) return void exit("MOMENTUM EXIT");
 
+    if (shouldStagnationExit(position, {
+      profitPercent,
+      highestProfitPercent,
+      momentum5m
+    })) {
+      const heldMinutes = Math.max(0, (Date.now() - Date.parse(position.entryTime)) / 60000);
+      console.log(
+        "STAGNATION EXIT | " + position.symbol +
+        " | held: " + heldMinutes.toFixed(1) + "m" +
+        " | P/L: " + profitPercent.toFixed(2) + "%" +
+        " | peak: " + highestProfitPercent.toFixed(2) + "%" +
+        " | 5m: " + momentum5m.toFixed(2) + "%"
+      );
+      return void exit("STAGNATION EXIT");
+    }
+
     const profitLockEligible =
       position.riskManagementVersion === "V3.4" ||
       position.strategyVersion === "V3.3" ||
@@ -465,7 +504,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("BOT STARTED | Entry V5.7 Helius Optional + Pre-Helius 52 + Dex Adaptive Volume + Age-Aware Momentum + 90% LP Lock + DexActivity + 60s Requalification | Risk V3.4 Profit Lock + Runner");
+    console.log("BOT STARTED | Entry V5.8 Paper-Testing + Helius Optional + Pre-Helius 52 + Dex Adaptive Volume + Age-Aware Momentum + 90% LP Lock + 90m Stagnation Exit + 60s Requalification | Risk V3.4 Profit Lock + Runner");
     positionInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
     scannerInterval = timers.setInterval(() => tick("scanner", session), SCANNER_INTERVAL_MS);
     void tick("monitor", session);
@@ -488,5 +527,6 @@ module.exports = {
   recentTokenStats,
   exceptionalRunnerReentry,
   diversityDecision,
+  shouldStagnationExit,
   ...createBot()
 };
