@@ -289,8 +289,12 @@ async function discoverCandidatesR3({ signal } = {}) {
     const history = remember(token.tokenAddress, data);
     const analysis = analyzeEarlyRunner(history, data);
 
+    const isEntrySignal =
+      analysis.signal === "EARLY RUNNER" ||
+      analysis.signal === "PROVISIONAL EARLY RUNNER";
+
     let security = { ok: true, reasons: [], lpLockedPct: null };
-    if (analysis.signal === "EARLY RUNNER") {
+    if (isEntrySignal) {
       const integrity = marketDataIntegritySnapshot(data, token.tokenAddress);
       if (!integrity.ok) {
         security = { ok: false, reasons: integrity.reasons, lpLockedPct: null };
@@ -314,12 +318,12 @@ async function discoverCandidatesR3({ signal } = {}) {
     const resetOk = resetEligible(token.tokenAddress, history);
     const reentryStats = recentTokenStats(token.tokenAddress);
     const signalName =
-      analysis.signal === "EARLY RUNNER" && !security.ok ? "SECURITY VETO" :
-      analysis.signal === "EARLY RUNNER" &&
+      isEntrySignal && !security.ok ? "SECURITY VETO" :
+      isEntrySignal &&
         (reentryStats.entries >= MAX_ENTRIES_PER_TOKEN_24H ||
          reentryStats.losingFullExits >= MAX_LOSING_EXITS_PER_TOKEN_24H)
         ? "REENTRY BLOCK"
-        : analysis.signal === "EARLY RUNNER" && !resetOk ? "RESET WAIT" :
+        : isEntrySignal && !resetOk ? "RESET WAIT" :
       analysis.signal;
 
     console.log(
@@ -343,7 +347,9 @@ async function discoverCandidatesR3({ signal } = {}) {
     strategy: "R3-EARLY-RUNNER",
     uniqueSolanaCandidates: unique.size,
     candidatesAfterSafetyFilters: candidates.length,
-    strongBuys: candidates.filter(x => x.signal === "EARLY RUNNER").length,
+    strongBuys: candidates.filter(
+      x => x.signal === "EARLY RUNNER" || x.signal === "PROVISIONAL EARLY RUNNER"
+    ).length,
     topCandidates: candidates.slice(0, 10).map(x => ({
       symbol: x.symbol,
       tokenAddress: x.tokenAddress,
@@ -353,8 +359,10 @@ async function discoverCandidatesR3({ signal } = {}) {
   };
 
   candidates.sort((a, b) => {
-    const aEntry = a.signal === "EARLY RUNNER" ? 1 : 0;
-    const bEntry = b.signal === "EARLY RUNNER" ? 1 : 0;
+    const aEntry =
+      a.signal === "EARLY RUNNER" || a.signal === "PROVISIONAL EARLY RUNNER" ? 1 : 0;
+    const bEntry =
+      b.signal === "EARLY RUNNER" || b.signal === "PROVISIONAL EARLY RUNNER" ? 1 : 0;
     if (aEntry !== bEntry) return bEntry - aEntry;
     return b.score - a.score;
   });
