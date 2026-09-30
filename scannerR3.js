@@ -20,6 +20,14 @@ const HISTORY_TTL_MS = 45 * 60 * 1000;
 const RESET_MIN_MS = 10 * 60 * 1000;
 const histories = new Map();
 const exhausted = new Map();
+let lastDiscoveryTelemetry = {
+  updatedAt: null,
+  strategy: "R3-EARLY-RUNNER",
+  uniqueSolanaCandidates: 0,
+  candidatesAfterSafetyFilters: 0,
+  strongBuys: 0,
+  topCandidates: []
+};
 
 function snapshot(data) {
   return {
@@ -141,6 +149,21 @@ async function discoverCandidatesR3({ signal } = {}) {
     });
   }
 
+  const updatedAt = new Date().toISOString();
+  lastDiscoveryTelemetry = {
+    updatedAt,
+    strategy: "R3-EARLY-RUNNER",
+    uniqueSolanaCandidates: unique.size,
+    candidatesAfterSafetyFilters: candidates.length,
+    strongBuys: candidates.filter(x => x.signal === "EARLY RUNNER").length,
+    topCandidates: candidates.slice(0, 10).map(x => ({
+      symbol: x.symbol,
+      tokenAddress: x.tokenAddress,
+      score: x.score,
+      signal: x.signal
+    }))
+  };
+
   candidates.sort((a, b) => {
     const aEntry = a.signal === "EARLY RUNNER" ? 1 : 0;
     const bEntry = b.signal === "EARLY RUNNER" ? 1 : 0;
@@ -153,6 +176,8 @@ async function discoverCandidatesR3({ signal } = {}) {
 module.exports = {
   discoverCandidatesR3,
   markExhausted,
+  getDiscoveryTelemetry: () => structuredClone(lastDiscoveryTelemetry),
+  getCachedCandidates: () => ({ updatedAt: lastDiscoveryTelemetry.updatedAt, candidates: [] }),
   getHistory: tokenAddress => structuredClone(histories.get(tokenAddress) || []),
   getExhaustedState: tokenAddress => structuredClone(exhausted.get(tokenAddress) || null)
 };
