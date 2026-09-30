@@ -11,7 +11,7 @@ const CONFIG = Object.freeze({
   minTransactions5m: 20,
   minBuyRatio: 0.52,
   maxBuyRatio: 0.80,
-  minChange5m: 0.25,
+  minChange5m: 0.10,
   maxChange5m: 4,
   maxChange1h: 40,
   minLiquidityGrowthPct: 5,
