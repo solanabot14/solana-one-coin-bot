@@ -4,7 +4,7 @@ const trader = require("./paperTraderR3");
 const telegram = require("./telegram");
 
 const POSITION_MONITOR_MS = 2000;
-const SCANNER_INTERVAL_MS = 120000;
+const SCANNER_INTERVAL_MS = 60000;
 const HARD_STOP_PERCENT = -10;
 const TP1_PERCENT = 15;
 const TP1_SELL_PERCENT = 15;
