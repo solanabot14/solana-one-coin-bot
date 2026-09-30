@@ -7,7 +7,7 @@
 const CONFIG = Object.freeze({
   minObservations: 3,
   minEntryScore: 10,
-  minVolume5mToEnter: 3000,
+  minVolume5mToEnter: 2000,
   minTransactions5m: 20,
   minBuyRatio: 0.52,
   maxBuyRatio: 0.80,
