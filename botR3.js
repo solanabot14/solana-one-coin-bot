@@ -59,7 +59,9 @@ function createBotR3({
     if (getPortfolio().position) return;
     const candidates = await discoverCandidates({ signal: session.signal });
     if (!isActive(session) || getPortfolio().position) return;
-    const coin = candidates.find(x => x.signal === "EARLY RUNNER");
+    const coin = candidates.find(
+      x => x.signal === "EARLY RUNNER" || x.signal === "PROVISIONAL EARLY RUNNER"
+    );
     if (!coin) {
       console.log("R3 | No confirmed EARLY RUNNER.");
       return;
