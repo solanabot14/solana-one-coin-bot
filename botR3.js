@@ -11,6 +11,9 @@ const TP1_SELL_PERCENT = 15;
 const TP2_PERCENT = 30;
 const TP2_SELL_PERCENT = 35;
 const TRAILING_STOP_PERCENT = 8;
+const POST_TP2_HIGH_MFE_TRIGGER = 40;
+const POST_TP2_HIGH_MFE_MIN_PNL = 30;
+const POST_TP2_HIGH_MFE_SELL_PERCENT = 50;
 const PROFIT_LOCK_START_MFE = 10;
 const PROFIT_LOCK_DISTANCE = 8;
 
@@ -223,6 +226,26 @@ function createBotR3({
     if (pnl >= TP2_PERCENT && position.firstTakeProfitDone && !position.secondTakeProfitDone) {
       return void exit("TAKE PROFIT 2", TP2_SELL_PERCENT, "secondTakeProfitDone");
     }
+
+    // Post-TP2 High-MFE Protection:
+    // Once TP2 is already secured, a large runner can still gap violently before
+    // the normal trailing stop gets a usable price. When the runner reaches a
+    // very large gain, bank half of the remaining position once and leave the
+    // rest under the existing trailing stop. This does not affect entry logic,
+    // TP1, TP2, profit lock, or any pre-TP2 behavior.
+    if (
+      position.secondTakeProfitDone &&
+      !position.postTp2HighMfeProtectDone &&
+      mfe >= POST_TP2_HIGH_MFE_TRIGGER &&
+      pnl >= POST_TP2_HIGH_MFE_MIN_PNL
+    ) {
+      return void exit(
+        "POST-TP2 HIGH-MFE PROTECT",
+        POST_TP2_HIGH_MFE_SELL_PERCENT,
+        "postTp2HighMfeProtectDone"
+      );
+    }
+
     if (position.secondTakeProfitDone && dropHigh >= TRAILING_STOP_PERCENT) {
       return void exit("TRAILING STOP");
     }
