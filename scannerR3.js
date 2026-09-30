@@ -15,7 +15,6 @@ const DISCOVERY_SOURCES = [
 ];
 
 const WATCH_MIN_LIQUIDITY = 25000;
-const WATCH_MIN_VOLUME24H = 50000;
 const HISTORY_TTL_MS = 45 * 60 * 1000;
 const RESET_MIN_MS = 10 * 60 * 1000;
 const histories = new Map();
@@ -100,8 +99,10 @@ async function discoverCandidatesR3({ signal } = {}) {
     if (!data) continue;
 
     const liquidity = Number(data.liquidityUsd) || 0;
-    const volume24h = Number(data.volume24h) || 0;
-    if (liquidity < WATCH_MIN_LIQUIDITY || volume24h < WATCH_MIN_VOLUME24H) continue;
+    // R3 intentionally does not use 24h volume as a discovery gate.
+    // Young runners are allowed into WATCH based on liquidity; live 5m/1h
+    // acceleration decides whether they can become an entry.
+    if (liquidity < WATCH_MIN_LIQUIDITY) continue;
 
     const history = remember(token.tokenAddress, data);
     const analysis = analyzeEarlyRunner(history, data);
@@ -135,7 +136,7 @@ async function discoverCandidatesR3({ signal } = {}) {
       analysis.signal;
 
     console.log(
-      `R3 WATCH | ${data.symbol} | ${signalName} | Score ${analysis.score} | Liq $${liquidity.toFixed(0)} | Vol5m $${Number(data.volume5m || 0).toFixed(0)} | LiqΔ ${analysis.metrics.liquidityGrowthPct?.toFixed?.(1) ?? "n/a"}% | VolΔ ${analysis.metrics.volume24hGrowthPct?.toFixed?.(1) ?? "n/a"}%`
+      `R3 WATCH | ${data.symbol} | ${signalName} | Score ${analysis.score} | Liq $${liquidity.toFixed(0)} | Vol5m $${Number(data.volume5m || 0).toFixed(0)} | LiqΔ ${analysis.metrics.liquidityGrowthPct?.toFixed?.(1) ?? "n/a"}% | Vol5mΔ ${analysis.metrics.volume5mGrowthPct?.toFixed?.(1) ?? "n/a"}%`
     );
 
     candidates.push({
