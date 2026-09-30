@@ -14,6 +14,19 @@ const TRAILING_STOP_PERCENT = 8;
 const PROFIT_LOCK_START_MFE = 10;
 const PROFIT_LOCK_DISTANCE = 8;
 
+// Early loss / giveback controls.
+// These do not change entry selection; they reduce the damage from trades
+// that either fail immediately or give back a meaningful early gain.
+const FAILED_LAUNCH_MINUTES = 1;
+const FAILED_LAUNCH_MAX_MFE = 1.5;
+const FAILED_LAUNCH_PNL = -3;
+const FAILED_LAUNCH_5M = 0.5;
+
+const GIVEBACK_MIN_MFE = 4;
+const GIVEBACK_MAX_MFE = 10;
+const GIVEBACK_MAX_PNL = 0.5;
+const GIVEBACK_MIN_DROP_FROM_HIGH = 4;
+
 // R3-specific early failure protection.
 const PROFIT_PROTECT_MFE = 6;
 const PROFIT_PROTECT_DROP = 5;
@@ -146,6 +159,31 @@ function createBotR3({
 
     if (profitLockActive && pnl <= protectedFloorPercent) {
       return void exit("PROFIT LOCK");
+    }
+
+    // Failed Launch Exit:
+    // If the trade never establishes a real move and is already down ~3%
+    // after at least one minute while 5m momentum has faded, get out before
+    // the -10% emergency stop becomes the only protection.
+    if (
+      ageMinutes >= FAILED_LAUNCH_MINUTES &&
+      mfe < FAILED_LAUNCH_MAX_MFE &&
+      pnl <= FAILED_LAUNCH_PNL &&
+      momentum5m <= FAILED_LAUNCH_5M
+    ) {
+      return void exit("FAILED LAUNCH");
+    }
+
+    // Early Giveback Protection:
+    // Before the +10% profit lock is active, do not allow a +4% to +10% move
+    // to round-trip all the way back to roughly breakeven.
+    if (
+      mfe >= GIVEBACK_MIN_MFE &&
+      mfe < GIVEBACK_MAX_MFE &&
+      dropHigh >= GIVEBACK_MIN_DROP_FROM_HIGH &&
+      pnl <= GIVEBACK_MAX_PNL
+    ) {
+      return void exit("EARLY GIVEBACK PROTECT");
     }
 
     const enoughActivity = tx >= MIN_EXIT_TX;
