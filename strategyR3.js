@@ -74,7 +74,7 @@ function analyzeEarlyRunner(history, data, config = CONFIG) {
         buyRatio <= config.maxBuyRatio &&
         change5m >= config.minChange5m &&
         change5m < config.maxChange5m &&
-        change1h > 0 &&
+        change1h >= -10 &&
         change1h <= config.maxChange1h &&
         liquidityDrawdownPct <= config.maxLiquidityDrawdownPct;
 
@@ -236,7 +236,7 @@ function analyzeEarlyRunner(history, data, config = CONFIG) {
     liveAccelerationConfirmed &&
     change5m >= config.minChange5m &&
     change5m < config.maxChange5m &&
-    change1h > 0 &&
+    change1h >= -10 &&
     change1h <= config.maxChange1h &&
     liquidityDrawdownPct <= config.maxLiquidityDrawdownPct;
 
