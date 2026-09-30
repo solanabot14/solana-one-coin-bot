@@ -17,7 +17,10 @@ const CONFIG = Object.freeze({
   minLiquidityGrowthPct: 5,
   minVolume5mGrowthPct: 25,
   supportVolume1hGrowthPct: 5,
-  maxLiquidityDrawdownPct: 12
+  maxLiquidityDrawdownPct: 12,
+  provisionalMinVolume5mGrowthPct: 100,
+  provisionalMinLiquidityGrowthPct: 10,
+  provisionalMinVolume5m: 10000
 });
 
 function pctChange(current, previous) {
@@ -48,6 +51,55 @@ function analyzeEarlyRunner(history, data, config = CONFIG) {
   const buyRatio = ratio(buys, tx);
 
   if (observations.length < config.minObservations) {
+    if (observations.length === 2) {
+      const first = observations[0];
+      const maxLiquidity = Math.max(
+        ...observations.map(x => Number(x.liquidityUsd) || 0),
+        liquidity
+      );
+      const liquidityGrowthPct = pctChange(liquidity, first.liquidityUsd);
+      const volume5mGrowthPct = pctChange(volume5m, first.volume5m);
+      const liquidityDrawdownPct = maxLiquidity > 0
+        ? ((maxLiquidity - liquidity) / maxLiquidity) * 100
+        : 0;
+
+      const provisionalReady =
+        volume5mGrowthPct !== null &&
+        volume5mGrowthPct >= config.provisionalMinVolume5mGrowthPct &&
+        liquidityGrowthPct !== null &&
+        liquidityGrowthPct >= config.provisionalMinLiquidityGrowthPct &&
+        volume5m >= config.provisionalMinVolume5m &&
+        tx >= config.minTransactions5m &&
+        buyRatio >= config.minBuyRatio &&
+        buyRatio <= config.maxBuyRatio &&
+        change5m >= config.minChange5m &&
+        change5m < config.maxChange5m &&
+        change1h > 0 &&
+        change1h <= config.maxChange1h &&
+        liquidityDrawdownPct <= config.maxLiquidityDrawdownPct;
+
+      return {
+        signal: provisionalReady ? "PROVISIONAL EARLY RUNNER" : "WATCH",
+        score: provisionalReady ? config.minEntryScore : 0,
+        reasons: provisionalReady
+          ? [
+              "Exceptional second-observation acceleration",
+              "5m volume doubled or better",
+              "Liquidity expanding strongly",
+              "Price remains below anti-chase ceiling"
+            ]
+          : ["Building short-term history"],
+        metrics: {
+          observations: observations.length,
+          liquidityGrowthPct,
+          volume5mGrowthPct,
+          liquidityDrawdownPct,
+          buyRatio,
+          tx
+        }
+      };
+    }
+
     return {
       signal: "WATCH",
       score: 0,
