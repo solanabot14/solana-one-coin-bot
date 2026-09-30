@@ -95,6 +95,7 @@ function createBotR3({
         scanner.markExhausted(position.tokenAddress, {
           reason: "MANUAL EXIT REQUESTED",
           highestPrice: Number(position.highestPrice || position.entryPrice) || null,
+          pnlPercent: Number(manualResult.trade?.pnlPercent),
           source: "R3"
         });
       }
@@ -127,7 +128,8 @@ function createBotR3({
       if (result.success && percent === 100) {
         scanner.markExhausted(position.tokenAddress, {
           reason,
-          highestPrice: high
+          highestPrice: high,
+          pnlPercent: Number(result.trade?.pnlPercent)
         });
       }
       if (result.success) void notifier.notifyTrade(reason, result.trade);
