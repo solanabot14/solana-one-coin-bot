@@ -10,6 +10,8 @@ const TP1_SELL_PERCENT = 15;
 const TP2_PERCENT = 30;
 const TP2_SELL_PERCENT = 35;
 const TRAILING_STOP_PERCENT = 8;
+const PROFIT_LOCK_START_MFE = 10;
+const PROFIT_LOCK_DISTANCE = 8;
 
 // R3-specific early failure protection.
 const PROFIT_PROTECT_MFE = 6;
@@ -114,6 +116,16 @@ function createBotR3({
     };
 
     if (pnl <= HARD_STOP_PERCENT) return void exit("HARD STOP");
+
+    // Progressive profit lock: once MFE reaches +10%, protect MFE - 8%.
+    // The floor ratchets upward automatically because highestPrice is persistent.
+    // Example: MFE 10% -> +2% floor; 12.44% -> +4.44%; 20% -> +12%.
+    // After TP2 the dedicated runner trailing logic takes over.
+    const profitLockActive = !position.secondTakeProfitDone && mfe >= PROFIT_LOCK_START_MFE;
+    const protectedFloorPercent = profitLockActive ? mfe - PROFIT_LOCK_DISTANCE : null;
+    if (profitLockActive && pnl <= protectedFloorPercent) {
+      return void exit("PROFIT LOCK");
+    }
 
     const enoughActivity = tx >= MIN_EXIT_TX;
     const structureBroken =
