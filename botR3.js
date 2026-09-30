@@ -33,6 +33,7 @@ function createBotR3({
   let monitorInterval = null;
   let scannerBusy = false;
   let monitorBusy = false;
+  let lastError = null;
 
   const isActive = session => activeSession === session && !session.signal.aborted;
 
@@ -138,6 +139,7 @@ function createBotR3({
     try {
       await (kind === "scanner" ? runScanner(session) : monitorPosition(session));
     } catch (error) {
+      lastError = error.message;
       console.error("R3 paused:", error.message);
       stopBot();
     } finally {
@@ -148,6 +150,7 @@ function createBotR3({
   function startBot() {
     if (activeSession) return;
     getPortfolio();
+    lastError = null;
     const session = new AbortController();
     activeSession = session;
     console.log("R3 EARLY RUNNER STARTED | paper-only | separate account | V3.1R2 untouched");
@@ -167,7 +170,12 @@ function createBotR3({
     console.log("R3 EARLY RUNNER STOPPED");
   }
 
-  return { startBot, stopBot, getBotStatus: () => activeSession !== null };
+  return {
+    startBot,
+    stopBot,
+    getBotStatus: () => activeSession !== null,
+    getLastError: () => lastError
+  };
 }
 
 module.exports = { createBotR3, ...createBotR3() };
