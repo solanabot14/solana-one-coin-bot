@@ -444,8 +444,24 @@ async function discoverCandidatesR3({ signal } = {}) {
         : isEntrySignal && !resetOk ? "RESET WAIT" :
       analysis.signal;
 
+    const tx = Number(data.buys5m || 0) + Number(data.sells5m || 0);
+    const buyRatio = tx > 0 ? Number(data.buys5m || 0) / tx : 0;
+    const blockers = [];
+    if (analysis.signal === "WATCH" && Number(analysis.score) >= 10) {
+      if (!(Number(analysis.metrics.volume5mGrowthPct) >= 25)) blockers.push("VOL_GROWTH");
+      if (!(Number(data.volume5m) >= 3000)) blockers.push("VOL5M");
+      if (!(tx >= 20)) blockers.push("TX");
+      if (!(buyRatio >= 0.52 && buyRatio <= 0.80)) blockers.push("BUY_RATIO");
+      if (!(Number(data.priceChange5m) >= 0.10 && Number(data.priceChange5m) < 4)) blockers.push("PRICE_5M");
+      if (!(Number(data.priceChange1h) > 0 && Number(data.priceChange1h) <= 40)) blockers.push("PRICE_1H");
+      if (!(Number(analysis.metrics.liquidityDrawdownPct) <= 12)) blockers.push("LIQ_DRAWDOWN");
+    }
+
     console.log(
-      `R3 WATCH | ${data.symbol} | ${signalName} | Score ${analysis.score} | Liq $${liquidity.toFixed(0)} | Vol5m $${Number(data.volume5m || 0).toFixed(0)} | LiqΔ ${analysis.metrics.liquidityGrowthPct?.toFixed?.(1) ?? "n/a"}% | Vol5mΔ ${analysis.metrics.volume5mGrowthPct?.toFixed?.(1) ?? "n/a"}%`
+      `R3 WATCH | ${data.symbol} | ${signalName} | Score ${analysis.score} | Liq ${liquidity.toFixed(0)} | Vol5m ${Number(data.volume5m || 0).toFixed(0)} | LiqΔ ${analysis.metrics.liquidityGrowthPct?.toFixed?.(1) ?? "n/a"}% | Vol5mΔ ${analysis.metrics.volume5mGrowthPct?.toFixed?.(1) ?? "n/a"}%` +
+      (blockers.length
+        ? ` | BLOCKED ${blockers.join(",")} | 5m ${Number(data.priceChange5m || 0).toFixed(2)}% | 1h ${Number(data.priceChange1h || 0).toFixed(2)}% | Tx ${tx} | Buy ${(buyRatio * 100).toFixed(1)}%`
+        : "")
     );
 
     candidates.push({
