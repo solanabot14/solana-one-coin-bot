@@ -2,11 +2,11 @@
 // Experimental paper-only strategy. V3.1R2 remains untouched on main.
 //
 // R3 focuses on what is happening NOW:
-// short-term volume acceleration + liquidity expansion + buyer participation.
-// 24h volume is retained only as context/telemetry, never as an entry gate.
+// live 5m acceleration + buyer participation + healthy liquidity structure.
+// 24h volume and volume/liquidity ratio are telemetry only, never hard entry gates.
 const CONFIG = Object.freeze({
   minObservations: 3,
-  minLiquidityToEnter: 50000,
+  minEntryScore: 10,
   minVolume5mToEnter: 3000,
   minTransactions5m: 20,
   minBuyRatio: 0.52,
@@ -17,7 +17,6 @@ const CONFIG = Object.freeze({
   minLiquidityGrowthPct: 5,
   minVolume5mGrowthPct: 25,
   supportVolume1hGrowthPct: 5,
-  minVolume5mLiquidityPct: 2.5,
   maxLiquidityDrawdownPct: 12
 });
 
@@ -67,18 +66,21 @@ function analyzeEarlyRunner(history, data, config = CONFIG) {
   const liquidityDrawdownPct = maxLiquidity > 0
     ? ((maxLiquidity - liquidity) / maxLiquidity) * 100
     : 0;
-  const volume5mLiquidityPct = liquidity > 0 ? (volume5m / liquidity) * 100 : 0;
+  const volume5mLiquidityPct = liquidity > 0 ? (volume5m / liquidity) * 100 : 0; // telemetry only
 
   const reasons = [];
   let score = 0;
 
+  // Liquidity growth is helpful, but no longer mandatory. This avoids waiting
+  // for an arbitrary dollar-liquidity threshold before recognizing a runner.
   if (liquidityGrowthPct !== null && liquidityGrowthPct >= config.minLiquidityGrowthPct) {
     score += 3;
     reasons.push("Liquidity expanding across scans");
   } else {
-    reasons.push("Liquidity not accelerating enough");
+    reasons.push("Liquidity stable / not yet expanding");
   }
 
+  // Live acceleration is the primary R3 signal.
   if (volume5mGrowthPct !== null && volume5mGrowthPct >= config.minVolume5mGrowthPct) {
     score += 4;
     reasons.push("5m volume accelerating across scans");
@@ -91,11 +93,11 @@ function analyzeEarlyRunner(history, data, config = CONFIG) {
     reasons.push("1h activity confirms short-term expansion");
   }
 
-  if (volume5mLiquidityPct >= config.minVolume5mLiquidityPct) {
+  if (volume5m >= config.minVolume5mToEnter) {
     score += 2;
-    reasons.push("Current 5m activity is meaningful versus liquidity");
+    reasons.push("Current 5m volume is active");
   } else {
-    reasons.push("Current 5m activity is weak versus liquidity");
+    reasons.push("Current 5m volume too low");
   }
 
   if (tx >= config.minTransactions5m) {
@@ -138,6 +140,8 @@ function analyzeEarlyRunner(history, data, config = CONFIG) {
     tx
   };
 
+  // Liquidity is judged structurally: a sharp drain is a veto. There is no
+  // absolute $50K entry floor.
   if (liquidityDrawdownPct > config.maxLiquidityDrawdownPct) {
     return {
       signal: "AVOID",
@@ -147,25 +151,21 @@ function analyzeEarlyRunner(history, data, config = CONFIG) {
     };
   }
 
-  const strongLiveExpansion =
-    liquidityGrowthPct !== null &&
-    liquidityGrowthPct >= config.minLiquidityGrowthPct &&
+  const liveAccelerationConfirmed =
     volume5mGrowthPct !== null &&
     volume5mGrowthPct >= config.minVolume5mGrowthPct &&
     volume5m >= config.minVolume5mToEnter &&
-    volume5mLiquidityPct >= config.minVolume5mLiquidityPct &&
     tx >= config.minTransactions5m &&
     buyRatio >= config.minBuyRatio &&
     buyRatio <= config.maxBuyRatio;
 
-  // Do not erase a strong runner just because price is already hot.
-  // Keep tracking it and allow a later entry only after it cools back under
-  // the normal non-chase threshold while the live expansion still exists.
-  if ((shortTermExtended || hourExtended) && strongLiveExpansion) {
+  // A strong runner that is already hot stays under observation rather than
+  // being discarded. It must cool below anti-chase before an entry is allowed.
+  if ((shortTermExtended || hourExtended) && liveAccelerationConfirmed) {
     return {
       signal: "EXTENDED-WATCH",
       score,
-      reasons: [...reasons, "Strong live expansion detected; waiting for a non-chasing reset"],
+      reasons: [...reasons, "Strong live acceleration detected; waiting for a non-chasing reset"],
       metrics
     };
   }
@@ -174,26 +174,18 @@ function analyzeEarlyRunner(history, data, config = CONFIG) {
     return {
       signal: "EXTENDED",
       score,
-      reasons: [...reasons, "Move is extended without enough live expansion for a runner watch"],
+      reasons: [...reasons, "Move is extended without enough live acceleration for runner watch"],
       metrics
     };
   }
 
   const entryReady =
-    liquidity >= config.minLiquidityToEnter &&
-    volume5m >= config.minVolume5mToEnter &&
-    tx >= config.minTransactions5m &&
-    buyRatio >= config.minBuyRatio &&
-    buyRatio <= config.maxBuyRatio &&
+    score >= config.minEntryScore &&
+    liveAccelerationConfirmed &&
     change5m >= config.minChange5m &&
     change5m < config.maxChange5m &&
     change1h > 0 &&
     change1h <= config.maxChange1h &&
-    liquidityGrowthPct !== null &&
-    liquidityGrowthPct >= config.minLiquidityGrowthPct &&
-    volume5mGrowthPct !== null &&
-    volume5mGrowthPct >= config.minVolume5mGrowthPct &&
-    volume5mLiquidityPct >= config.minVolume5mLiquidityPct &&
     liquidityDrawdownPct <= config.maxLiquidityDrawdownPct;
 
   return {
