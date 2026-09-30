@@ -22,6 +22,11 @@ const RESET_MIN_MS = 10 * 60 * 1000;
 const REENTRY_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 const MAX_ENTRIES_PER_TOKEN_24H = 2;
 const MAX_LOSING_EXITS_PER_TOKEN_24H = 2;
+const FAILED_LAUNCH_MAX_ENTRIES_24H = 3;
+const FAILED_LAUNCH_RETRY_MIN_SCORE = 13;
+const FAILED_LAUNCH_RETRY_MIN_VOLUME5M = 20000;
+const FAILED_LAUNCH_RETRY_MIN_VOLUME_GROWTH_PCT = 75;
+const FAILED_LAUNCH_RETRY_MIN_LIQUIDITY_GROWTH_PCT = 5;
 const RESET_MIN_POST_COOL_OBS = 2;
 const RESET_MIN_VOL5M_GROWTH_PCT = 25;
 const RESET_MAX_LIQUIDITY_DRAWDOWN_PCT = 12;
@@ -199,17 +204,8 @@ function recentTokenStats(tokenAddress) {
   return { entries, losingFullExits };
 }
 
-function resetEligible(tokenAddress, history) {
-  const state = exhausted.get(tokenAddress);
+function resetStructureEligible(state, history) {
   if (!state) return true;
-
-  const stats = recentTokenStats(tokenAddress);
-  if (
-    stats.entries >= MAX_ENTRIES_PER_TOKEN_24H ||
-    stats.losingFullExits >= MAX_LOSING_EXITS_PER_TOKEN_24H
-  ) {
-    return false;
-  }
 
   const now = Date.now();
   if (now - state.at < RESET_MIN_MS) return false;
@@ -242,7 +238,7 @@ function resetEligible(tokenAddress, history) {
   const tx = buys + sells;
   const buyRatio = tx > 0 ? buys / tx : 0;
 
-  const freshAcceleration =
+  return (
     volGrowthPct !== null &&
     volGrowthPct >= RESET_MIN_VOL5M_GROWTH_PCT &&
     latestVol >= 3000 &&
@@ -251,9 +247,42 @@ function resetEligible(tokenAddress, history) {
     tx >= 20 &&
     buyRatio >= 0.52 &&
     buyRatio <= 0.80 &&
-    liqDrawdownPct <= RESET_MAX_LIQUIDITY_DRAWDOWN_PCT;
+    liqDrawdownPct <= RESET_MAX_LIQUIDITY_DRAWDOWN_PCT
+  );
+}
 
-  return freshAcceleration;
+function resetEligible(tokenAddress, history) {
+  const state = exhausted.get(tokenAddress);
+  if (!state) return true;
+
+  const stats = recentTokenStats(tokenAddress);
+  if (
+    stats.entries >= MAX_ENTRIES_PER_TOKEN_24H ||
+    stats.losingFullExits >= MAX_LOSING_EXITS_PER_TOKEN_24H
+  ) {
+    return false;
+  }
+
+  return resetStructureEligible(state, history);
+}
+
+function failedLaunchRetryEligible(tokenAddress, history, analysis, data, stats) {
+  const state = exhausted.get(tokenAddress);
+  if (!state || state.reason !== "FAILED LAUNCH") return false;
+
+  // Exactly one exceptional extra attempt beyond the normal 2-entry cap.
+  if (stats.entries !== MAX_ENTRIES_PER_TOKEN_24H) return false;
+  if (stats.entries >= FAILED_LAUNCH_MAX_ENTRIES_24H) return false;
+  if (stats.losingFullExits > MAX_LOSING_EXITS_PER_TOKEN_24H) return false;
+  if (!resetStructureEligible(state, history)) return false;
+
+  const metrics = analysis?.metrics || {};
+  return (
+    Number(analysis?.score) >= FAILED_LAUNCH_RETRY_MIN_SCORE &&
+    Number(data?.volume5m) >= FAILED_LAUNCH_RETRY_MIN_VOLUME5M &&
+    Number(metrics.volume5mGrowthPct) >= FAILED_LAUNCH_RETRY_MIN_VOLUME_GROWTH_PCT &&
+    Number(metrics.liquidityGrowthPct) >= FAILED_LAUNCH_RETRY_MIN_LIQUIDITY_GROWTH_PCT
+  );
 }
 
 async function fetchSource(source, signal) {
@@ -317,8 +346,13 @@ async function discoverCandidatesR3({ signal } = {}) {
 
     const resetOk = resetEligible(token.tokenAddress, history);
     const reentryStats = recentTokenStats(token.tokenAddress);
+    const failedLaunchRetryOk =
+      isEntrySignal &&
+      failedLaunchRetryEligible(token.tokenAddress, history, analysis, data, reentryStats);
+
     const signalName =
       isEntrySignal && !security.ok ? "SECURITY VETO" :
+      failedLaunchRetryOk ? "FAILED LAUNCH RETRY" :
       isEntrySignal &&
         (reentryStats.entries >= MAX_ENTRIES_PER_TOKEN_24H ||
          reentryStats.losingFullExits >= MAX_LOSING_EXITS_PER_TOKEN_24H)
@@ -348,7 +382,10 @@ async function discoverCandidatesR3({ signal } = {}) {
     uniqueSolanaCandidates: unique.size,
     candidatesAfterSafetyFilters: candidates.length,
     strongBuys: candidates.filter(
-      x => x.signal === "EARLY RUNNER" || x.signal === "PROVISIONAL EARLY RUNNER"
+      x =>
+        x.signal === "EARLY RUNNER" ||
+        x.signal === "PROVISIONAL EARLY RUNNER" ||
+        x.signal === "FAILED LAUNCH RETRY"
     ).length,
     topCandidates: candidates.slice(0, 10).map(x => ({
       symbol: x.symbol,
@@ -360,9 +397,13 @@ async function discoverCandidatesR3({ signal } = {}) {
 
   candidates.sort((a, b) => {
     const aEntry =
-      a.signal === "EARLY RUNNER" || a.signal === "PROVISIONAL EARLY RUNNER" ? 1 : 0;
+      a.signal === "EARLY RUNNER" ||
+      a.signal === "PROVISIONAL EARLY RUNNER" ||
+      a.signal === "FAILED LAUNCH RETRY" ? 1 : 0;
     const bEntry =
-      b.signal === "EARLY RUNNER" || b.signal === "PROVISIONAL EARLY RUNNER" ? 1 : 0;
+      b.signal === "EARLY RUNNER" ||
+      b.signal === "PROVISIONAL EARLY RUNNER" ||
+      b.signal === "FAILED LAUNCH RETRY" ? 1 : 0;
     if (aEntry !== bEntry) return bEntry - aEntry;
     return b.score - a.score;
   });
