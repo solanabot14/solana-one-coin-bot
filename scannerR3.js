@@ -22,9 +22,16 @@ const RESET_MIN_MS = 10 * 60 * 1000;
 const histories = new Map();
 const exhausted = new Map();
 
+function dataDirectory() {
+  return path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DATA_DIR || __dirname);
+}
+
 function reentryStateFile() {
-  const directory = process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DATA_DIR || __dirname;
-  return path.join(path.resolve(directory), "r3ReentryState.json");
+  return path.join(dataDirectory(), "r3ReentryState.json");
+}
+
+function watchHistoryFile() {
+  return path.join(dataDirectory(), "r3WatchHistory.json");
 }
 
 function saveExhaustedState() {
@@ -76,6 +83,40 @@ function hydrateExhaustedState() {
 }
 
 hydrateExhaustedState();
+
+function saveWatchHistory() {
+  const now = Date.now();
+  const payload = {};
+  for (const [tokenAddress, observations] of histories.entries()) {
+    const recent = (observations || []).filter(x => now - Number(x.at || 0) <= HISTORY_TTL_MS).slice(-8);
+    if (recent.length) payload[tokenAddress] = recent;
+  }
+  const file = watchHistoryFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = file + "." + process.pid + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(payload, null, 2));
+  fs.renameSync(tmp, file);
+}
+
+function hydrateWatchHistory() {
+  const file = watchHistoryFile();
+  try {
+    if (!fs.existsSync(file)) return;
+    const now = Date.now();
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    for (const [tokenAddress, observations] of Object.entries(parsed || {})) {
+      const recent = Array.isArray(observations)
+        ? observations.filter(x => now - Number(x?.at || 0) <= HISTORY_TTL_MS).slice(-8)
+        : [];
+      if (recent.length) histories.set(tokenAddress, recent);
+    }
+  } catch (error) {
+    console.log(`R3 WATCH HISTORY LOAD WARNING | ${error.message}`);
+  }
+}
+
+hydrateWatchHistory();
+
 let lastDiscoveryTelemetry = {
   updatedAt: null,
   strategy: "R3-EARLY-RUNNER",
@@ -106,6 +147,7 @@ function remember(tokenAddress, data) {
   const next = previous.filter(x => now - x.at <= HISTORY_TTL_MS);
   next.push(snapshot(data));
   histories.set(tokenAddress, next.slice(-8));
+  saveWatchHistory();
   return histories.get(tokenAddress);
 }
 
