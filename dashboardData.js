@@ -450,7 +450,7 @@ function buildScoreStats(completedTrades) {
 	}).sort((a, b) => (a.score === "10+" ? 10 : Number(a.score)) - (b.score === "10+" ? 10 : Number(b.score)));
 }
 
-async function buildDashboardData(data, getTokenData) {
+async function buildDashboardData(data, getTokenData, baselineData = null) {
 	const completedTrades = groupCompletedTrades(data.history, data.position);
 	let live = null;
 	if (data.position) {
@@ -492,28 +492,32 @@ async function buildDashboardData(data, getTokenData) {
 	for (const trade of completedTrades) for (const reason of trade.exitReasons) exitReasonCounts[reason] = (exitReasonCounts[reason] || 0) + 1;
 
 	const stats = summarizeTrades(completedTrades, data.startingBalance);
-	const cleanV35Trades = completedTrades.filter(trade => trade.strategyVersion === "V3.5");
-	const v35Baseline = data.strategyDatasets?.["V3.5"] || null;
+	const baselineCompletedTrades = baselineData
+		? groupCompletedTrades(baselineData.history || [], baselineData.position || null)
+		: [];
 	const v35Research = {
-		strategyVersion: "V3.5",
-		name: "Clean Research",
-		startedAt: v35Baseline?.startedAt || null,
-		startingBalance: Number.isFinite(Number(v35Baseline?.startingBalance)) ? Number(v35Baseline.startingBalance) : null,
-		stats: summarizeTrades(cleanV35Trades, v35Baseline?.startingBalance),
-		sourceStats: buildSourceStats(cleanV35Trades),
-		birdeyeRankStats: buildBirdeyeRankStats(cleanV35Trades)
+		strategyVersion: "V3.1R2",
+		name: "Historical Baseline",
+		startedAt: baselineCompletedTrades.length
+			? [...baselineCompletedTrades].sort((a, b) => new Date(a.entryTime) - new Date(b.entryTime))[0]?.entryTime || null
+			: null,
+		startingBalance: Number.isFinite(Number(baselineData?.startingBalance)) ? Number(baselineData.startingBalance) : null,
+		stats: summarizeTrades(baselineCompletedTrades, baselineData?.startingBalance),
+		sourceStats: buildSourceStats(baselineCompletedTrades),
+		birdeyeRankStats: buildBirdeyeRankStats(baselineCompletedTrades)
 	};
 
-	const cleanV36Trades = completedTrades.filter(trade => trade.strategyVersion === "V3.6");
-	const v36Baseline = data.strategyDatasets?.["V3.6"] || null;
+	const currentR3Trades = completedTrades.filter(trade => trade.strategyVersion === "R3-EARLY-RUNNER");
 	const v36Research = {
-		strategyVersion: "V3.6",
-		name: "Pump Structure Protection",
-		startedAt: v36Baseline?.startedAt || null,
-		startingBalance: Number.isFinite(Number(v36Baseline?.startingBalance)) ? Number(v36Baseline.startingBalance) : null,
-		stats: summarizeTrades(cleanV36Trades, v36Baseline?.startingBalance),
-		sourceStats: buildSourceStats(cleanV36Trades),
-		birdeyeRankStats: buildBirdeyeRankStats(cleanV36Trades)
+		strategyVersion: "R3-EARLY-RUNNER",
+		name: "R3 Early Runner",
+		startedAt: currentR3Trades.length
+			? [...currentR3Trades].sort((a, b) => new Date(a.entryTime) - new Date(b.entryTime))[0]?.entryTime || null
+			: null,
+		startingBalance: Number.isFinite(Number(data.startingBalance)) ? Number(data.startingBalance) : null,
+		stats: summarizeTrades(currentR3Trades, data.startingBalance),
+		sourceStats: buildSourceStats(currentR3Trades),
+		birdeyeRankStats: buildBirdeyeRankStats(currentR3Trades)
 	};
 
 	return {
