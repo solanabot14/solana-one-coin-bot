@@ -463,7 +463,7 @@ async function buildDashboardData(data, getTokenData) {
 			const highestPrice = Number(p.highestPrice || p.entryPrice);
 			const entryPrice = Number(p.entryPrice);
 			const maxGainPercent = entryPrice > 0 ? (highestPrice - entryPrice) / entryPrice * 100 : null;
-			const profitLockEligible = p.riskManagementVersion === "V3.4" || p.strategyVersion === "V3.3" || p.strategyVersion === "V3.4";
+			const profitLockEligible = p.riskManagementVersion === "V3.4" || p.strategyVersion === "V3.3" || p.strategyVersion === "V3.4" || p.strategyVersion === "R3-EARLY-RUNNER";
 			const profitLockActive = profitLockEligible && !p.secondTakeProfitDone && maxGainPercent >= 10;
 			const protectedFloorPercent = profitLockActive ? maxGainPercent - 8 : null;
 			const runnerMode = !!p.secondTakeProfitDone;
