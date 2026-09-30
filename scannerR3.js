@@ -16,6 +16,14 @@ const DISCOVERY_SOURCES = [
   { name: "Top Boosts", url: "https://api.dexscreener.com/token-boosts/top/v1" }
 ];
 
+const BIRDEYE_TRENDING_URL = "https://public-api.birdeye.so/defi/token_trending";
+const BIRDEYE_TRENDING_LIMIT = 20;
+const BIRDEYE_TRENDING_REFRESH_MS = Math.max(
+  5 * 60 * 1000,
+  (Number.parseInt(process.env.BIRDEYE_TRENDING_REFRESH_MINUTES || "5", 10) || 5) * 60 * 1000
+);
+let birdeyeTrendingCache = { updatedAt: 0, tokens: [], lastStatus: "NOT_FETCHED" };
+
 const WATCH_MIN_LIQUIDITY = 25000;
 const HISTORY_TTL_MS = 45 * 60 * 1000;
 const RESET_MIN_MS = 10 * 60 * 1000;
@@ -295,10 +303,86 @@ async function fetchSource(source, signal) {
   }
 }
 
+function birdeyeTrendingItems(payload) {
+  const data = payload?.data;
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.tokens)) return data.tokens;
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(payload?.tokens)) return payload.tokens;
+  if (Array.isArray(payload?.items)) return payload.items;
+  return [];
+}
+
+async function fetchBirdeyeTrendingTokens(signal) {
+  const now = Date.now();
+  const ageMs = now - birdeyeTrendingCache.updatedAt;
+
+  if (birdeyeTrendingCache.updatedAt && ageMs < BIRDEYE_TRENDING_REFRESH_MS) {
+    console.log(
+      `R3 DISCOVERY | Birdeye Trending 1H | ${birdeyeTrendingCache.tokens.length} cached | age ${Math.round(ageMs / 60000)}m`
+    );
+    return structuredClone(birdeyeTrendingCache.tokens);
+  }
+
+  const apiKey = process.env.BIRDEYE_API_KEY;
+  if (!apiKey) {
+    birdeyeTrendingCache = { updatedAt: now, tokens: [], lastStatus: "NO_API_KEY" };
+    console.log("R3 DISCOVERY | Birdeye Trending 1H unavailable | no API key");
+    return [];
+  }
+
+  try {
+    const response = await axios.get(BIRDEYE_TRENDING_URL, {
+      timeout: 10000,
+      signal,
+      params: {
+        sort_by: "rank",
+        sort_type: "asc",
+        interval: "1h",
+        offset: 0,
+        limit: BIRDEYE_TRENDING_LIMIT
+      },
+      headers: {
+        Accept: "application/json",
+        "X-API-KEY": apiKey,
+        "x-chain": "solana"
+      }
+    });
+
+    const seen = new Set();
+    const tokens = [];
+    for (const item of birdeyeTrendingItems(response.data)) {
+      const tokenAddress =
+        item?.address ||
+        item?.tokenAddress ||
+        item?.token_address ||
+        item?.mint ||
+        item?.baseToken?.address;
+      if (!tokenAddress || seen.has(tokenAddress)) continue;
+      seen.add(tokenAddress);
+      tokens.push({ chainId: "solana", tokenAddress, discoverySource: "Birdeye Trending 1H" });
+      if (tokens.length >= BIRDEYE_TRENDING_LIMIT) break;
+    }
+
+    birdeyeTrendingCache = { updatedAt: now, tokens: structuredClone(tokens), lastStatus: "OK" };
+    console.log(`R3 DISCOVERY | Birdeye Trending 1H | ${tokens.length} tokens received`);
+    return tokens;
+  } catch (error) {
+    const status = error?.response?.status || "ERROR";
+    // Keep the scanner fully functional if Birdeye is unavailable.
+    birdeyeTrendingCache = { updatedAt: now, tokens: [], lastStatus: String(status) };
+    console.log(`R3 DISCOVERY | Birdeye Trending 1H unavailable | ${error.message}`);
+    return [];
+  }
+}
+
 async function discoverCandidatesR3({ signal } = {}) {
-  const sourceResults = await Promise.all(DISCOVERY_SOURCES.map(source => fetchSource(source, signal)));
+  const [sourceResults, birdeyeTrending] = await Promise.all([
+    Promise.all(DISCOVERY_SOURCES.map(source => fetchSource(source, signal))),
+    fetchBirdeyeTrendingTokens(signal)
+  ]);
   const unique = new Map();
-  for (const token of sourceResults.flat()) {
+  for (const token of [...sourceResults.flat(), ...birdeyeTrending]) {
     if (token?.chainId !== "solana" || !token.tokenAddress) continue;
     if (!unique.has(token.tokenAddress)) unique.set(token.tokenAddress, token);
   }
