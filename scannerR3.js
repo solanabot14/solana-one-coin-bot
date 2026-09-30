@@ -19,6 +19,12 @@ const DISCOVERY_SOURCES = [
 const WATCH_MIN_LIQUIDITY = 25000;
 const HISTORY_TTL_MS = 45 * 60 * 1000;
 const RESET_MIN_MS = 10 * 60 * 1000;
+const REENTRY_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+const MAX_ENTRIES_PER_TOKEN_24H = 2;
+const MAX_LOSING_EXITS_PER_TOKEN_24H = 2;
+const RESET_MIN_POST_COOL_OBS = 2;
+const RESET_MIN_VOL5M_GROWTH_PCT = 25;
+const RESET_MAX_LIQUIDITY_DRAWDOWN_PCT = 12;
 const histories = new Map();
 const exhausted = new Map();
 
@@ -156,24 +162,98 @@ function markExhausted(tokenAddress, context = {}) {
     at: Date.now(),
     reason: context.reason || "EXIT",
     high: Number(context.highestPrice) || null,
+    pnlPercent: Number.isFinite(Number(context.pnlPercent)) ? Number(context.pnlPercent) : null,
     source: context.source || "R3"
   });
   saveExhaustedState();
 }
 
+function recentTokenStats(tokenAddress) {
+  const cutoff = Date.now() - REENTRY_LOOKBACK_MS;
+  let entries = 0;
+  let losingFullExits = 0;
+
+  for (const name of ["tradingDataR3.json", "tradingData.json"]) {
+    const file = path.join(dataDirectory(), name);
+    if (!fs.existsSync(file)) continue;
+    try {
+      const data = JSON.parse(fs.readFileSync(file, "utf8"));
+      for (const trade of Array.isArray(data?.history) ? data.history : []) {
+        if (trade?.tokenAddress !== tokenAddress) continue;
+        const when = Date.parse(trade.type === "BUY" ? trade.entryTime : trade.exitTime);
+        if (!Number.isFinite(when) || when < cutoff) continue;
+        if (trade.type === "BUY") entries++;
+        if (
+          trade.type === "SELL" &&
+          Number(trade.percentSold) === 100 &&
+          Number(trade.pnlPercent) < 0
+        ) {
+          losingFullExits++;
+        }
+      }
+    } catch (error) {
+      console.log(`R3 REENTRY STATS WARNING | ${name} | ${error.message}`);
+    }
+  }
+
+  return { entries, losingFullExits };
+}
+
 function resetEligible(tokenAddress, history) {
   const state = exhausted.get(tokenAddress);
   if (!state) return true;
+
+  const stats = recentTokenStats(tokenAddress);
+  if (
+    stats.entries >= MAX_ENTRIES_PER_TOKEN_24H ||
+    stats.losingFullExits >= MAX_LOSING_EXITS_PER_TOKEN_24H
+  ) {
+    return false;
+  }
+
   const now = Date.now();
   if (now - state.at < RESET_MIN_MS) return false;
+
   const postExit = history.filter(x => x.at > state.at);
   if (postExit.length < 3) return false;
-  // Require at least one cooling observation before allowing a fresh setup.
-  const cooled = postExit.some(x => x.priceChange5m <= 1.5);
-  if (!cooled) return false;
-  exhausted.delete(tokenAddress);
-  saveExhaustedState();
-  return true;
+
+  // A reset is not "cooled once". Find a real cooling observation first.
+  let coolIndex = -1;
+  for (let i = 0; i < postExit.length; i++) {
+    if (Number(postExit[i].priceChange5m) <= 1.5) coolIndex = i;
+  }
+  if (coolIndex < 0) return false;
+
+  const postCool = postExit.slice(coolIndex + 1);
+  if (postCool.length < RESET_MIN_POST_COOL_OBS) return false;
+
+  const first = postCool[0];
+  const latest = postCool.at(-1);
+  const firstVol = Number(first.volume5m) || 0;
+  const latestVol = Number(latest.volume5m) || 0;
+  const volGrowthPct = firstVol > 0 ? ((latestVol - firstVol) / firstVol) * 100 : null;
+
+  const maxLiq = Math.max(...postCool.map(x => Number(x.liquidityUsd) || 0));
+  const latestLiq = Number(latest.liquidityUsd) || 0;
+  const liqDrawdownPct = maxLiq > 0 ? ((maxLiq - latestLiq) / maxLiq) * 100 : 0;
+
+  const buys = Number(latest.buys5m) || 0;
+  const sells = Number(latest.sells5m) || 0;
+  const tx = buys + sells;
+  const buyRatio = tx > 0 ? buys / tx : 0;
+
+  const freshAcceleration =
+    volGrowthPct !== null &&
+    volGrowthPct >= RESET_MIN_VOL5M_GROWTH_PCT &&
+    latestVol >= 3000 &&
+    Number(latest.priceChange5m) >= 0.25 &&
+    Number(latest.priceChange5m) < 4 &&
+    tx >= 20 &&
+    buyRatio >= 0.52 &&
+    buyRatio <= 0.80 &&
+    liqDrawdownPct <= RESET_MAX_LIQUIDITY_DRAWDOWN_PCT;
+
+  return freshAcceleration;
 }
 
 async function fetchSource(source, signal) {
@@ -232,9 +312,14 @@ async function discoverCandidatesR3({ signal } = {}) {
     }
 
     const resetOk = resetEligible(token.tokenAddress, history);
+    const reentryStats = recentTokenStats(token.tokenAddress);
     const signalName =
       analysis.signal === "EARLY RUNNER" && !security.ok ? "SECURITY VETO" :
-      analysis.signal === "EARLY RUNNER" && !resetOk ? "RESET WAIT" :
+      analysis.signal === "EARLY RUNNER" &&
+        (reentryStats.entries >= MAX_ENTRIES_PER_TOKEN_24H ||
+         reentryStats.losingFullExits >= MAX_LOSING_EXITS_PER_TOKEN_24H)
+        ? "REENTRY BLOCK"
+        : analysis.signal === "EARLY RUNNER" && !resetOk ? "RESET WAIT" :
       analysis.signal;
 
     console.log(
