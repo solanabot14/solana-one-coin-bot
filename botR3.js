@@ -1,6 +1,7 @@
 const market = require("./dexscreener");
 const scanner = require("./scannerR3");
 const trader = require("./paperTraderR3");
+const telegram = require("./telegram");
 
 const POSITION_MONITOR_MS = 2000;
 const SCANNER_INTERVAL_MS = 120000;
@@ -27,7 +28,8 @@ const MIN_EXIT_TX = 10;
 function createBotR3({
   getTokenData = market.getTokenData,
   discoverCandidates = scanner.discoverCandidatesR3,
-  timers = globalThis
+  timers = globalThis,
+  notifier = telegram
 } = {}) {
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
   let activeSession = null;
@@ -36,6 +38,7 @@ function createBotR3({
   let scannerBusy = false;
   let monitorBusy = false;
   let lastError = null;
+  const profitLockNotified = new Set();
 
   const isActive = session => activeSession === session && !session.signal.aborted;
 
@@ -49,7 +52,9 @@ function createBotR3({
       return;
     }
     console.log(`R3 SELECTED | ${coin.symbol} | Score ${coin.score} | 5m ${coin.priceChange5m}% | Vol5m $${coin.volume5m || 0}`);
-    console.log("R3 PAPER TRADE:", buy(coin));
+    const trade = buy(coin);
+    if (trade.success) void notifier.notifyTrade("BUY", trade.trade);
+    console.log("R3 PAPER TRADE:", trade);
   }
 
   async function monitorPosition(session) {
@@ -80,6 +85,7 @@ function createBotR3({
           source: "R3"
         });
       }
+      if (manualResult.success) void notifier.notifyTrade("MANUAL EXIT REQUESTED", manualResult.trade);
       console.log(`R3 EXIT | ${position.symbol} | MANUAL EXIT REQUESTED`, manualResult);
       return;
     }
@@ -111,6 +117,7 @@ function createBotR3({
           highestPrice: high
         });
       }
+      if (result.success) void notifier.notifyTrade(reason, result.trade);
       console.log(`R3 EXIT | ${position.symbol} | ${reason}`, result);
       return result;
     };
@@ -123,6 +130,20 @@ function createBotR3({
     // After TP2 the dedicated runner trailing logic takes over.
     const profitLockActive = !position.secondTakeProfitDone && mfe >= PROFIT_LOCK_START_MFE;
     const protectedFloorPercent = profitLockActive ? mfe - PROFIT_LOCK_DISTANCE : null;
+
+    if (profitLockActive && !profitLockNotified.has(expected)) {
+      profitLockNotified.add(expected);
+      void notifier.sendTelegramMessage([
+        "ONE COIN BOT | PROFIT LOCK ON",
+        `Coin: ${position.symbol}`,
+        `Max gain: ${mfe.toFixed(2)}%`,
+        `Protected floor: +${protectedFloorPercent.toFixed(2)}%`,
+        position.pairAddress || position.tokenAddress
+          ? `DexScreener: https://dexscreener.com/solana/${encodeURIComponent(position.pairAddress || position.tokenAddress)}`
+          : null
+      ].filter(Boolean).join("\n"));
+    }
+
     if (profitLockActive && pnl <= protectedFloorPercent) {
       return void exit("PROFIT LOCK");
     }
@@ -171,6 +192,7 @@ function createBotR3({
     } catch (error) {
       lastError = error.message;
       console.error("R3 paused:", error.message);
+      void notifier.notifyCritical(`R3 trading paused: ${error.message}`);
       stopBot();
     } finally {
       if (kind === "scanner") scannerBusy = false; else monitorBusy = false;
