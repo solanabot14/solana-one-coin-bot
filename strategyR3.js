@@ -18,9 +18,8 @@ const CONFIG = Object.freeze({
   minVolume5mGrowthPct: 25,
   supportVolume1hGrowthPct: 5,
   maxLiquidityDrawdownPct: 12,
-  provisionalMinVolume5mGrowthPct: 100,
-  provisionalMinLiquidityGrowthPct: 10,
-  provisionalMinVolume5m: 10000
+  provisionalMinVolume5mGrowthPct: 50,
+    provisionalMinVolume5m: 2000
 });
 
 function pctChange(current, previous) {
@@ -66,8 +65,6 @@ function analyzeEarlyRunner(history, data, config = CONFIG) {
       const provisionalReady =
         volume5mGrowthPct !== null &&
         volume5mGrowthPct >= config.provisionalMinVolume5mGrowthPct &&
-        liquidityGrowthPct !== null &&
-        liquidityGrowthPct >= config.provisionalMinLiquidityGrowthPct &&
         volume5m >= config.provisionalMinVolume5m &&
         tx >= config.minTransactions5m &&
         buyRatio >= config.minBuyRatio &&
@@ -84,8 +81,8 @@ function analyzeEarlyRunner(history, data, config = CONFIG) {
         reasons: provisionalReady
           ? [
               "Exceptional second-observation acceleration",
-              "5m volume doubled or better",
-              "Liquidity expanding strongly",
+              "5m volume accelerating strongly",
+              "Liquidity structure remains healthy",
               "Price remains below anti-chase ceiling"
             ]
           : ["Building short-term history"],
