@@ -1,4 +1,6 @@
 const axios = require("axios");
+const fs = require("node:fs");
+const path = require("node:path");
 const { getTokenData } = require("./dexscreener");
 const {
   tokenSecuritySnapshot,
@@ -19,6 +21,61 @@ const HISTORY_TTL_MS = 45 * 60 * 1000;
 const RESET_MIN_MS = 10 * 60 * 1000;
 const histories = new Map();
 const exhausted = new Map();
+
+function reentryStateFile() {
+  const directory = process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DATA_DIR || __dirname;
+  return path.join(path.resolve(directory), "r3ReentryState.json");
+}
+
+function saveExhaustedState() {
+  const file = reentryStateFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const payload = Object.fromEntries(exhausted.entries());
+  const tmp = file + "." + process.pid + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(payload, null, 2));
+  fs.renameSync(tmp, file);
+}
+
+function hydrateExhaustedState() {
+  const file = reentryStateFile();
+  try {
+    if (fs.existsSync(file)) {
+      const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+      for (const [tokenAddress, state] of Object.entries(parsed || {})) {
+        if (tokenAddress && state?.at) exhausted.set(tokenAddress, state);
+      }
+    }
+
+    // Seed missing token memory from both the R3 account and the preserved legacy account.
+    // This does not permanently blacklist a token; resetEligible can release it after
+    // cooling + fresh observations + a new live acceleration setup.
+    const directory = process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DATA_DIR || __dirname;
+    for (const name of ["tradingDataR3.json", "tradingData.json"]) {
+      const tradeFile = path.join(path.resolve(directory), name);
+      if (!fs.existsSync(tradeFile)) continue;
+      const data = JSON.parse(fs.readFileSync(tradeFile, "utf8"));
+      for (const trade of Array.isArray(data?.history) ? data.history : []) {
+        if (trade?.type !== "SELL" || Number(trade.percentSold) !== 100 || !trade.tokenAddress || !trade.exitTime) continue;
+        const at = Date.parse(trade.exitTime);
+        if (!Number.isFinite(at)) continue;
+        const previous = exhausted.get(trade.tokenAddress);
+        if (!previous || at > Number(previous.at || 0)) {
+          exhausted.set(trade.tokenAddress, {
+            at,
+            reason: trade.reason || "PRIOR FULL EXIT",
+            high: Number(trade.highestPrice) || null,
+            source: name
+          });
+        }
+      }
+    }
+    saveExhaustedState();
+  } catch (error) {
+    console.log(`R3 REENTRY STATE LOAD WARNING | ${error.message}`);
+  }
+}
+
+hydrateExhaustedState();
 let lastDiscoveryTelemetry = {
   updatedAt: null,
   strategy: "R3-EARLY-RUNNER",
@@ -56,8 +113,10 @@ function markExhausted(tokenAddress, context = {}) {
   exhausted.set(tokenAddress, {
     at: Date.now(),
     reason: context.reason || "EXIT",
-    high: Number(context.highestPrice) || null
+    high: Number(context.highestPrice) || null,
+    source: context.source || "R3"
   });
+  saveExhaustedState();
 }
 
 function resetEligible(tokenAddress, history) {
@@ -71,6 +130,7 @@ function resetEligible(tokenAddress, history) {
   const cooled = postExit.some(x => x.priceChange5m <= 1.5);
   if (!cooled) return false;
   exhausted.delete(tokenAddress);
+  saveExhaustedState();
   return true;
 }
 
