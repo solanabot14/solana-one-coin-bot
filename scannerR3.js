@@ -453,7 +453,7 @@ async function discoverCandidatesR3({ signal } = {}) {
       if (!(tx >= 20)) blockers.push("TX");
       if (!(buyRatio >= 0.52 && buyRatio <= 0.80)) blockers.push("BUY_RATIO");
       if (!(Number(data.priceChange5m) >= 0.10 && Number(data.priceChange5m) < 4)) blockers.push("PRICE_5M");
-      if (!(Number(data.priceChange1h) > 0 && Number(data.priceChange1h) <= 40)) blockers.push("PRICE_1H");
+      if (!(Number(data.priceChange1h) >= -10 && Number(data.priceChange1h) <= 40)) blockers.push("PRICE_1H");
       if (!(Number(analysis.metrics.liquidityDrawdownPct) <= 12)) blockers.push("LIQ_DRAWDOWN");
     }
 
