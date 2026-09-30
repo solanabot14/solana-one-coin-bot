@@ -449,7 +449,7 @@ async function discoverCandidatesR3({ signal } = {}) {
     const blockers = [];
     if (analysis.signal === "WATCH" && Number(analysis.score) >= 10) {
       if (!(Number(analysis.metrics.volume5mGrowthPct) >= 25)) blockers.push("VOL_GROWTH");
-      if (!(Number(data.volume5m) >= 3000)) blockers.push("VOL5M");
+      if (!(Number(data.volume5m) >= 2000)) blockers.push("VOL5M");
       if (!(tx >= 20)) blockers.push("TX");
       if (!(buyRatio >= 0.52 && buyRatio <= 0.80)) blockers.push("BUY_RATIO");
       if (!(Number(data.priceChange5m) >= 0.10 && Number(data.priceChange5m) < 4)) blockers.push("PRICE_5M");
