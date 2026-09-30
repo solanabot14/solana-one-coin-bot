@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const bot = require("./botR3");
 const { getPortfolio, sell, positionKey } = require("./paperTraderR3");
+const { getPortfolio: getV31R2Portfolio } = require("./paperTrader");
 const { getTokenData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
 const scanner = require("./scannerR3");
@@ -384,22 +385,22 @@ th,td{
 
 <div class="card section">
 
-<h2>V3.6 Pump Structure Protection</h2>
+<h2>R3 Early Runner — Current Strategy</h2>
 
 <p class="muted">
-  New OG entries are tagged V3.6. This section tracks the current entry strategy separately so V3.5 remains frozen as historical research.
+  Current R3 paper trades are tracked here. V3.1R2 remains preserved below as the historical baseline for comparison.
 </p>
 
 <div class="grid">
-  <div class="metric"><div class="metric-label">V3.6 Completed</div><div class="metric-value" id="v36Trades">0</div></div>
-  <div class="metric"><div class="metric-label">V3.6 Win Rate</div><div class="metric-value" id="v36WinRate">0%</div></div>
-  <div class="metric"><div class="metric-label">V3.6 Net P/L</div><div class="metric-value" id="v36Net">$0.00</div></div>
-  <div class="metric"><div class="metric-label">V3.6 Profit Factor</div><div class="metric-value" id="v36Factor">—</div></div>
+  <div class="metric"><div class="metric-label">R3 Completed</div><div class="metric-value" id="v36Trades">0</div></div>
+  <div class="metric"><div class="metric-label">R3 Win Rate</div><div class="metric-value" id="v36WinRate">0%</div></div>
+  <div class="metric"><div class="metric-label">R3 Net P/L</div><div class="metric-value" id="v36Net">$0.00</div></div>
+  <div class="metric"><div class="metric-label">R3 Profit Factor</div><div class="metric-value" id="v36Factor">—</div></div>
   <div class="metric"><div class="metric-label">Expectancy / Trade</div><div class="metric-value" id="v36Expectancy">—</div></div>
   <div class="metric"><div class="metric-label">Payoff Ratio</div><div class="metric-value" id="v36Payoff">—</div></div>
   <div class="metric"><div class="metric-label">Realized Max Drawdown</div><div class="metric-value" id="v36Drawdown">—</div></div>
   <div class="metric"><div class="metric-label">Max Loss Streak</div><div class="metric-value" id="v36LossStreak">0</div></div>
-  <div class="metric"><div class="metric-label">Dataset Started</div><div class="metric-value" id="v36Started">Waiting for first V3.6 trade</div></div>
+  <div class="metric"><div class="metric-label">Dataset Started</div><div class="metric-value" id="v36Started">Waiting for first R3 trade</div></div>
   <div class="metric"><div class="metric-label">Dataset Start Balance</div><div class="metric-value" id="v36StartBalance">—</div></div>
 </div>
 
@@ -412,22 +413,22 @@ th,td{
 
 <div style="overflow-x:auto; margin-top:16px">
 <table>
-<thead><tr><th>V3.6 Discovery Source</th><th>Trades</th><th>Win Rate</th><th>Expectancy</th><th>Profit Factor</th><th>Net P/L</th></tr></thead>
-<tbody id="v36SourceStats"><tr><td colspan="6">Waiting for V3.6 trades.</td></tr></tbody>
+<thead><tr><th>R3 Discovery Source</th><th>Trades</th><th>Win Rate</th><th>Expectancy</th><th>Profit Factor</th><th>Net P/L</th></tr></thead>
+<tbody id="v36SourceStats"><tr><td colspan="6">Waiting for R3 trades.</td></tr></tbody>
 </table>
 </div>
 
 <div style="overflow-x:auto; margin-top:16px">
 <table>
-<thead><tr><th>V3.6 Birdeye Rank</th><th>Trades</th><th>Win Rate</th><th>Expectancy</th><th>Profit Factor</th><th>Net P/L</th></tr></thead>
-<tbody id="v36RankStats"><tr><td colspan="6">Waiting for Birdeye-ranked V3.6 trades.</td></tr></tbody>
+<thead><tr><th>R3 Birdeye Rank</th><th>Trades</th><th>Win Rate</th><th>Expectancy</th><th>Profit Factor</th><th>Net P/L</th></tr></thead>
+<tbody id="v36RankStats"><tr><td colspan="6">Waiting for R3 ranked trades.</td></tr></tbody>
 </table>
 </div>
 
 <div style="overflow-x:auto; margin-top:16px">
 <table>
 <thead><tr><th>Frozen Baseline</th><th>Trades</th><th>Win Rate</th><th>Expectancy</th><th>Profit Factor</th><th>Net P/L</th></tr></thead>
-<tbody id="v35ArchiveStats"><tr><td colspan="6">Waiting for archived V3.5 data.</td></tr></tbody>
+<tbody id="v35ArchiveStats"><tr><td colspan="6">Waiting for V3.1R2 baseline data.</td></tr></tbody>
 </table>
 </div>
 
@@ -498,7 +499,7 @@ th,td{
 <h2>Rejection Telemetry</h2>
 
 <p class="muted">
-  Latest OG scan only. Counts can overlap because one token may fail more than one STRONG BUY confirmation.
+  Latest R3 scan only. Counts can overlap because one token may fail more than one STRONG BUY confirmation.
   Volume and Smart Money fields are shown for context. Post-Pump, Current Activity, Late Momentum, Market Data Integrity and Birdeye Pre-Discovery Pump are active entry protections.
 </p>
 
@@ -623,7 +624,7 @@ th,td{
 <h2>Token Diversity</h2>
 
 <p class="muted">
-  Read-only view of the OG token reentry rules. This section does not change trading behavior.
+  Read-only view of the R3 token reentry rules. This section does not change trading behavior.
 </p>
 
 <div style="overflow-x:auto">
@@ -866,7 +867,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         if (route === "/api/manual-exit") {
           const currentPortfolio = portfolio();
           const position = currentPortfolio.position;
-          if (!position) return json(res, { success: false, error: "No OG position is open." }, 409);
+          if (!position) return json(res, { success: false, error: "No R3 position is open." }, 409);
 
           const expectedPosition = positionKey(position);
           const freshData = await marketData(position.tokenAddress, {
@@ -916,7 +917,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       if (route === "/api/status") return json(res, { running: controls.getBotStatus(), error: controls.getLastError() });
       if (route === "/api/jan/status") return json(res, { running: janControls.getStatus(), error: janControls.getLastError() });
       if (route === "/api/data") {
-        const data = await buildDashboardData(portfolio(), marketData);
+        const data = await buildDashboardData(portfolio(), marketData, getV31R2Portfolio());
         if (janControls?.getDashboardState) data.slotSimulation = janControls.getDashboardState();
         else if (slotEngine?.getDashboardState) data.slotSimulation = slotEngine.getDashboardState();
         data.discoveryTelemetry = scanner.getDiscoveryTelemetry();
@@ -934,7 +935,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         return json(res, {
           generatedAt: new Date().toISOString(),
           currentStrategy: "R3 Early Runner | Multi-scan acceleration + structural reset",
-          riskEngine: "R3: Hard Stop + TP1 + TP2 + Trailing + Failed Continuation + Structure Failure Protect",
+          riskEngine: "R3: Hard Stop + Failed Launch + Early Giveback + Profit Lock + TP1 + TP2 + Runner Trailing + Structure Failure",
           livePosition: data.live || null,
           completedTrades,
           swarmClosedTrades: swarmExecutions,
@@ -978,10 +979,10 @@ if (require.main === module) {
   // Keep Swarm coupled to R3 in the server process, independent of whether a browser is open.
   const couplingInterval = setInterval(() => {
     if (!bot.getBotStatus() && janMvpBot.getStatus()) {
-      console.log("SWARM COUPLING | OG offline, pausing Swarm");
+      console.log("SWARM COUPLING | R3 offline, pausing Swarm");
       janMvpBot.stop();
     } else if (bot.getBotStatus() && !janMvpBot.getStatus() && runtimeState.read().desiredRunning) {
-      console.log("SWARM COUPLING | OG online, restoring Swarm");
+      console.log("SWARM COUPLING | R3 online, restoring Swarm");
       janMvpBot.start();
     }
   }, 2000);
