@@ -54,7 +54,7 @@ function renderLiveTrade(d) {
 		: `${price(live.trailingExitPrice)} (${pct(live.trailingExitPercent)})`;
 	$("live").innerHTML = `
 		<div class="live-title"><span class="coin-name">${escapeHtml(position.symbol)}</span>
-			<span class="badge">${escapeHtml(position.strategyVersion || "V3.1")}</span>
+			<span class="badge">${escapeHtml(position.strategyVersion || "R3-EARLY-RUNNER")}</span>
 			<span class="badge">Score ${escapeHtml(position.entryScore ?? "—")}</span>
 			<span class="badge">${escapeHtml(position.entrySignal || "—")}</span>
 			${chart ? `<a class="small-link" href="${chart}" target="_blank" rel="noopener noreferrer">View on DexScreener</a>` : ""}
@@ -240,7 +240,7 @@ function renderCurrentResearch(d) {
 		v36Payoff: s.payoffRatio == null ? "—" : Number(s.payoffRatio).toFixed(2) + "x",
 		v36Drawdown: pct(s.maxDrawdownPercent),
 		v36LossStreak: number(s.maxConsecutiveLosses || 0),
-		v36Started: research.startedAt ? new Date(research.startedAt).toLocaleString() : "Waiting for first V3.6 trade",
+		v36Started: research.startedAt ? new Date(research.startedAt).toLocaleString() : "Waiting for first R3 trade",
 		v36StartBalance: money(research.startingBalance)
 	};
 	for (const [id, value] of Object.entries(values)) $(id).textContent = value;
@@ -259,18 +259,18 @@ function renderCurrentResearch(d) {
 		<td><strong>${escapeHtml(row.source)}</strong></td><td>${number(row.trades)}</td><td>${pct(row.winRate)}</td>
 		<td class="${cls(row.expectancyPercent)}">${pct(row.expectancyPercent)}</td><td>${escapeHtml(row.profitFactorLabel || "—")}</td>
 		<td class="${cls(row.netPnl)}">${money(row.netPnl)}</td>
-	</tr>`).join("") || `<tr><td colspan="6">Waiting for V3.6 trades.</td></tr>`;
+	</tr>`).join("") || `<tr><td colspan="6">Waiting for R3 trades.</td></tr>`;
 
 	const rankRows = Array.isArray(research.birdeyeRankStats) ? research.birdeyeRankStats : [];
 	$("v36RankStats").innerHTML = rankRows.map(row => `<tr>
 		<td><strong>${escapeHtml(row.rank)}</strong></td><td>${number(row.trades)}</td><td>${pct(row.winRate)}</td>
 		<td class="${cls(row.expectancyPercent)}">${pct(row.expectancyPercent)}</td><td>${escapeHtml(row.profitFactorLabel || "—")}</td>
 		<td class="${cls(row.netPnl)}">${money(row.netPnl)}</td>
-	</tr>`).join("") || `<tr><td colspan="6">Waiting for Birdeye-ranked V3.6 trades.</td></tr>`;
+	</tr>`).join("") || `<tr><td colspan="6">Waiting for R3 ranked trades.</td></tr>`;
 
 	const archived = d.v35Research?.stats || {};
 	$("v35ArchiveStats").innerHTML = `<tr>
-		<td><strong>V3.5 Clean Research</strong></td>
+		<td><strong>V3.1R2 Historical Baseline</strong></td>
 		<td>${number(archived.completedTrades || 0)}</td>
 		<td>${pct(archived.winRate || 0)}</td>
 		<td class="${cls(archived.expectancyPercent)}">${pct(archived.expectancyPercent)}</td>
