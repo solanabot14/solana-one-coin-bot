@@ -64,6 +64,24 @@ function createBotR3({
 
     const price = Number(fresh.priceUsd);
     if (!(price > 0)) return;
+
+    const manualExitId = String(process.env.MANUAL_EXIT_POSITION_ID || "").trim();
+    if (manualExitId && manualExitId === expected) {
+      const manualResult = sell(price, 100, {
+        expectedPosition: expected,
+        reason: "MANUAL EXIT REQUESTED"
+      });
+      if (manualResult.success) {
+        scanner.markExhausted(position.tokenAddress, {
+          reason: "MANUAL EXIT REQUESTED",
+          highestPrice: Number(position.highestPrice || position.entryPrice) || null,
+          source: "R3"
+        });
+      }
+      console.log(`R3 EXIT | ${position.symbol} | MANUAL EXIT REQUESTED`, manualResult);
+      return;
+    }
+
     updateHigh(expected, price);
     position = getPortfolio().position;
 
