@@ -6,19 +6,40 @@ function obs(liquidityUsd, volume24h, volume5m, priceChange5m, priceChange1h, bu
   return { liquidityUsd, volume24h, volume5m, volume1h, priceChange5m, priceChange1h, buys5m, sells5m };
 }
 
-test("ARTHUR-like short-term acceleration qualifies even without large 24h volume growth", () => {
+test("ARTHUR-like short-term acceleration qualifies without relying on 24h volume", () => {
   const history = [
     obs(42000, 150000, 4200, 0.5, 4, 20, 12, 30000),
     obs(47000, 151000, 6500, 0.8, 6, 28, 15, 32500),
     obs(52000, 152000, 9000, 1.2, 8, 35, 18, 35000),
     obs(62000, 153000, 14000, 2.0, 12, 44, 23, 39000)
   ];
-  const current = history.at(-1);
-  const result = analyzeEarlyRunner(history, current);
+  const result = analyzeEarlyRunner(history, history.at(-1));
   assert.equal(result.signal, "EARLY RUNNER");
-  assert.ok(result.metrics.liquidityGrowthPct >= 5);
   assert.ok(result.metrics.volume5mGrowthPct >= 25);
   assert.ok(result.metrics.volume24hGrowthPct < 8);
+});
+
+test("sub-50K liquidity can qualify when live acceleration and participation are strong", () => {
+  const history = [
+    obs(28500, 70000, 3500, 0.4, 3, 18, 12, 18000),
+    obs(29200, 70500, 5200, 0.8, 5, 25, 15, 20000),
+    obs(30500, 71000, 8200, 1.4, 8, 34, 18, 23000),
+    obs(31800, 71500, 11000, 2.1, 11, 42, 22, 26000)
+  ];
+  const result = analyzeEarlyRunner(history, history.at(-1));
+  assert.equal(result.signal, "EARLY RUNNER");
+});
+
+test("stable liquidity does not block a genuine live runner", () => {
+  const history = [
+    obs(36000, 90000, 3200, 0.5, 4, 20, 14, 20000),
+    obs(36200, 90500, 5000, 0.8, 5, 27, 16, 22000),
+    obs(36100, 91000, 7600, 1.1, 7, 34, 19, 24500),
+    obs(36300, 91500, 9800, 1.8, 10, 42, 22, 27000)
+  ];
+  const result = analyzeEarlyRunner(history, history.at(-1));
+  assert.equal(result.signal, "EARLY RUNNER");
+  assert.ok(result.metrics.liquidityGrowthPct < 5);
 });
 
 test("STOCK-like high 24h volume without live 5m acceleration stays WATCH", () => {
@@ -32,7 +53,7 @@ test("STOCK-like high 24h volume without live 5m acceleration stays WATCH", () =
   assert.equal(result.signal, "WATCH");
 });
 
-test("hot NUTFLEX-like expansion becomes EXTENDED-WATCH instead of being discarded", () => {
+test("hot NUTFLEX-like acceleration becomes EXTENDED-WATCH instead of being discarded", () => {
   const history = [
     obs(44000, 500000, 18000, 2.0, 20, 38, 22, 100000),
     obs(48000, 502000, 26000, 3.0, 25, 48, 25, 108000),
@@ -43,7 +64,7 @@ test("hot NUTFLEX-like expansion becomes EXTENDED-WATCH instead of being discard
   assert.equal(result.signal, "EXTENDED-WATCH");
 });
 
-test("liquidity drain vetoes an apparent runner", () => {
+test("liquidity drain still vetoes an apparent runner", () => {
   const history = [
     obs(70000, 200000, 8000, 1.0, 10, 35, 20, 50000),
     obs(76000, 201000, 11000, 1.5, 12, 40, 22, 54000),
