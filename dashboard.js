@@ -2,11 +2,11 @@ require("dotenv").config();
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
-const bot = require("./bot");
-const { getPortfolio, sell, positionKey } = require("./paperTrader");
+const bot = require("./botR3");
+const { getPortfolio, sell, positionKey } = require("./paperTraderR3");
 const { getTokenData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
-const scanner = require("./scanner");
+const scanner = require("./scannerR3");
 const janSlotEngine = require("./janSlotEngine");
 const janMvpBot = require("./janMvpBot");
 const { createRuntimeState } = require("./runtimeState");
@@ -249,7 +249,7 @@ th,td{
   <div>
     <h1>Solana One Coin Bot</h1>
     <div class="subtitle">
-      Entry V3.1R2 • Original V3.1 Exits • 10% Compounding • Paper Trading
+      R3 Early Runner • Acceleration Entry • Paper Trading
     </div>
   </div>
 
@@ -273,7 +273,7 @@ th,td{
 </p>
 
 <div class="tabs" role="tablist" aria-label="Dashboard views">
-  <button class="tab-button active" id="botTab" type="button">Current Bot</button>
+  <button class="tab-button active" id="botTab" type="button">R3 Early Runner</button>
   <button class="tab-button" id="slotTab" type="button">Swarm</button>
 </div>
 
@@ -933,8 +933,8 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           : [];
         return json(res, {
           generatedAt: new Date().toISOString(),
-          currentStrategy: "V3.1R2 Safe Revival | Original V3.1 Entry + Security Warnings + Quote Sanity + 10% Compounding",
-          riskEngine: "Original V3.1: Hard Stop + TP1 + TP2 + Trailing + Momentum Exit",
+          currentStrategy: "R3 Early Runner | Multi-scan acceleration + structural reset",
+          riskEngine: "R3: Hard Stop + TP1 + TP2 + Trailing + Failed Continuation + Structure Failure Protect",
           livePosition: data.live || null,
           completedTrades,
           swarmClosedTrades: swarmExecutions,
@@ -960,7 +960,7 @@ if (require.main === module) {
 
   const desired = runtimeState.read();
   if (desired.desiredRunning) {
-    console.log("RUNTIME RESTORE | Previous state was RUNNING | Restoring OG + Swarm");
+    console.log("RUNTIME RESTORE | Previous state was RUNNING | Restoring R3 + Swarm");
     bot.startBot();
     janMvpBot.start();
   } else {
@@ -975,7 +975,7 @@ if (require.main === module) {
 
   server.listen(config.port, config.host, () => console.log("Dashboard listening on " + config.host + ":" + config.port));
 
-  // Keep Swarm coupled to OG in the server process, independent of whether a browser is open.
+  // Keep Swarm coupled to R3 in the server process, independent of whether a browser is open.
   const couplingInterval = setInterval(() => {
     if (!bot.getBotStatus() && janMvpBot.getStatus()) {
       console.log("SWARM COUPLING | OG offline, pausing Swarm");
