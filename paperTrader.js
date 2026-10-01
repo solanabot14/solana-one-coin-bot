@@ -303,24 +303,13 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 	}
 
 	function updateHigh(expectedPosition, price) {
-		if (
-			!(state.positions || []).some(p => positionKey(p) === expectedPosition) ||
-			!Number.isFinite(price) ||
-			price <= 0
-		) {
-			return false;
-		}
-
-		if (
-			price <= ((state.positions || []).find(p => positionKey(p) === expectedPosition)?.highestPrice || (state.positions || []).find(p => positionKey(p) === expectedPosition)?.entryPrice || Infinity)
-		) {
-			return true;
-		}
-
-		const next = structuredClone(state);\n\t\tconst index = next.positions.findIndex(p => positionKey(p) === expectedPosition);\n\t\tif (index < 0) return false;\n\t\tnext.positions[index].highestPrice = price;
-
+		const index = (state.positions || []).findIndex(p => positionKey(p) === expectedPosition);
+		if (index < 0 || !Number.isFinite(price) || price <= 0) return false;
+		const position = state.positions[index];
+		if (price <= (position.highestPrice || position.entryPrice)) return true;
+		const next = structuredClone(state);
+		next.positions[index].highestPrice = price;
 		commit(next);
-
 		return true;
 	}
 
