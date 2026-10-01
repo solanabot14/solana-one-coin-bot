@@ -26,8 +26,8 @@ let birdeyeTrendingCache = { updatedAt: 0, tokens: [], lastStatus: "NOT_FETCHED"
 
 const GECKO_BASE_URL = "https://api.geckoterminal.com/api/v2/networks/solana";
 const GECKO_REFRESH_MS = Math.max(
-  5 * 60 * 1000,
-  (Number.parseInt(process.env.GECKO_REFRESH_MINUTES || "5", 10) || 5) * 60 * 1000
+  15 * 1000,
+  (Number.parseInt(process.env.GECKO_REFRESH_SECONDS || "15", 10) || 15) * 1000
 );
 const geckoCaches = {
   trending: { updatedAt: 0, tokens: [], lastStatus: "NOT_FETCHED" },
