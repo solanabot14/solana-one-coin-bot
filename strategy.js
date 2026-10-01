@@ -28,7 +28,7 @@ function analyzeToken(data) {
 	// ==========================================
 
 	// HARD ANTI-CHASE
-	if (change5m >= 4) {
+	if (change5m > 8) {
 		return {
 			score: 0,
 			signal: "AVOID",
