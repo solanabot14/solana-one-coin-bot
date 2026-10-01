@@ -42,6 +42,8 @@ const FRESH_DISCOVERY_TTL_MS = 3 * 60 * 1000;
 const freshDiscoveryQueue = new Map();
 
 const WATCH_MIN_LIQUIDITY = 25000;
+const MAX_ENTRY_PAIR_AGE_MS = 48 * 60 * 60 * 1000;
+const knownPairCreatedAt = new Map();
 const REACTIVATION_AGE_MS = 24 * 60 * 60 * 1000;
 const REACTIVATION_DEAD_BASELINE_VOL5M = 500;
 const REACTIVATION_LOOKBACK_OBSERVATIONS = 8;
@@ -415,7 +417,14 @@ function geckoPoolTokens(payload, discoverySource) {
     const tokenAddress = geckoTokenAddressFromRelationship(pool?.relationships?.base_token);
     if (!tokenAddress || seen.has(tokenAddress)) continue;
     seen.add(tokenAddress);
-    tokens.push({ chainId: "solana", tokenAddress, discoverySource });
+    const createdRaw = pool?.attributes?.pool_created_at;
+    const parsedCreatedAt = createdRaw ? Date.parse(createdRaw) : NaN;
+    tokens.push({
+      chainId: "solana",
+      tokenAddress,
+      discoverySource,
+      pairCreatedAt: Number.isFinite(parsedCreatedAt) ? parsedCreatedAt : null
+    });
   }
   return tokens;
 }
@@ -554,8 +563,24 @@ async function discoverCandidatesR3({ signal } = {}) {
   ]);
   const freshNewPools = getFreshDiscoveryTokens();
   const unique = new Map();
+  let ageFilteredBeforeEnrichment = 0;
   for (const token of [...freshNewPools, ...sourceResults.flat(), ...birdeyeTrending, ...geckoTrending]) {
     if (token?.chainId !== "solana" || !token.tokenAddress) continue;
+
+    const suppliedPairCreatedAt = Number(token.pairCreatedAt);
+    if (Number.isFinite(suppliedPairCreatedAt) && suppliedPairCreatedAt > 0) {
+      knownPairCreatedAt.set(token.tokenAddress, suppliedPairCreatedAt);
+    }
+    const knownCreatedAt = Number(knownPairCreatedAt.get(token.tokenAddress));
+    if (
+      Number.isFinite(knownCreatedAt) &&
+      knownCreatedAt > 0 &&
+      Date.now() - knownCreatedAt > MAX_ENTRY_PAIR_AGE_MS
+    ) {
+      ageFilteredBeforeEnrichment += 1;
+      continue;
+    }
+
     const source = token.discoverySource || token.name || "DexScreener";
     const existing = unique.get(token.tokenAddress);
     if (!existing) {
@@ -563,6 +588,10 @@ async function discoverCandidatesR3({ signal } = {}) {
     } else if (!existing.discoverySources.includes(source)) {
       existing.discoverySources.push(source);
     }
+  }
+
+  if (ageFilteredBeforeEnrichment > 0) {
+    console.log(`R3 AGE FILTER | skipped ${ageFilteredBeforeEnrichment} known pairs older than 48h before enrichment`);
   }
 
   // Process multi-source discoveries first. Keep DexScreener enrichment fast enough
@@ -594,8 +623,18 @@ async function discoverCandidatesR3({ signal } = {}) {
   }
 
   const candidates = [];
+  let ageFilteredAfterEnrichment = 0;
   for (const { token, data } of enriched) {
     if (signal?.aborted) return [];
+
+    const pairCreatedAt = Number(data?.pairCreatedAt);
+    if (Number.isFinite(pairCreatedAt) && pairCreatedAt > 0) {
+      knownPairCreatedAt.set(token.tokenAddress, pairCreatedAt);
+      if (Date.now() - pairCreatedAt > MAX_ENTRY_PAIR_AGE_MS) {
+        ageFilteredAfterEnrichment += 1;
+        continue;
+      }
+    }
 
     const liquidity = Number(data.liquidityUsd) || 0;
     // R3 intentionally does not use 24h volume as a discovery gate.
@@ -689,6 +728,10 @@ async function discoverCandidatesR3({ signal } = {}) {
         : null,
       reactivationConfirmed: Boolean(reactivation.confirmed)
     });
+  }
+
+  if (ageFilteredAfterEnrichment > 0) {
+    console.log(`R3 AGE FILTER | blocked ${ageFilteredAfterEnrichment} newly-resolved pairs older than 48h`);
   }
 
   const updatedAt = new Date().toISOString();
