@@ -21,7 +21,7 @@ const page = `<!doctype html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Solana One Coin Bot</title>
+<title>V3.1 3-Slot Bot</title>
 
 <style>
 *{box-sizing:border-box}
@@ -208,9 +208,9 @@ th,td{
 
 <div class="header">
   <div>
-    <h1>Solana One Coin Bot</h1>
+    <h1>V3.1 Three Slot Bot</h1>
     <div class="subtitle">
-      Strategy V3.1 • Early Momentum • Paper Trading
+      Strategy V3.1 • 3 Slots • 10% Compound • Paper Trading
     </div>
   </div>
 
@@ -267,9 +267,7 @@ th,td{
 
 </div>
 
-<div class="card section">
-
-  <h2>Live Trade</h2>
+<div class="card section"><h2>Open Slots</h2><div class="value" id="slots">0 / 3</div></div>\n\n<div class="card section">\n\n  <h2>Live Trade</h2>
 
   <div id="live" class="empty">
     Waiting for a trade...
