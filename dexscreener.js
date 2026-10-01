@@ -28,6 +28,61 @@ const MARKET_DATA_QUARANTINE_MS = Math.max(
 
 const tokenMarketDataQuarantine = new Map();
 
+// Scanner discovery is lower priority than live position monitoring.
+// Dashboard reads may reuse recent pair data, but trading monitors always fetch fresh data.
+const DISCOVERY_REQUEST_GAP_MS = 300;
+const DASHBOARD_PAIR_CACHE_MS = 5000;
+let discoveryRequestChain = Promise.resolve();
+let lastDiscoveryRequestAt = 0;
+let monitorRequestsInFlight = 0;
+const dashboardPairCache = new Map();
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function waitForMonitorPriority(signal) {
+	while (monitorRequestsInFlight > 0) {
+		if (signal?.aborted) throw new Error("Request aborted");
+		await sleep(50);
+	}
+}
+
+function scheduleDiscoveryRequest(task, signal) {
+	const run = async () => {
+		await waitForMonitorPriority(signal);
+		const waitMs = Math.max(0, DISCOVERY_REQUEST_GAP_MS - (Date.now() - lastDiscoveryRequestAt));
+		if (waitMs) await sleep(waitMs);
+		await waitForMonitorPriority(signal);
+		lastDiscoveryRequestAt = Date.now();
+		return task();
+	};
+	const scheduled = discoveryRequestChain.then(run, run);
+	discoveryRequestChain = scheduled.catch(() => {});
+	return scheduled;
+}
+
+function dashboardCacheKey(tokenAddress, pairAddress) {
+	return tokenAddress + "::" + pairAddress;
+}
+
+function readDashboardPairCache(tokenAddress, pairAddress) {
+	const key = dashboardCacheKey(tokenAddress, pairAddress);
+	const cached = dashboardPairCache.get(key);
+	if (!cached) return null;
+	if (Date.now() - cached.at > DASHBOARD_PAIR_CACHE_MS) {
+		dashboardPairCache.delete(key);
+		return null;
+	}
+	return structuredClone(cached.data);
+}
+
+function writeDashboardPairCache(tokenAddress, pairAddress, data) {
+	if (!data) return;
+	dashboardPairCache.set(dashboardCacheKey(tokenAddress, pairAddress), {
+		at: Date.now(),
+		data: structuredClone(data)
+	});
+}
+
 function percentDeviation(value, reference) {
 	const current = Number(value);
 	const baseline = Number(reference);
@@ -147,7 +202,7 @@ function pairToTokenData(pair, tokenAddress) {
 	};
 }
 
-async function getTokenData(tokenAddress, { signal, pairAddress, referencePrice } = {}) {
+async function getTokenData(tokenAddress, { signal, pairAddress, referencePrice, consumer = "trading" } = {}) {
 	const discovery = !pairAddress;
 	const quarantine = discovery ? activeTokenQuarantine(tokenAddress) : null;
 	if (quarantine) {
@@ -168,8 +223,19 @@ async function getTokenData(tokenAddress, { signal, pairAddress, referencePrice 
 
 	try {
 		if (pairAddress) {
+			if (consumer === "dashboard") {
+				const cached = readDashboardPairCache(tokenAddress, pairAddress);
+				if (cached) return cached;
+			}
+
 			const url = "https://api.dexscreener.com/latest/dex/pairs/solana/" + encodeURIComponent(pairAddress);
-			const response = await axios.get(url, { timeout: 10000, signal });
+			monitorRequestsInFlight++;
+			let response;
+			try {
+				response = await axios.get(url, { timeout: 10000, signal });
+			} finally {
+				monitorRequestsInFlight = Math.max(0, monitorRequestsInFlight - 1);
+			}
 			const pairs = Array.isArray(response.data?.pairs)
 				? response.data.pairs
 				: response.data?.pair
@@ -272,11 +338,15 @@ async function getTokenData(tokenAddress, { signal, pairAddress, referencePrice 
 			}
 
 			recordSuccess();
+			writeDashboardPairCache(tokenAddress, pairAddress, data);
 			return data;
 		}
 
 		const url = "https://api.dexscreener.com/latest/dex/tokens/" + encodeURIComponent(tokenAddress);
-		const response = await axios.get(url, { timeout: 10000, signal });
+		const response = await scheduleDiscoveryRequest(
+			() => axios.get(url, { timeout: 10000, signal }),
+			signal
+		);
 		const pairs = response.data.pairs || [];
 
 		const solanaPairs = pairs.filter(
