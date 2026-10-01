@@ -123,7 +123,11 @@ async function control(action) {
 $("startButton").addEventListener("click", () => control("start"));
 $("stopButton").addEventListener("click", () => control("stop"));
 
+
+async function refreshSwarm() {
+ try { const d=await request("/api/swarm"); const slots=Array.isArray(d.slots)?d.slots:[]; $("swarmStatus").textContent=d.running?"RUNNING":"STOPPED"; $("swarmEquity").textContent=money(d.totalCapital); $("swarmPnl").textContent=money(d.totalPnl); $("swarmPnl").className="metric-value "+cls(d.totalPnl); $("swarmOpen").textContent=slots.filter(s=>s.position).length+" / 5"; $("swarmSlots").innerHTML=slots.slice(0,5).map(s=>"<tr><td>"+escapeHtml(s.id)+"</td><td>"+money(s.cashBalance)+"</td><td>"+escapeHtml(s.position?.symbol||"—")+"</td><td>"+money(s.position?.amountInvested||0)+"</td><td>"+number(s.completedTrades)+"</td><td>"+number(s.winners)+"</td><td>"+number(s.losers)+"</td></tr>").join("")||"<tr><td colspan=\"7\">No slots.</td></tr>"; } catch (_) {}
+}
 async function pollStatus() { await refreshStatus(); setTimeout(pollStatus, 2000); }
-async function pollData() { await refreshData(); setTimeout(pollData, 5000); }
+async function pollData() { await refreshData(); await refreshSwarm(); setTimeout(pollData, 5000); }
 pollStatus();
 pollData();
