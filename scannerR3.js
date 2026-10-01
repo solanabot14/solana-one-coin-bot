@@ -300,7 +300,7 @@ function failedLaunchRetryEligible(tokenAddress, history, analysis, data, stats)
   const state = exhausted.get(tokenAddress);
   if (!state || state.reason !== "FAILED LAUNCH") return false;
 
-  if (stats.losingFullExits > MAX_LOSING_EXITS_PER_TOKEN_24H) return false;
+  if (stats.losingFullExits >= MAX_LOSING_EXITS_PER_TOKEN_24H) return false;
   if (!resetStructureEligible(state, history)) return false;
 
   const metrics = analysis?.metrics || {};
