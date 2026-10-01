@@ -250,7 +250,7 @@ th,td{
   <div>
     <h1>Solana One Coin Bot</h1>
     <div class="subtitle">
-      R3 Early Runner • Acceleration Entry • Paper Trading
+      R3 Action Momentum • Multi-Source Momentum • Paper Trading
     </div>
   </div>
 
@@ -274,7 +274,7 @@ th,td{
 </p>
 
 <div class="tabs" role="tablist" aria-label="Dashboard views">
-  <button class="tab-button active" id="botTab" type="button">R3 Early Runner</button>
+  <button class="tab-button active" id="botTab" type="button">R3 Action Momentum</button>
   <button class="tab-button" id="slotTab" type="button">Swarm</button>
 </div>
 
@@ -385,7 +385,7 @@ th,td{
 
 <div class="card section">
 
-<h2>R3 Early Runner — Current Strategy</h2>
+<h2>R3 Action Momentum — Current Strategy</h2>
 
 <p class="muted">
   Current R3 paper trades are tracked here. V3.1R2 remains preserved below as the historical baseline for comparison.
@@ -934,7 +934,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           : [];
         return json(res, {
           generatedAt: new Date().toISOString(),
-          currentStrategy: "R3 Early Runner | Multi-scan acceleration + structural reset",
+          currentStrategy: "R3 Action Momentum | Multi-source discovery + momentum + structural reset",
           riskEngine: "R3: Hard Stop + Failed Launch + Early Giveback + Profit Lock + TP1 + TP2 + Runner Trailing + Structure Failure",
           livePosition: data.live || null,
           completedTrades,
