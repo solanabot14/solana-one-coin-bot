@@ -39,68 +39,75 @@ async function request(url, options = {}) {
 	return response.json();
 }
 
-function renderLiveTrade(d) {
-	const position = d.position, live = d.live;
-	if (!position) { $("live").textContent = "Waiting for a trade..."; return; }
-	if (!live) { $("live").textContent = (position.symbol || "Open position") + " — price unavailable. Position remains open."; return; }
+function renderLivePosition(position, live, index) {
 	const chart = dexLink(position, live);
-	const reasons = Array.isArray(position.entryReasons) && position.entryReasons.length ? position.entryReasons.map(escapeHtml).join(" • ") : "No entry reasons recorded.";
+	const reasons = Array.isArray(position.entryReasons) && position.entryReasons.length
+		? position.entryReasons.map(escapeHtml).join(" • ")
+		: "No entry reasons recorded.";
 	const tp1 = position.firstTakeProfitDone ? "DONE" : "Waiting +15%";
 	const tp2 = position.secondTakeProfitDone ? "DONE" : "Waiting +30%";
-	const profitLock = live.profitLockActive ? "ACTIVE" : "OFF";
-	const protectedFloor = live.protectedFloorPercent == null ? "—" : pct(live.protectedFloorPercent);
-	const trailingLevel = live.trailingExitPrice == null
+	const profitLock = live?.profitLockActive ? "ACTIVE" : "OFF";
+	const protectedFloor = live?.protectedFloorPercent == null ? "—" : pct(live.protectedFloorPercent);
+	const trailingLevel = live?.trailingExitPrice == null
 		? "—"
 		: `${price(live.trailingExitPrice)} (${pct(live.trailingExitPercent)})`;
-	$("live").innerHTML = `
-		<div class="live-title"><span class="coin-name">${escapeHtml(position.symbol)}</span>
-			<span class="badge">${escapeHtml(position.strategyVersion || "R3-EARLY-RUNNER")}</span>
-			<span class="badge">Score ${escapeHtml(position.entryScore ?? "—")}</span>
-			<span class="badge">${escapeHtml(position.entrySignal || "—")}</span>
-			${chart ? `<a class="small-link" href="${chart}" target="_blank" rel="noopener noreferrer">View on DexScreener</a>` : ""}
-		</div>
-		<div class="grid">
-			<div class="metric"><div class="metric-label">Entry Price</div><div class="metric-value">${price(position.entryPrice)}</div></div>
-			<div class="metric"><div class="metric-label">Current Price</div><div class="metric-value">${price(live.currentPrice)}</div></div>
-			<div class="metric"><div class="metric-label">Highest Price</div><div class="metric-value">${price(live.highestPrice)}</div></div>
-			<div class="metric"><div class="metric-label">Amount Invested</div><div class="metric-value">${money(position.amountInvested)}</div></div>
-			<div class="metric"><div class="metric-label">Current Value</div><div class="metric-value">${money(live.currentValue)}</div></div>
-			<div class="metric"><div class="metric-label">Live P/L</div><div class="metric-value ${cls(live.pnl)}">${money(live.pnl)} (${pct(live.pnlPercent)})</div></div>
-			<div class="metric"><div class="metric-label">Max Gain</div><div class="metric-value ${cls(live.maxGainPercent)}">${pct(live.maxGainPercent)}</div></div>
-			<div class="metric"><div class="metric-label">Mode</div><div class="metric-value">${escapeHtml(live.mode || "NORMAL")}</div></div>
-			<div class="metric"><div class="metric-label">Profit Lock</div><div class="metric-value">${profitLock}</div></div>
-			<div class="metric"><div class="metric-label">Protected Floor</div><div class="metric-value ${cls(live.protectedFloorPercent)}">${protectedFloor}</div></div>
-			<div class="metric"><div class="metric-label">Runner Trailing Exit</div><div class="metric-value">${trailingLevel}</div></div>
-			<div class="metric"><div class="metric-label">Time in Trade</div><div class="metric-value">${duration(live.holdTimeMs)}</div></div>
-			<div class="metric"><div class="metric-label">Current 5m</div><div class="metric-value ${cls(live.priceChange5m)}">${pct(live.priceChange5m)}</div></div>
-			<div class="metric"><div class="metric-label">Current 1h</div><div class="metric-value ${cls(live.priceChange1h)}">${pct(live.priceChange1h)}</div></div>
-			<div class="metric"><div class="metric-label">Current 24h</div><div class="metric-value ${cls(live.priceChange24h)}">${pct(live.priceChange24h)}</div></div>
-			<div class="metric"><div class="metric-label">Current Buy Ratio</div><div class="metric-value">${pct(Number(live.buyRatio5m || 0) * 100)}</div></div>
-			<div class="metric"><div class="metric-label">5m Buys / Sells</div><div class="metric-value">${number(live.buys5m)} / ${number(live.sells5m)}</div></div>
-			<div class="metric"><div class="metric-label">Liquidity</div><div class="metric-value">${money(live.liquidityUsd)}</div></div>
-			<div class="metric"><div class="metric-label">Current 5m Volume</div><div class="metric-value">${money(live.volume5m)}</div></div>
-			<div class="metric"><div class="metric-label">24h Volume</div><div class="metric-value">${money(live.volume24h)}</div></div>
-			<div class="metric"><div class="metric-label">TP1</div><div class="metric-value">${tp1}</div></div>
-			<div class="metric"><div class="metric-label">TP2</div><div class="metric-value">${tp2}</div></div>
-		</div>
-		<div class="reasons"><strong>Entry Conditions</strong><br>
-			Entry 5m: ${pct(position.entryPriceChange5m)} &nbsp; | &nbsp;
-			Entry 1h: ${pct(position.entryPriceChange1h)} &nbsp; | &nbsp;
-			Entry 24h: ${pct(position.entryPriceChange24h)}<br>
-			Entry Buy Ratio: ${entryRatio(position)} &nbsp; | &nbsp;
-			Transactions: ${number(position.entryTransactions5m)}<br>
-			Entry Liquidity: ${money(position.entryLiquidityUsd)} &nbsp; | &nbsp;
-			Entry 5m Volume: ${money(position.entryVolume5m)} &nbsp; | &nbsp;
-			Entry 24h Volume: ${money(position.entryVolume24h)}<br>
-			15m Observed Extension: ${pct(position.entryPostPump?.extensionPercent)} &nbsp; | &nbsp;
-			Historical 15m: ${pct(position.entryPreDiscoveryPump?.window15m?.extensionPercent)} &nbsp; | &nbsp;
-			Historical 30m: ${pct(position.entryPreDiscoveryPump?.window30m?.extensionPercent)}<br>
-			Pre-Discovery Check: ${escapeHtml(position.entryPreDiscoveryPump?.status || "—")} &nbsp; | &nbsp;
-			Failed Structure: ${position.entryPreDiscoveryPump?.failedStructure?.blocked ? "BLOCKED" : "OK"}<br>
-			Smart Money: ${escapeHtml(smartMoneyLabel(position.entrySmartMoney))}<br>
-			Source: ${escapeHtml((position.entryDiscoverySources || []).join(", ") || "—")}<br><br>
-			<strong>Strategy Reasons:</strong> ${reasons}
+
+	return `
+		<div class="card section" style="margin:12px 0">
+			<div class="live-title">
+				<span class="coin-name">Slot ${index + 1} — ${escapeHtml(position.symbol)}</span>
+				<span class="badge">${escapeHtml(position.strategyVersion || "R3-EARLY-RUNNER")}</span>
+				<span class="badge">Score ${escapeHtml(position.entryScore ?? "—")}</span>
+				<span class="badge">${escapeHtml(position.entrySignal || "—")}</span>
+				${chart ? `<a class="small-link" href="${chart}" target="_blank" rel="noopener noreferrer">View on DexScreener</a>` : ""}
+				<button type="button" data-manual-exit="${escapeHtml(position.id || "")}">Manual Exit</button>
+			</div>
+			${!live ? `<p class="muted">Fresh price unavailable. Position remains open and the trading monitor keeps control of exits.</p>` : `
+			<div class="grid">
+				<div class="metric"><div class="metric-label">Entry Price</div><div class="metric-value">${price(position.entryPrice)}</div></div>
+				<div class="metric"><div class="metric-label">Current Price</div><div class="metric-value">${price(live.currentPrice)}</div></div>
+				<div class="metric"><div class="metric-label">Highest Price</div><div class="metric-value">${price(live.highestPrice)}</div></div>
+				<div class="metric"><div class="metric-label">Amount Invested</div><div class="metric-value">${money(position.amountInvested)}</div></div>
+				<div class="metric"><div class="metric-label">Current Value</div><div class="metric-value">${money(live.currentValue)}</div></div>
+				<div class="metric"><div class="metric-label">Live P/L</div><div class="metric-value ${cls(live.pnl)}">${money(live.pnl)} (${pct(live.pnlPercent)})</div></div>
+				<div class="metric"><div class="metric-label">Max Gain</div><div class="metric-value ${cls(live.maxGainPercent)}">${pct(live.maxGainPercent)}</div></div>
+				<div class="metric"><div class="metric-label">Mode</div><div class="metric-value">${escapeHtml(live.mode || "NORMAL")}</div></div>
+				<div class="metric"><div class="metric-label">Profit Lock</div><div class="metric-value">${profitLock}</div></div>
+				<div class="metric"><div class="metric-label">Protected Floor</div><div class="metric-value ${cls(live.protectedFloorPercent)}">${protectedFloor}</div></div>
+				<div class="metric"><div class="metric-label">Runner Trailing Exit</div><div class="metric-value">${trailingLevel}</div></div>
+				<div class="metric"><div class="metric-label">Time in Trade</div><div class="metric-value">${duration(live.holdTimeMs)}</div></div>
+				<div class="metric"><div class="metric-label">Current 5m</div><div class="metric-value ${cls(live.priceChange5m)}">${pct(live.priceChange5m)}</div></div>
+				<div class="metric"><div class="metric-label">Current 1h</div><div class="metric-value ${cls(live.priceChange1h)}">${pct(live.priceChange1h)}</div></div>
+				<div class="metric"><div class="metric-label">Current Buy Ratio</div><div class="metric-value">${pct(Number(live.buyRatio5m || 0) * 100)}</div></div>
+				<div class="metric"><div class="metric-label">5m Buys / Sells</div><div class="metric-value">${number(live.buys5m)} / ${number(live.sells5m)}</div></div>
+				<div class="metric"><div class="metric-label">Liquidity</div><div class="metric-value">${money(live.liquidityUsd)}</div></div>
+				<div class="metric"><div class="metric-label">Current 5m Volume</div><div class="metric-value">${money(live.volume5m)}</div></div>
+				<div class="metric"><div class="metric-label">TP1</div><div class="metric-value">${tp1}</div></div>
+				<div class="metric"><div class="metric-label">TP2</div><div class="metric-value">${tp2}</div></div>
+			</div>`}
+			<div class="reasons"><strong>Entry Conditions</strong><br>
+				Entry 5m: ${pct(position.entryPriceChange5m)} &nbsp; | &nbsp;
+				Entry 1h: ${pct(position.entryPriceChange1h)} &nbsp; | &nbsp;
+				Entry Buy Ratio: ${entryRatio(position)} &nbsp; | &nbsp;
+				Transactions: ${number(position.entryTransactions5m)}<br>
+				Entry Liquidity: ${money(position.entryLiquidityUsd)} &nbsp; | &nbsp;
+				Entry 5m Volume: ${money(position.entryVolume5m)}<br>
+				<strong>Strategy Reasons:</strong> ${reasons}
+			</div>
 		</div>`;
+}
+
+function renderLiveTrade(d) {
+	const positions = Array.isArray(d.positions) ? d.positions.filter(Boolean) : (d.position ? [d.position] : []);
+	const livePositions = Array.isArray(d.livePositions) ? d.livePositions : (d.live ? [d.live] : []);
+	if (!positions.length) {
+		$("live").textContent = "Waiting for a trade...";
+		return;
+	}
+	$("live").innerHTML = positions.map((position, index) => {
+		const live = livePositions.find(item => item?.positionId === position.id) || null;
+		return renderLivePosition(position, live, index);
+	}).join("");
 }
 
 
@@ -421,6 +428,26 @@ async function control(action) {
 
 $("startButton").addEventListener("click", () => control("start"));
 $("stopButton").addEventListener("click", () => control("stop"));
+
+$("live").addEventListener("click", async event => {
+	const button = event.target.closest("[data-manual-exit]");
+	if (!button) return;
+	const positionId = button.getAttribute("data-manual-exit");
+	if (!positionId) return;
+	button.disabled = true;
+	try {
+		await request("/api/manual-exit?positionId=" + encodeURIComponent(positionId), {
+			method:"POST",
+			headers:{"X-Bot-Control":"1"}
+		});
+		$("notice").textContent = "Manual exit completed.";
+		await refreshData();
+	} catch (error) {
+		$("notice").textContent = "Manual exit failed: " + error.message;
+	} finally {
+		button.disabled = false;
+	}
+});
 $("botTab").addEventListener("click", () => showTab("bot"));
 $("slotTab").addEventListener("click", () => showTab("slot"));
 
