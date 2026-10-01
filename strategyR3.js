@@ -19,7 +19,16 @@ const CONFIG = Object.freeze({
   supportVolume1hGrowthPct: 5,
   maxLiquidityDrawdownPct: 12,
   provisionalMinVolume5mGrowthPct: 50,
-    provisionalMinVolume5m: 2000
+  provisionalMinVolume5m: 2000,
+  breakoutMaxChange5m: 6,
+  breakoutMaxChange1h: 30,
+  breakoutMinScore: 11,
+  breakoutMinVolume5mGrowthPct: 50,
+  breakoutMinVolume5m: 5000,
+  breakoutMinTransactions5m: 30,
+  breakoutMinBuyRatio: 0.55,
+  breakoutMaxBuyRatio: 0.75,
+  breakoutMaxLiquidityDrawdownPct: 8
 });
 
 function pctChange(current, previous) {
@@ -207,6 +216,33 @@ function analyzeEarlyRunner(history, data, config = CONFIG) {
     tx >= config.minTransactions5m &&
     buyRatio >= config.minBuyRatio &&
     buyRatio <= config.maxBuyRatio;
+
+  // Controlled breakout lane:
+  // R3 may enter a moderately extended 5m move only when order flow, volume,
+  // transactions and liquidity structure are materially stronger than the
+  // normal entry path. Moves above the breakout ceiling remain chase-blocked.
+  const breakoutEntryReady =
+    shortTermExtended &&
+    change5m < config.breakoutMaxChange5m &&
+    change1h >= -10 &&
+    change1h <= config.breakoutMaxChange1h &&
+    score >= config.breakoutMinScore &&
+    volume5mGrowthPct !== null &&
+    volume5mGrowthPct >= config.breakoutMinVolume5mGrowthPct &&
+    volume5m >= config.breakoutMinVolume5m &&
+    tx >= config.breakoutMinTransactions5m &&
+    buyRatio >= config.breakoutMinBuyRatio &&
+    buyRatio <= config.breakoutMaxBuyRatio &&
+    liquidityDrawdownPct <= config.breakoutMaxLiquidityDrawdownPct;
+
+  if (breakoutEntryReady) {
+    return {
+      signal: "BREAKOUT EARLY RUNNER",
+      score,
+      reasons: [...reasons, "Controlled 4-6% breakout with strong order flow and volume confirmation"],
+      metrics
+    };
+  }
 
   // A strong runner that is already hot stays under observation rather than
   // being discarded. It must cool below anti-chase before an entry is allowed.
