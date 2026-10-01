@@ -44,6 +44,8 @@ const freshDiscoveryQueue = new Map();
 const WATCH_MIN_LIQUIDITY = 25000;
 const REACTIVATION_AGE_MS = 24 * 60 * 60 * 1000;
 const REACTIVATION_DEAD_BASELINE_VOL5M = 500;
+const REACTIVATION_LOOKBACK_OBSERVATIONS = 8;
+const REACTIVATION_MIN_DEAD_OBSERVATIONS = 2;
 const REACTIVATION_SPIKE_GROWTH_PCT = 500;
 const REACTIVATION_CONFIRM_MAX_MS = 5 * 60 * 1000;
 const REACTIVATION_MIN_RETAINED_VOLUME_RATIO = 0.50;
@@ -491,10 +493,20 @@ function reactivationStatus(tokenAddress, data, history, isEntrySignal) {
   const ageMs = Date.now() - pairCreatedAt;
   if (ageMs < REACTIVATION_AGE_MS) return { blocked: false, confirmed: false };
 
-  const prior = (Array.isArray(history) ? history.slice(0, -1) : []).slice(-2);
+  const prior = (Array.isArray(history) ? history.slice(0, -1) : [])
+    .slice(-REACTIVATION_LOOKBACK_OBSERVATIONS);
   if (!prior.length) return { blocked: false, confirmed: false };
 
-  const baselineVol5m = Math.max(...prior.map(x => Number(x?.volume5m) || 0));
+  // A mature token should not erase a recently-dead baseline just because its
+  // last one or two scans already contain the spike. Require at least two low-
+  // activity observations in the recent history, then compare the current
+  // volume against that dead baseline.
+  const deadObservations = prior.filter(
+    x => (Number(x?.volume5m) || 0) <= REACTIVATION_DEAD_BASELINE_VOL5M
+  );
+  const baselineVol5m = deadObservations.length
+    ? Math.max(...deadObservations.map(x => Number(x?.volume5m) || 0))
+    : Math.max(...prior.map(x => Number(x?.volume5m) || 0));
   const currentVol5m = Number(data?.volume5m) || 0;
   const growthPct = baselineVol5m > 0
     ? ((currentVol5m - baselineVol5m) / baselineVol5m) * 100
@@ -519,6 +531,7 @@ function reactivationStatus(tokenAddress, data, history, isEntrySignal) {
   }
 
   const deadBaseSpike =
+    deadObservations.length >= REACTIVATION_MIN_DEAD_OBSERVATIONS &&
     baselineVol5m <= REACTIVATION_DEAD_BASELINE_VOL5M &&
     currentVol5m >= 2000 &&
     growthPct >= REACTIVATION_SPIKE_GROWTH_PCT;
@@ -554,8 +567,8 @@ async function discoverCandidatesR3({ signal } = {}) {
 
   // Process multi-source discoveries first. Keep DexScreener enrichment fast enough
   // for the 1-minute scanner, but deliberately pace requests to avoid 429 bursts.
-  const TOKEN_DATA_CONCURRENCY = 3;
-  const TOKEN_DATA_BATCH_DELAY_MS = 800;
+  const TOKEN_DATA_CONCURRENCY = 4;
+  const TOKEN_DATA_BATCH_DELAY_MS = 650;
   const prioritizedTokens = [...unique.values()].sort((a, b) => {
     const sourceDiff = (b.discoverySources?.length || 0) - (a.discoverySources?.length || 0);
     if (sourceDiff !== 0) return sourceDiff;
