@@ -24,7 +24,22 @@ const BIRDEYE_TRENDING_REFRESH_MS = Math.max(
 );
 let birdeyeTrendingCache = { updatedAt: 0, tokens: [], lastStatus: "NOT_FETCHED" };
 
+const GECKO_BASE_URL = "https://api.geckoterminal.com/api/v2/networks/solana";
+const GECKO_REFRESH_MS = Math.max(
+  5 * 60 * 1000,
+  (Number.parseInt(process.env.GECKO_REFRESH_MINUTES || "5", 10) || 5) * 60 * 1000
+);
+const geckoCaches = {
+  trending: { updatedAt: 0, tokens: [], lastStatus: "NOT_FETCHED" },
+  newPools: { updatedAt: 0, tokens: [], lastStatus: "NOT_FETCHED" }
+};
+
 const WATCH_MIN_LIQUIDITY = 25000;
+const REACTIVATION_AGE_MS = 24 * 60 * 60 * 1000;
+const REACTIVATION_DEAD_BASELINE_VOL5M = 500;
+const REACTIVATION_SPIKE_GROWTH_PCT = 500;
+const REACTIVATION_CONFIRM_MAX_MS = 5 * 60 * 1000;
+const REACTIVATION_MIN_RETAINED_VOLUME_RATIO = 0.50;
 const HISTORY_TTL_MS = 45 * 60 * 1000;
 const RESET_MIN_MS = 10 * 60 * 1000;
 const REENTRY_LOOKBACK_MS = 24 * 60 * 60 * 1000;
@@ -40,6 +55,7 @@ const RESET_MIN_VOL5M_GROWTH_PCT = 25;
 const RESET_MAX_LIQUIDITY_DRAWDOWN_PCT = 12;
 const histories = new Map();
 const exhausted = new Map();
+const reactivationWatches = new Map();
 
 function dataDirectory() {
   return path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DATA_DIR || __dirname);
@@ -376,15 +392,128 @@ async function fetchBirdeyeTrendingTokens(signal) {
   }
 }
 
+
+function geckoTokenAddressFromRelationship(relationship) {
+  const rawId = relationship?.data?.id;
+  if (!rawId || typeof rawId !== "string") return null;
+  return rawId.startsWith("solana_") ? rawId.slice("solana_".length) : rawId;
+}
+
+function geckoPoolTokens(payload, discoverySource) {
+  const seen = new Set();
+  const tokens = [];
+  for (const pool of Array.isArray(payload?.data) ? payload.data : []) {
+    const tokenAddress = geckoTokenAddressFromRelationship(pool?.relationships?.base_token);
+    if (!tokenAddress || seen.has(tokenAddress)) continue;
+    seen.add(tokenAddress);
+    tokens.push({ chainId: "solana", tokenAddress, discoverySource });
+  }
+  return tokens;
+}
+
+async function fetchGeckoPoolTokens(kind, signal) {
+  const cache = geckoCaches[kind];
+  const now = Date.now();
+  const ageMs = now - cache.updatedAt;
+  const endpoint = kind === "trending" ? "trending_pools" : "new_pools";
+  const sourceName = kind === "trending" ? "Gecko Trending Pools" : "Gecko New Pools";
+
+  if (cache.updatedAt && ageMs < GECKO_REFRESH_MS) {
+    console.log(
+      `R3 DISCOVERY | ${sourceName} | ${cache.tokens.length} cached | age ${Math.round(ageMs / 60000)}m`
+    );
+    return structuredClone(cache.tokens);
+  }
+
+  try {
+    const response = await axios.get(`${GECKO_BASE_URL}/${endpoint}`, {
+      timeout: 10000,
+      signal,
+      headers: { Accept: "application/json;version=20230302" }
+    });
+    const tokens = geckoPoolTokens(response.data, sourceName).slice(0, 20);
+    geckoCaches[kind] = { updatedAt: now, tokens: structuredClone(tokens), lastStatus: "OK" };
+    console.log(`R3 DISCOVERY | ${sourceName} | ${tokens.length} tokens received`);
+    return tokens;
+  } catch (error) {
+    const status = error?.response?.status || "ERROR";
+    // Fail open: discovery continues with DexScreener/Birdeye if Gecko is unavailable.
+    geckoCaches[kind] = { updatedAt: now, tokens: [], lastStatus: String(status) };
+    console.log(`R3 DISCOVERY | ${sourceName} unavailable | ${error.message}`);
+    return [];
+  }
+}
+
+function reactivationStatus(tokenAddress, data, history, isEntrySignal) {
+  if (!isEntrySignal) return { blocked: false, confirmed: false };
+
+  const pairCreatedAt = Number(data?.pairCreatedAt);
+  if (!Number.isFinite(pairCreatedAt) || pairCreatedAt <= 0) {
+    return { blocked: false, confirmed: false };
+  }
+
+  const ageMs = Date.now() - pairCreatedAt;
+  if (ageMs < REACTIVATION_AGE_MS) return { blocked: false, confirmed: false };
+
+  const prior = (Array.isArray(history) ? history.slice(0, -1) : []).slice(-2);
+  if (!prior.length) return { blocked: false, confirmed: false };
+
+  const baselineVol5m = Math.max(...prior.map(x => Number(x?.volume5m) || 0));
+  const currentVol5m = Number(data?.volume5m) || 0;
+  const growthPct = baselineVol5m > 0
+    ? ((currentVol5m - baselineVol5m) / baselineVol5m) * 100
+    : currentVol5m > 0 ? Infinity : 0;
+
+  const existing = reactivationWatches.get(tokenAddress);
+  if (existing) {
+    const elapsed = Date.now() - Number(existing.at || 0);
+    if (elapsed > REACTIVATION_CONFIRM_MAX_MS) {
+      reactivationWatches.delete(tokenAddress);
+    } else {
+      const retainedFloor = Math.max(
+        2000,
+        Number(existing.triggerVolume5m || 0) * REACTIVATION_MIN_RETAINED_VOLUME_RATIO
+      );
+      if (currentVol5m >= retainedFloor) {
+        reactivationWatches.delete(tokenAddress);
+        return { blocked: false, confirmed: true, ageMs, baselineVol5m, currentVol5m };
+      }
+      return { blocked: true, confirmed: false, ageMs, baselineVol5m, currentVol5m };
+    }
+  }
+
+  const deadBaseSpike =
+    baselineVol5m <= REACTIVATION_DEAD_BASELINE_VOL5M &&
+    currentVol5m >= 2000 &&
+    growthPct >= REACTIVATION_SPIKE_GROWTH_PCT;
+
+  if (!deadBaseSpike) return { blocked: false, confirmed: false, ageMs, baselineVol5m, currentVol5m };
+
+  reactivationWatches.set(tokenAddress, {
+    at: Date.now(),
+    triggerVolume5m: currentVol5m,
+    baselineVol5m
+  });
+  return { blocked: true, confirmed: false, ageMs, baselineVol5m, currentVol5m };
+}
+
 async function discoverCandidatesR3({ signal } = {}) {
-  const [sourceResults, birdeyeTrending] = await Promise.all([
+  const [sourceResults, birdeyeTrending, geckoTrending, geckoNewPools] = await Promise.all([
     Promise.all(DISCOVERY_SOURCES.map(source => fetchSource(source, signal))),
-    fetchBirdeyeTrendingTokens(signal)
+    fetchBirdeyeTrendingTokens(signal),
+    fetchGeckoPoolTokens("trending", signal),
+    fetchGeckoPoolTokens("newPools", signal)
   ]);
   const unique = new Map();
-  for (const token of [...sourceResults.flat(), ...birdeyeTrending]) {
+  for (const token of [...sourceResults.flat(), ...birdeyeTrending, ...geckoTrending, ...geckoNewPools]) {
     if (token?.chainId !== "solana" || !token.tokenAddress) continue;
-    if (!unique.has(token.tokenAddress)) unique.set(token.tokenAddress, token);
+    const source = token.discoverySource || token.name || "DexScreener";
+    const existing = unique.get(token.tokenAddress);
+    if (!existing) {
+      unique.set(token.tokenAddress, { ...token, discoverySources: [source] });
+    } else if (!existing.discoverySources.includes(source)) {
+      existing.discoverySources.push(source);
+    }
   }
 
   const candidates = [];
@@ -406,8 +535,11 @@ async function discoverCandidatesR3({ signal } = {}) {
       analysis.signal === "EARLY RUNNER" ||
       analysis.signal === "PROVISIONAL EARLY RUNNER";
 
+    const reactivation = reactivationStatus(token.tokenAddress, data, history, isEntrySignal);
+    const entryNeedsSecurity = isEntrySignal && !reactivation.blocked;
+
     let security = { ok: true, reasons: [], lpLockedPct: null };
-    if (isEntrySignal) {
+    if (entryNeedsSecurity) {
       const integrity = marketDataIntegritySnapshot(data, token.tokenAddress);
       if (!integrity.ok) {
         security = { ok: false, reasons: integrity.reasons, lpLockedPct: null };
@@ -431,11 +563,12 @@ async function discoverCandidatesR3({ signal } = {}) {
     const resetOk = resetEligible(token.tokenAddress, history);
     const reentryStats = recentTokenStats(token.tokenAddress);
     const failedLaunchRetryOk =
-      isEntrySignal &&
+      entryNeedsSecurity &&
       failedLaunchRetryEligible(token.tokenAddress, history, analysis, data, reentryStats);
 
     const signalName =
-      isEntrySignal && !security.ok ? "SECURITY VETO" :
+      isEntrySignal && reactivation.blocked ? "REACTIVATION WATCH" :
+      entryNeedsSecurity && !security.ok ? "SECURITY VETO" :
       failedLaunchRetryOk ? "FAILED LAUNCH RETRY" :
       isEntrySignal &&
         (reentryStats.entries >= MAX_ENTRIES_PER_TOKEN_24H ||
@@ -461,6 +594,9 @@ async function discoverCandidatesR3({ signal } = {}) {
       `R3 WATCH | ${data.symbol} | ${signalName} | Score ${analysis.score} | Liq ${liquidity.toFixed(0)} | Vol5m ${Number(data.volume5m || 0).toFixed(0)} | LiqΔ ${analysis.metrics.liquidityGrowthPct?.toFixed?.(1) ?? "n/a"}% | Vol5mΔ ${analysis.metrics.volume5mGrowthPct?.toFixed?.(1) ?? "n/a"}%` +
       (blockers.length
         ? ` | BLOCKED ${blockers.join(",")} | 5m ${Number(data.priceChange5m || 0).toFixed(2)}% | 1h ${Number(data.priceChange1h || 0).toFixed(2)}% | Tx ${tx} | Buy ${(buyRatio * 100).toFixed(1)}%`
+        : "") +
+      (signalName === "REACTIVATION WATCH"
+        ? ` | AGE ${(Number(reactivation.ageMs || 0) / 3600000).toFixed(1)}h | BASE_VOL5M ${Number(reactivation.baselineVol5m || 0).toFixed(0)}`
         : "")
     );
 
@@ -471,7 +607,12 @@ async function discoverCandidatesR3({ signal } = {}) {
       signal: signalName,
       reasons: analysis.reasons,
       r3Metrics: analysis.metrics,
-      r3Security: security
+      r3Security: security,
+      discoverySources: token.discoverySources || [token.discoverySource || "DexScreener"],
+      pairAgeHours: Number(data.pairCreatedAt) > 0
+        ? (Date.now() - Number(data.pairCreatedAt)) / (60 * 60 * 1000)
+        : null,
+      reactivationConfirmed: Boolean(reactivation.confirmed)
     });
   }
 
