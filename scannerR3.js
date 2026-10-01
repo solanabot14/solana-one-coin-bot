@@ -700,7 +700,8 @@ async function discoverCandidatesR3({ signal } = {}) {
 
     const isEntrySignal =
       analysis.signal === "EARLY RUNNER" ||
-      analysis.signal === "PROVISIONAL EARLY RUNNER";
+      analysis.signal === "PROVISIONAL EARLY RUNNER" ||
+      analysis.signal === "BREAKOUT EARLY RUNNER";
 
     const reactivation = reactivationStatus(token.tokenAddress, data, history, isEntrySignal);
     const entryNeedsSecurity = isEntrySignal && !reactivation.blocked;
@@ -754,6 +755,15 @@ async function discoverCandidatesR3({ signal } = {}) {
       if (!(Number(data.priceChange5m) >= 0.10 && Number(data.priceChange5m) < 4)) blockers.push("PRICE_5M");
       if (!(Number(data.priceChange1h) >= -10 && Number(data.priceChange1h) <= 40)) blockers.push("PRICE_1H");
       if (!(Number(analysis.metrics.liquidityDrawdownPct) <= 12)) blockers.push("LIQ_DRAWDOWN");
+    } else if (analysis.signal === "EXTENDED-WATCH") {
+      if (!(Number(analysis.score) >= 10)) blockers.push("BREAKOUT_SCORE");
+      if (!(Number(analysis.metrics.volume5mGrowthPct) >= 40)) blockers.push("BREAKOUT_VOL_GROWTH");
+      if (!(Number(data.volume5m) >= 3000)) blockers.push("BREAKOUT_VOL5M");
+      if (!(tx >= 25)) blockers.push("BREAKOUT_TX");
+      if (!(buyRatio >= 0.52 && buyRatio <= 0.80)) blockers.push("BREAKOUT_BUY_RATIO");
+      if (!(Number(data.priceChange5m) >= 4 && Number(data.priceChange5m) < 7)) blockers.push("BREAKOUT_PRICE_5M");
+      if (!(Number(data.priceChange1h) >= -10 && Number(data.priceChange1h) <= 35)) blockers.push("BREAKOUT_PRICE_1H");
+      if (!(Number(analysis.metrics.liquidityDrawdownPct) <= 10)) blockers.push("BREAKOUT_LIQ_DRAWDOWN");
     }
 
     console.log(
