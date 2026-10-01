@@ -136,56 +136,42 @@ function buildScoreStats(completedTrades) {
 }
 
 async function buildDashboardData(data, getTokenData) {
-	const completedTrades = groupCompletedTrades(data.history, data.position);
-	let live = null;
-	if (data.position) {
-		const fresh = await getTokenData(data.position.tokenAddress);
-		const currentPrice = Number(fresh?.priceUsd);
-		if (Number.isFinite(currentPrice) && currentPrice > 0) {
-			const p = data.position;
-			const currentValue = p.quantity * currentPrice;
-			const pnl = currentValue - p.amountInvested;
-			const highestPrice = Number(p.highestPrice || p.entryPrice);
-			const maxGainPercent = Number(p.entryPrice) > 0 ? (highestPrice - Number(p.entryPrice)) / Number(p.entryPrice) * 100 : null;
-			const holdTimeMs = Math.max(0, Date.now() - new Date(p.entryTime).getTime());
-			const buys5m = Number(fresh.buys5m) || 0;
-			const sells5m = Number(fresh.sells5m) || 0;
-			const transactions5m = buys5m + sells5m;
-			live = {
-				currentPrice, currentValue, pnl, pnlPercent: p.amountInvested > 0 ? pnl / p.amountInvested * 100 : 0,
-				highestPrice, maxGainPercent, holdTimeMs,
-				priceChange5m: fresh.priceChange5m, priceChange1h: fresh.priceChange1h, priceChange24h: fresh.priceChange24h,
-				liquidityUsd: fresh.liquidityUsd, volume24h: fresh.volume24h, buys5m, sells5m, transactions5m,
-				buyRatio5m: transactions5m > 0 ? buys5m / transactions5m : 0,
-				pairAddress: p.pairAddress || fresh.pairAddress || null
-			};
-		}
+	const positions = Array.isArray(data.positions) ? data.positions : (data.position ? [data.position] : []);
+	const completedTrades = groupCompletedTrades(data.history, null).filter(t => !positions.some(p => p.id && p.id === t.positionId));
+	const livePositions = [];
+	for (const p of positions) {
+		let live = null;
+		try {
+			const fresh = await getTokenData(p.tokenAddress);
+			const currentPrice = Number(fresh?.priceUsd);
+			if (Number.isFinite(currentPrice) && currentPrice > 0) {
+				const currentValue = p.quantity * currentPrice, pnl = currentValue - p.amountInvested;
+				const highestPrice = Number(p.highestPrice || p.entryPrice);
+				const buys5m=Number(fresh.buys5m)||0, sells5m=Number(fresh.sells5m)||0, transactions5m=buys5m+sells5m;
+				live={currentPrice,currentValue,pnl,pnlPercent:p.amountInvested>0?pnl/p.amountInvested*100:0,highestPrice,
+					maxGainPercent:Number(p.entryPrice)>0?(highestPrice-Number(p.entryPrice))/Number(p.entryPrice)*100:null,
+					holdTimeMs:Math.max(0,Date.now()-new Date(p.entryTime).getTime()),priceChange5m:fresh.priceChange5m,
+					priceChange1h:fresh.priceChange1h,priceChange24h:fresh.priceChange24h,liquidityUsd:fresh.liquidityUsd,
+					volume24h:fresh.volume24h,buys5m,sells5m,transactions5m,buyRatio5m:transactions5m?buys5m/transactions5m:0,
+					pairAddress:p.pairAddress||fresh.pairAddress||null};
+			}
+		} catch (_) {}
+		livePositions.push({position:p,live});
 	}
-
-	const grossProfit = completedTrades.reduce((sum, trade) => sum + Math.max(trade.pnl, 0), 0);
-	const grossLoss = completedTrades.reduce((sum, trade) => sum + Math.max(-trade.pnl, 0), 0);
-	const winners = completedTrades.filter(trade => trade.pnl > 0).length;
-	const losers = completedTrades.filter(trade => trade.pnl < 0).length;
-	const equity = data.position && !live ? null : data.cashBalance + (live?.currentValue || 0);
-	const winnerReturns = completedTrades.filter(t => t.pnl > 0).map(t => Number(t.pnlPercent));
-	const loserReturns = completedTrades.filter(t => t.pnl < 0).map(t => Number(t.pnlPercent));
-	const holdTimes = completedTrades.map(t => Number(t.holdTimeMs)).filter(Number.isFinite);
-	const maxGains = completedTrades.map(t => Number(t.maxGainPercent)).filter(Number.isFinite);
-	const exitReasonCounts = {};
-	for (const trade of completedTrades) for (const reason of trade.exitReasons) exitReasonCounts[reason] = (exitReasonCounts[reason] || 0) + 1;
-	const netPnl = grossProfit - grossLoss;
-	return {
-		...data, live, equity, totalPnl: equity === null ? null : equity - data.startingBalance,
-		priceUnavailable: !!data.position && !live, completedTrades, scoreStats: buildScoreStats(completedTrades), exitReasonCounts,
-		stats: {
-			completedTrades: completedTrades.length, winners, losers,
-			winRate: completedTrades.length ? winners / completedTrades.length * 100 : 0,
-			netPnl, grossProfit, grossLoss, profitFactor: grossLoss > 0 ? grossProfit / grossLoss : null,
-			profitFactorLabel: grossLoss > 0 ? (grossProfit / grossLoss).toFixed(2) : grossProfit > 0 ? "∞" : "—",
-			averageWinnerPercent: average(winnerReturns), averageLoserPercent: average(loserReturns),
-			averageHoldTimeMs: average(holdTimes), averageMaxGainPercent: average(maxGains)
-		}
-	};
+	const grossProfit=completedTrades.reduce((s,t)=>s+Math.max(t.pnl,0),0), grossLoss=completedTrades.reduce((s,t)=>s+Math.max(-t.pnl,0),0);
+	const winners=completedTrades.filter(t=>t.pnl>0).length, losers=completedTrades.filter(t=>t.pnl<0).length;
+	const pricesAvailable=livePositions.every(x=>x.live), openValue=livePositions.reduce((s,x)=>s+(x.live?.currentValue||0),0);
+	const equity=pricesAvailable ? data.cashBalance+openValue : null;
+	const winnerReturns=completedTrades.filter(t=>t.pnl>0).map(t=>Number(t.pnlPercent)), loserReturns=completedTrades.filter(t=>t.pnl<0).map(t=>Number(t.pnlPercent));
+	const holdTimes=completedTrades.map(t=>Number(t.holdTimeMs)).filter(Number.isFinite), maxGains=completedTrades.map(t=>Number(t.maxGainPercent)).filter(Number.isFinite);
+	const exitReasonCounts={}; for(const trade of completedTrades) for(const reason of trade.exitReasons) exitReasonCounts[reason]=(exitReasonCounts[reason]||0)+1;
+	const netPnl=grossProfit-grossLoss;
+	return {...data, position:positions[0]||null, positions, live:livePositions[0]?.live||null, livePositions,
+		openSlots:positions.length,maxSlots:3,equity,totalPnl:equity===null?null:equity-data.startingBalance,
+		priceUnavailable:positions.length>0&&!pricesAvailable,completedTrades,scoreStats:buildScoreStats(completedTrades),exitReasonCounts,
+		stats:{completedTrades:completedTrades.length,winners,losers,winRate:completedTrades.length?winners/completedTrades.length*100:0,
+			netPnl,grossProfit,grossLoss,profitFactor:grossLoss>0?grossProfit/grossLoss:null,profitFactorLabel:grossLoss>0?(grossProfit/grossLoss).toFixed(2):grossProfit>0?"∞":"—",
+			averageWinnerPercent:average(winnerReturns),averageLoserPercent:average(loserReturns),averageHoldTimeMs:average(holdTimes),averageMaxGainPercent:average(maxGains)}};
 }
 
 module.exports = { groupCompletedTrades, buildDashboardData };
