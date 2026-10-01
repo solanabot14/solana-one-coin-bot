@@ -29,10 +29,15 @@ const GECKO_REFRESH_MS = Math.max(
   15 * 1000,
   (Number.parseInt(process.env.GECKO_REFRESH_SECONDS || "15", 10) || 15) * 1000
 );
+const GECKO_429_BACKOFF_MS = Math.max(
+  60 * 1000,
+  (Number.parseInt(process.env.GECKO_429_BACKOFF_SECONDS || "60", 10) || 60) * 1000
+);
 const geckoCaches = {
-  trending: { updatedAt: 0, tokens: [], lastStatus: "NOT_FETCHED" },
-  newPools: { updatedAt: 0, tokens: [], lastStatus: "NOT_FETCHED" }
+  trending: { updatedAt: 0, tokens: [], lastStatus: "NOT_FETCHED", retryAfter: 0 },
+  newPools: { updatedAt: 0, tokens: [], lastStatus: "NOT_FETCHED", retryAfter: 0 }
 };
+const geckoInFlight = new Map();
 
 // Fresh Discovery is intentionally separate from the 1-minute strategy scanner.
 // Poll Gecko New Pools every 15s, retain addresses briefly, then let R3 evaluate
@@ -457,30 +462,57 @@ async function fetchGeckoPoolTokens(kind, signal) {
   const endpoint = kind === "trending" ? "trending_pools" : "new_pools";
   const sourceName = kind === "trending" ? "Gecko Trending Pools" : "Gecko New Pools";
 
-  if (cache.updatedAt && ageMs < GECKO_REFRESH_MS) {
-    console.log(
-      `R3 DISCOVERY | ${sourceName} | ${cache.tokens.length} cached | age ${Math.round(ageMs / 60000)}m`
-    );
+  if (cache.retryAfter && now < cache.retryAfter) {
     return structuredClone(cache.tokens);
   }
 
-  try {
-    const response = await axios.get(`${GECKO_BASE_URL}/${endpoint}`, {
-      timeout: 10000,
-      signal,
-      headers: { Accept: "application/json;version=20230302" }
-    });
-    const tokens = geckoPoolTokens(response.data, sourceName).slice(0, 20);
-    geckoCaches[kind] = { updatedAt: now, tokens: structuredClone(tokens), lastStatus: "OK" };
-    console.log(`R3 DISCOVERY | ${sourceName} | ${tokens.length} tokens received`);
-    return tokens;
-  } catch (error) {
-    const status = error?.response?.status || "ERROR";
-    // Fail open: discovery continues with DexScreener/Birdeye if Gecko is unavailable.
-    geckoCaches[kind] = { updatedAt: now, tokens: [], lastStatus: String(status) };
-    console.log(`R3 DISCOVERY | ${sourceName} unavailable | ${error.message}`);
-    return [];
+  if (cache.updatedAt && ageMs < GECKO_REFRESH_MS) {
+    return structuredClone(cache.tokens);
   }
+
+  const existing = geckoInFlight.get(kind);
+  if (existing) return structuredClone(await existing);
+
+  const request = (async () => {
+    try {
+      const response = await axios.get(`${GECKO_BASE_URL}/${endpoint}`, {
+        timeout: 10000,
+        signal,
+        headers: { Accept: "application/json;version=20230302" }
+      });
+      const tokens = geckoPoolTokens(response.data, sourceName).slice(0, 20);
+      cache.updatedAt = Date.now();
+      cache.tokens = structuredClone(tokens);
+      cache.lastStatus = "OK";
+      cache.retryAfter = 0;
+      console.log(`R3 DISCOVERY | ${sourceName} | ${tokens.length} tokens received`);
+      return tokens;
+    } catch (error) {
+      const status = error?.response?.status || "ERROR";
+      cache.lastStatus = String(status);
+
+      if (Number(status) === 429) {
+        const retryAfterHeader = Number.parseInt(error?.response?.headers?.["retry-after"] || "", 10);
+        const retryAfterMs = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
+          ? Math.max(GECKO_429_BACKOFF_MS, retryAfterHeader * 1000)
+          : GECKO_429_BACKOFF_MS;
+        cache.retryAfter = Date.now() + retryAfterMs;
+        console.log(
+          `R3 DISCOVERY | ${sourceName} rate-limited | backoff ${Math.round(retryAfterMs / 1000)}s | using ${cache.tokens.length} cached`
+        );
+        return structuredClone(cache.tokens);
+      }
+
+      // Fail open: preserve the last known-good cache and continue with other sources.
+      console.log(`R3 DISCOVERY | ${sourceName} unavailable | ${error.message} | using ${cache.tokens.length} cached`);
+      return structuredClone(cache.tokens);
+    } finally {
+      geckoInFlight.delete(kind);
+    }
+  })();
+
+  geckoInFlight.set(kind, request);
+  return structuredClone(await request);
 }
 
 function pruneFreshDiscovery(now = Date.now()) {
