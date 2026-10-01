@@ -65,23 +65,34 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     }
 
     const openTokens = new Set((getPortfolio().positions || []).map(p => p.tokenAddress));
-    const bestCoin = availableCandidates.find(coin => coin.signal === "STRONG BUY" && !openTokens.has(coin.tokenAddress));
-    if (!bestCoin) {
+    const freeSlots = Math.max(0, 3 - (getPortfolio().positions || []).length);
+    const strongBuys = availableCandidates
+      .filter(coin => coin.signal === "STRONG BUY" && !openTokens.has(coin.tokenAddress))
+      .slice(0, freeSlots);
+
+    if (!strongBuys.length) {
       console.log("No STRONG BUY candidate available.");
       return;
     }
 
-    console.log("\nBOT SELECTED:");
-    console.log(`${bestCoin.symbol} - ${bestCoin.name}`);
-    console.log(`Score: ${bestCoin.score}`);
-    console.log(`Signal: ${bestCoin.signal}`);
-    console.log(`5m Momentum: ${bestCoin.priceChange5m}%`);
-    console.log(`1h Momentum: ${bestCoin.priceChange1h}%`);
-    console.log(`5m Buys/Sells: ${bestCoin.buys5m}/${bestCoin.sells5m}`);
+    for (const coin of strongBuys) {
+      console.log("\nBOT SELECTED:");
+      console.log(`${coin.symbol} - ${coin.name}`);
+      console.log(`Score: ${coin.score}`);
+      console.log(`Signal: ${coin.signal}`);
+      console.log(`5m Momentum: ${coin.priceChange5m}%`);
+      console.log(`1h Momentum: ${coin.priceChange1h}%`);
+      console.log(`5m Buys/Sells: ${coin.buys5m}/${coin.sells5m}`);
 
-    const trade = buy(bestCoin);
-    if (trade.success) void notifier.notifyTrade("BUY", trade.trade);
-    console.log("\nPAPER TRADE:", trade);
+      const trade = buy(coin);
+      if (trade.success) {
+        openTokens.add(coin.tokenAddress);
+        void notifier.notifyTrade("BUY", trade.trade);
+      }
+      console.log("\nPAPER TRADE:", trade);
+      if ((getPortfolio().positions || []).length >= 3) break;
+    }
+
     console.log("\nPORTFOLIO:", getPortfolio());
     console.log("\nTOP SOLANA CANDIDATES:\n");
     availableCandidates.slice(0, 5).forEach((coin, index) => {
