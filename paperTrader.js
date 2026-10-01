@@ -12,7 +12,7 @@ function defaultDataFile() {
 		process.env.DATA_DIR ||
 		__dirname;
 
-	return path.join(path.resolve(directory), "tradingData.json");
+	return path.join(path.resolve(directory), "v31ThreeSlotTradingData.json");
 }
 
 function validateState(data) {
@@ -31,7 +31,9 @@ function validateState(data) {
 		);
 	}
 
-	const p = data.position;
+	const positions = Array.isArray(data.positions) ? data.positions : (data.position ? [data.position] : []);
+	if (positions.length > 3) throw new Error("Invalid saved positions: maximum is 3.");
+	const p = positions.find(Boolean) || null;
 
 	if (
 		p !== null &&
@@ -55,7 +57,7 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 	let state = {
 		startingBalance: 100,
 		cashBalance: 100,
-		position: null,
+		positions: [],
 		history: []
 	};
 
@@ -97,106 +99,35 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 		message
 	});
 
+	function equity() {
+		return state.cashBalance + (state.positions || []).reduce((sum, p) => sum + p.amountInvested, 0);
+	}
+
 	function buy(coin) {
-		if (state.position) {
-			return fail("A position is already open.");
-		}
-
+		const positions = state.positions || [];
+		if (positions.length >= 3) return fail("All 3 slots are occupied.");
 		const price = Number(coin.priceUsd);
-
-		if (
-			!Number.isFinite(price) ||
-			price <= 0 ||
-			!coin.tokenAddress
-		) {
-			return fail("Invalid token or price.");
-		}
-
-		if (state.cashBalance <= 0) {
-			return fail("No cash available.");
-		}
-
+		if (!Number.isFinite(price) || price <= 0 || !coin.tokenAddress) return fail("Invalid token or price.");
+		if (positions.some(p => p.tokenAddress === coin.tokenAddress)) return fail("Token already has an open position.");
+		if (state.cashBalance <= 0) return fail("No cash available.");
 		const next = structuredClone(state);
-		const amountInvested = Math.min(10, next.cashBalance);
-
-		const buys5m = Number(coin.buys5m) || 0;
-		const sells5m = Number(coin.sells5m) || 0;
+		const amountInvested = Math.min(equity() * 0.10, next.cashBalance);
+		if (!(amountInvested > 0)) return fail("No cash available.");
+		const buys5m = Number(coin.buys5m) || 0, sells5m = Number(coin.sells5m) || 0;
 		const totalTransactions5m = buys5m + sells5m;
-
-		const buyRatio5m =
-			totalTransactions5m > 0
-				? buys5m / totalTransactions5m
-				: 0;
-
-		next.position = {
-			id: randomUUID(),
-
-			symbol: coin.symbol,
-			name: coin.name,
-			tokenAddress: coin.tokenAddress,
-			pairAddress: coin.pairAddress || null,
-
-			entryPrice: price,
-			quantity: amountInvested / price,
-			amountInvested,
-
-			firstTakeProfitDone: false,
-			secondTakeProfitDone: false,
-
-			highestPrice: price,
-			entryTime: new Date().toISOString(),
-
-			strategyVersion: "V3.1",
-
-			entryScore: Number(coin.score) || 0,
-			entrySignal: coin.signal || null,
-
-			entryReasons: Array.isArray(coin.reasons)
-				? [...coin.reasons]
-				: [],
-
-			entryPriceChange5m:
-				Number(coin.priceChange5m) || 0,
-
-			entryPriceChange1h:
-				Number(coin.priceChange1h) || 0,
-
-			entryPriceChange24h:
-				Number(coin.priceChange24h) || 0,
-
-			entryLiquidityUsd:
-				Number(coin.liquidityUsd) || 0,
-
-			entryVolume24h:
-				Number(coin.volume24h) || 0,
-
-			entryBuys5m: buys5m,
-			entrySells5m: sells5m,
-
-			entryTransactions5m:
-				totalTransactions5m,
-
-			entryBuyRatio: buyRatio5m,
-			entryBuyRatio5m:
-				buyRatio5m
-		};
-
-		next.cashBalance -= amountInvested;
-
-		const trade = {
-			type: "BUY",
-			positionId: next.position.id,
-			...next.position
-		};
-
-		next.history.push(trade);
-
-		commit(next);
-
-		return {
-			success: true,
-			trade: structuredClone(trade)
-		};
+		const buyRatio5m = totalTransactions5m > 0 ? buys5m / totalTransactions5m : 0;
+		const position = { id: randomUUID(), symbol: coin.symbol, name: coin.name, tokenAddress: coin.tokenAddress,
+			pairAddress: coin.pairAddress || null, entryPrice: price, quantity: amountInvested / price, amountInvested,
+			firstTakeProfitDone:false, secondTakeProfitDone:false, highestPrice:price, entryTime:new Date().toISOString(),
+			strategyVersion:"V3.1-3Slot-Compound10", entryScore:Number(coin.score)||0, entrySignal:coin.signal||null,
+			entryReasons:Array.isArray(coin.reasons)?[...coin.reasons]:[], entryPriceChange5m:Number(coin.priceChange5m)||0,
+			entryPriceChange1h:Number(coin.priceChange1h)||0, entryPriceChange24h:Number(coin.priceChange24h)||0,
+			entryLiquidityUsd:Number(coin.liquidityUsd)||0, entryVolume24h:Number(coin.volume24h)||0,
+			entryBuys5m:buys5m, entrySells5m:sells5m, entryTransactions5m:totalTransactions5m,
+			entryBuyRatio:buyRatio5m, entryBuyRatio5m:buyRatio5m };
+		next.positions.push(position); next.cashBalance -= amountInvested;
+		const trade={type:"BUY",positionId:position.id,...position}; next.history.push(trade); commit(next);
+		return {success:true,trade:structuredClone(trade)};
 	}
 
 	function positionKey(p) {
@@ -206,7 +137,9 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 	}
 
 	function sell(currentPrice, percentToSell = 100, options = {}) {
-		const p = state.position;
+		const positions = state.positions || [];
+		const index = positions.findIndex(p => !options.expectedPosition || positionKey(p) === options.expectedPosition);
+		const p = index >= 0 ? positions[index] : null;
 
 		if (!p) {
 			return fail("No position is open.");
@@ -348,15 +281,15 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 		};
 
 		next.cashBalance += saleValue;
-		next.position.quantity -= quantitySold;
-		next.position.amountInvested -= costBasisSold;
+		next.positions[index].quantity -= quantitySold;
+		next.positions[index].amountInvested -= costBasisSold;
 
 		if (options.takeProfit) {
-			next.position[options.takeProfit] = true;
+			next.positions[index][options.takeProfit] = true;
 		}
 
 		if (percentToSell === 100) {
-			next.position = null;
+			next.positions.splice(index, 1);
 		}
 
 		next.history.push(trade);
@@ -371,8 +304,7 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 
 	function updateHigh(expectedPosition, price) {
 		if (
-			positionKey(state.position) !== expectedPosition ||
-			!state.position ||
+			!(state.positions || []).some(p => positionKey(p) === expectedPosition) ||
 			!Number.isFinite(price) ||
 			price <= 0
 		) {
@@ -380,16 +312,12 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 		}
 
 		if (
-			price <=
-			(state.position.highestPrice ||
-				state.position.entryPrice)
+			price <= ((state.positions || []).find(p => positionKey(p) === expectedPosition)?.highestPrice || (state.positions || []).find(p => positionKey(p) === expectedPosition)?.entryPrice || Infinity)
 		) {
 			return true;
 		}
 
-		const next = structuredClone(state);
-
-		next.position.highestPrice = price;
+		const next = structuredClone(state);\n\t\tconst index = next.positions.findIndex(p => positionKey(p) === expectedPosition);\n\t\tif (index < 0) return false;\n\t\tnext.positions[index].highestPrice = price;
 
 		commit(next);
 
@@ -401,7 +329,7 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 		sell,
 		updateHigh,
 		positionKey,
-		getPortfolio: () => structuredClone(state)
+		getPortfolio: () => structuredClone({...state, position: (state.positions || [])[0] || null})
 	};
 }
 
