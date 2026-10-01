@@ -866,8 +866,18 @@ function createDashboardServer({ config = getConfig(), controls = bot,
 
         if (route === "/api/manual-exit") {
           const currentPortfolio = portfolio();
-          const position = currentPortfolio.position;
-          if (!position) return json(res, { success: false, error: "No R3 position is open." }, 409);
+          const positions = Array.isArray(currentPortfolio.positions)
+            ? currentPortfolio.positions.filter(Boolean)
+            : (currentPortfolio.position ? [currentPortfolio.position] : []);
+          if (!positions.length) return json(res, { success: false, error: "No R3 position is open." }, 409);
+
+          const requestedPositionId = String(requestUrl.searchParams.get("positionId") || "").trim();
+          if (!requestedPositionId) {
+            return json(res, { success: false, error: "positionId is required when multiple positions are supported." }, 400);
+          }
+
+          const position = positions.find(item => positionKey(item) === requestedPositionId);
+          if (!position) return json(res, { success: false, error: "Position not found." }, 404);
 
           const expectedPosition = positionKey(position);
           const freshData = await marketData(position.tokenAddress, {
@@ -892,6 +902,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
 
           return json(res, {
             success: true,
+            positionId: expectedPosition,
             symbol: position.symbol,
             exitPrice: currentPrice,
             reason: "MANUAL EXIT",
@@ -937,6 +948,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           currentStrategy: "R3 Action Momentum | Multi-source discovery + momentum + structural reset",
           riskEngine: "R3: Hard Stop + Failed Launch + Early Giveback + Profit Lock + TP1 + TP2 + Runner Trailing + Structure Failure",
           livePosition: data.live || null,
+          livePositions: Array.isArray(data.livePositions) ? data.livePositions : [],
           completedTrades,
           swarmClosedTrades: swarmExecutions,
           discoveryTelemetry: scanner.getDiscoveryTelemetry()
