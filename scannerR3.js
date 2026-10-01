@@ -216,15 +216,44 @@ function recentTokenStats(tokenAddress) {
     if (!fs.existsSync(file)) continue;
     try {
       const data = JSON.parse(fs.readFileSync(file, "utf8"));
-      for (const trade of Array.isArray(data?.history) ? data.history : []) {
+      const history = Array.isArray(data?.history) ? data.history : [];
+      const positions = new Map();
+
+      for (const trade of history) {
         if (trade?.tokenAddress !== tokenAddress) continue;
-        const when = Date.parse(trade.type === "BUY" ? trade.entryTime : trade.exitTime);
-        if (!Number.isFinite(when) || when < cutoff) continue;
-        if (trade.type === "BUY") entries++;
+
+        if (trade.type === "BUY") {
+          const entryAt = Date.parse(trade.entryTime);
+          if (Number.isFinite(entryAt) && entryAt >= cutoff) entries++;
+        }
+
+        const key = trade.positionId || (trade.entryTime ? tokenAddress + "::" + trade.entryTime : null);
+        if (!key) continue;
+        if (!positions.has(key)) {
+          positions.set(key, {
+            netPnl: 0,
+            fullyClosed: false,
+            closedAt: null
+          });
+        }
+
+        if (trade.type === "SELL") {
+          const position = positions.get(key);
+          position.netPnl += Number(trade.pnl) || 0;
+          const exitAt = Date.parse(trade.exitTime);
+          if (Number(trade.percentSold) === 100 && Number.isFinite(exitAt)) {
+            position.fullyClosed = true;
+            position.closedAt = exitAt;
+          }
+        }
+      }
+
+      for (const position of positions.values()) {
         if (
-          trade.type === "SELL" &&
-          Number(trade.percentSold) === 100 &&
-          Number(trade.pnlPercent) < 0
+          position.fullyClosed &&
+          Number.isFinite(position.closedAt) &&
+          position.closedAt >= cutoff &&
+          position.netPnl < 0
         ) {
           losingFullExits++;
         }
