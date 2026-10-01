@@ -2,39 +2,82 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 
+const MAX_OPEN_POSITIONS = 3;
+const COMPOUND_FRACTION = 0.10;
+
 function dataFile() {
   const directory = process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DATA_DIR || __dirname;
   return path.join(path.resolve(directory), "tradingDataR3.json");
 }
 
+function normalizeState(raw) {
+  const startingBalance = Number(raw?.startingBalance) > 0 ? Number(raw.startingBalance) : 100;
+  const cashBalance = Number.isFinite(Number(raw?.cashBalance)) ? Number(raw.cashBalance) : startingBalance;
+  const history = Array.isArray(raw?.history) ? raw.history : [];
+  const positions = Array.isArray(raw?.positions)
+    ? raw.positions.filter(Boolean)
+    : raw?.position ? [raw.position] : [];
+  return { startingBalance, cashBalance, positions, history };
+}
+
 function createR3PaperTrader(file = dataFile()) {
-  let state = { startingBalance: 100, cashBalance: 100, position: null, history: [] };
-  if (fs.existsSync(file)) state = JSON.parse(fs.readFileSync(file, "utf8"));
+  let state = { startingBalance: 100, cashBalance: 100, positions: [], history: [] };
+  if (fs.existsSync(file)) state = normalizeState(JSON.parse(fs.readFileSync(file, "utf8")));
 
   function save(next) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
+    const normalized = normalizeState(next);
     const tmp = file + "." + process.pid + "." + randomUUID() + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify(next, null, 2), { flag: "wx" });
+    fs.writeFileSync(tmp, JSON.stringify(normalized, null, 2), { flag: "wx" });
     fs.renameSync(tmp, file);
-    state = next;
+    state = normalized;
   }
 
   function positionKey(p) {
     return p ? (p.id || p.tokenAddress + "-" + p.entryTime) : null;
   }
 
+  function publicState() {
+    const snapshot = structuredClone(state);
+    // Compatibility alias for existing dashboard/client code.
+    snapshot.position = snapshot.positions[0] || null;
+    return snapshot;
+  }
+
+  function realizedCapitalBase(s = state) {
+    const openCostBasis = (s.positions || []).reduce(
+      (sum, p) => sum + (Number(p?.amountInvested) || 0), 0
+    );
+    return Number(s.cashBalance || 0) + openCostBasis;
+  }
+
   function buy(coin) {
-    if (state.position) return { success: false, message: "A position is already open." };
-    const price = Number(coin.priceUsd);
-    if (!(price > 0) || !coin.tokenAddress) return { success: false, message: "Invalid token or price." };
+    if (state.positions.length >= MAX_OPEN_POSITIONS) {
+      return { success: false, message: "Maximum open positions reached." };
+    }
+    if (state.positions.some(p => p.tokenAddress === coin?.tokenAddress)) {
+      return { success: false, message: "Token already has an open position." };
+    }
+
+    const price = Number(coin?.priceUsd);
+    if (!(price > 0) || !coin?.tokenAddress) {
+      return { success: false, message: "Invalid token or price." };
+    }
+
     const next = structuredClone(state);
-    const amountInvested = next.cashBalance * 0.10;
+    const capitalBase = realizedCapitalBase(next);
+    const targetAmount = capitalBase * COMPOUND_FRACTION;
+    const amountInvested = Math.min(targetAmount, next.cashBalance);
+    if (!(amountInvested > 0)) {
+      return { success: false, message: "No cash available." };
+    }
+
     const buys5m = Number(coin.buys5m) || 0;
     const sells5m = Number(coin.sells5m) || 0;
     const tx = buys5m + sells5m;
     const buyRatio = tx ? buys5m / tx : 0;
 
-    next.position = {
+    const position = {
       id: randomUUID(),
       symbol: coin.symbol,
       name: coin.name,
@@ -65,41 +108,49 @@ function createR3PaperTrader(file = dataFile()) {
       r3Metrics: coin.r3Metrics || null,
       r3Security: coin.r3Security || null
     };
+
+    next.positions.push(position);
     next.cashBalance -= amountInvested;
-    const trade = { type: "BUY", positionId: next.position.id, ...next.position };
+    const trade = { type: "BUY", positionId: position.id, ...position };
     next.history.push(trade);
     save(next);
     return { success: true, trade: structuredClone(trade) };
   }
 
+  function findPositionIndex(expectedPosition) {
+    if (!expectedPosition) return state.positions.length === 1 ? 0 : -1;
+    return state.positions.findIndex(p => positionKey(p) === expectedPosition);
+  }
+
   function sell(currentPrice, percentToSell = 100, options = {}) {
-    const p = state.position;
-    if (!p) return { success: false, message: "No position is open." };
-    if (options.expectedPosition && options.expectedPosition !== positionKey(p)) {
-      return { success: false, message: "Position changed." };
-    }
+    const index = findPositionIndex(options.expectedPosition);
+    if (index < 0) return { success: false, message: "Position not found." };
+
+    const p = state.positions[index];
     currentPrice = Number(currentPrice);
     if (!(currentPrice > 0) || !(percentToSell > 0 && percentToSell <= 100)) {
       return { success: false, message: "Invalid sale." };
     }
+
     const next = structuredClone(state);
-    const quantitySold = p.quantity * percentToSell / 100;
-    const costBasisSold = p.amountInvested * percentToSell / 100;
+    const live = next.positions[index];
+    const quantitySold = live.quantity * percentToSell / 100;
+    const costBasisSold = live.amountInvested * percentToSell / 100;
     const saleValue = quantitySold * currentPrice;
     const pnl = saleValue - costBasisSold;
     const trade = {
       type: "SELL",
-      positionId: p.id,
-      symbol: p.symbol,
-      name: p.name,
-      tokenAddress: p.tokenAddress,
-      pairAddress: p.pairAddress || null,
-      strategyVersion: p.strategyVersion,
-      entryScore: p.entryScore,
-      entrySignal: p.entrySignal,
-      entryReasons: p.entryReasons,
-      entryPrice: p.entryPrice,
-      highestPrice: p.highestPrice || p.entryPrice,
+      positionId: live.id,
+      symbol: live.symbol,
+      name: live.name,
+      tokenAddress: live.tokenAddress,
+      pairAddress: live.pairAddress || null,
+      strategyVersion: live.strategyVersion,
+      entryScore: live.entryScore,
+      entrySignal: live.entrySignal,
+      entryReasons: live.entryReasons,
+      entryPrice: live.entryPrice,
+      highestPrice: live.highestPrice || live.entryPrice,
       exitPrice: currentPrice,
       percentSold: percentToSell,
       quantitySold,
@@ -107,32 +158,36 @@ function createR3PaperTrader(file = dataFile()) {
       saleValue,
       pnl,
       pnlPercent: pnl / costBasisSold * 100,
-      entryTime: p.entryTime,
+      entryTime: live.entryTime,
       exitTime: new Date().toISOString(),
       reason: options.reason || "MANUAL"
     };
+
     next.cashBalance += saleValue;
-    next.position.quantity -= quantitySold;
-    next.position.amountInvested -= costBasisSold;
-    if (options.takeProfit) next.position[options.takeProfit] = true;
-    if (percentToSell === 100) next.position = null;
+    live.quantity -= quantitySold;
+    live.amountInvested -= costBasisSold;
+    if (options.takeProfit) live[options.takeProfit] = true;
+    if (percentToSell === 100) next.positions.splice(index, 1);
     next.history.push(trade);
     save(next);
     return { success: true, trade: structuredClone(trade) };
   }
 
   function updateHigh(expectedPosition, price) {
-    if (positionKey(state.position) !== expectedPosition || !state.position || !(Number(price) > 0)) return false;
-    if (Number(price) <= Number(state.position.highestPrice || state.position.entryPrice)) return true;
+    const index = state.positions.findIndex(p => positionKey(p) === expectedPosition);
+    if (index < 0 || !(Number(price) > 0)) return false;
+    if (Number(price) <= Number(state.positions[index].highestPrice || state.positions[index].entryPrice)) return true;
     const next = structuredClone(state);
-    next.position.highestPrice = Number(price);
+    next.positions[index].highestPrice = Number(price);
     save(next);
     return true;
   }
 
   return {
     buy, sell, updateHigh, positionKey,
-    getPortfolio: () => structuredClone(state)
+    getPortfolio: publicState,
+    maxOpenPositions: MAX_OPEN_POSITIONS,
+    compoundFraction: COMPOUND_FRACTION
   };
 }
 
@@ -144,6 +199,8 @@ function current() {
 module.exports = {
   createR3PaperTrader,
   dataFile,
+  MAX_OPEN_POSITIONS,
+  COMPOUND_FRACTION,
   buy: (...args) => current().buy(...args),
   sell: (...args) => current().sell(...args),
   updateHigh: (...args) => current().updateHigh(...args),
