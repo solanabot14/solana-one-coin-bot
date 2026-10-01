@@ -34,6 +34,13 @@ const geckoCaches = {
   newPools: { updatedAt: 0, tokens: [], lastStatus: "NOT_FETCHED" }
 };
 
+// Fresh Discovery is intentionally separate from the 1-minute strategy scanner.
+// Poll Gecko New Pools every 15s, retain addresses briefly, then let R3 evaluate
+// them with the exact same entry/security rules as every other discovery source.
+const FRESH_DISCOVERY_POLL_MS = 15 * 1000;
+const FRESH_DISCOVERY_TTL_MS = 3 * 60 * 1000;
+const freshDiscoveryQueue = new Map();
+
 const WATCH_MIN_LIQUIDITY = 25000;
 const REACTIVATION_AGE_MS = 24 * 60 * 60 * 1000;
 const REACTIVATION_DEAD_BASELINE_VOL5M = 500;
@@ -444,6 +451,35 @@ async function fetchGeckoPoolTokens(kind, signal) {
   }
 }
 
+function pruneFreshDiscovery(now = Date.now()) {
+  for (const [tokenAddress, item] of freshDiscoveryQueue.entries()) {
+    if (now - item.seenAt > FRESH_DISCOVERY_TTL_MS) {
+      freshDiscoveryQueue.delete(tokenAddress);
+    }
+  }
+}
+
+async function refreshFreshDiscovery({ signal } = {}) {
+  const tokens = await fetchGeckoPoolTokens("newPools", signal);
+  const now = Date.now();
+  for (const token of tokens) {
+    if (!token?.tokenAddress) continue;
+    freshDiscoveryQueue.set(token.tokenAddress, {
+      ...token,
+      discoverySource: "Gecko Fresh New Pools",
+      seenAt: now
+    });
+  }
+  pruneFreshDiscovery(now);
+  console.log(`R3 FRESH DISCOVERY | queue ${freshDiscoveryQueue.size} | latest ${tokens.length}`);
+  return freshDiscoveryQueue.size;
+}
+
+function getFreshDiscoveryTokens() {
+  pruneFreshDiscovery();
+  return [...freshDiscoveryQueue.values()].map(({ seenAt, ...token }) => ({ ...token }));
+}
+
 function reactivationStatus(tokenAddress, data, history, isEntrySignal) {
   if (!isEntrySignal) return { blocked: false, confirmed: false };
 
@@ -498,14 +534,14 @@ function reactivationStatus(tokenAddress, data, history, isEntrySignal) {
 }
 
 async function discoverCandidatesR3({ signal } = {}) {
-  const [sourceResults, birdeyeTrending, geckoTrending, geckoNewPools] = await Promise.all([
+  const [sourceResults, birdeyeTrending, geckoTrending] = await Promise.all([
     Promise.all(DISCOVERY_SOURCES.map(source => fetchSource(source, signal))),
     fetchBirdeyeTrendingTokens(signal),
-    fetchGeckoPoolTokens("trending", signal),
-    fetchGeckoPoolTokens("newPools", signal)
+    fetchGeckoPoolTokens("trending", signal)
   ]);
+  const freshNewPools = getFreshDiscoveryTokens();
   const unique = new Map();
-  for (const token of [...sourceResults.flat(), ...birdeyeTrending, ...geckoTrending, ...geckoNewPools]) {
+  for (const token of [...freshNewPools, ...sourceResults.flat(), ...birdeyeTrending, ...geckoTrending]) {
     if (token?.chainId !== "solana" || !token.tokenAddress) continue;
     const source = token.discoverySource || token.name || "DexScreener";
     const existing = unique.get(token.tokenAddress);
@@ -673,6 +709,8 @@ async function discoverCandidatesR3({ signal } = {}) {
 
 module.exports = {
   discoverCandidatesR3,
+  refreshFreshDiscovery,
+  FRESH_DISCOVERY_POLL_MS,
   markExhausted,
   getDiscoveryTelemetry: () => structuredClone(lastDiscoveryTelemetry),
   getCachedCandidates: () => ({ updatedAt: lastDiscoveryTelemetry.updatedAt, candidates: [] }),
