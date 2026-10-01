@@ -110,18 +110,7 @@ async function refreshData() {
 	catch (error) { $("equity").textContent = "Unavailable"; $("pnl").textContent = "Unavailable"; $("live").textContent = "Account update unavailable. Other displayed figures may be out of date."; }
 }
 
-async function control(action) {
-	$("startButton").disabled = true; $("stopButton").disabled = true;
-	try {
-		await request("/api/" + action, {method:"POST", headers:{"X-Bot-Control":"1"}});
-		$("notice").textContent = action === "stop" ? "Stopped. Open positions remain saved; automatic exits are paused." : "Running. Automatic exits are enabled.";
-		await refreshStatus();
-	} catch (error) { $("notice").textContent = error.message; }
-	finally { $("startButton").disabled = false; $("stopButton").disabled = false; }
-}
 
-$("startButton").addEventListener("click", () => control("start"));
-$("stopButton").addEventListener("click", () => control("stop"));
 
 
 async function refreshSwarm() {
