@@ -50,6 +50,7 @@ function createBotR3({
   notifier = telegram
 } = {}) {
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
+  const maxOpenPositions = trader.MAX_OPEN_POSITIONS || 3;
   let activeSession = null;
   let scannerInterval = null;
   let monitorInterval = null;
@@ -62,36 +63,52 @@ function createBotR3({
   const isActive = session => activeSession === session && !session.signal.aborted;
 
   async function runScanner(session) {
-    if (getPortfolio().position) return;
+    const before = getPortfolio();
+    const openBefore = Array.isArray(before.positions) ? before.positions : (before.position ? [before.position] : []);
+    if (openBefore.length >= maxOpenPositions) return;
+
     const candidates = await discoverCandidates({ signal: session.signal });
-    if (!isActive(session) || getPortfolio().position) return;
-    const coin = candidates.find(
-      x =>
-        x.signal === "EARLY RUNNER" ||
-        x.signal === "PROVISIONAL EARLY RUNNER" ||
-        x.signal === "FAILED LAUNCH RETRY"
-    );
-    if (!coin) {
-      console.log("R3 | No confirmed EARLY RUNNER.");
-      return;
+    if (!isActive(session)) return;
+
+    let opened = 0;
+    for (const coin of candidates) {
+      const portfolio = getPortfolio();
+      const open = Array.isArray(portfolio.positions) ? portfolio.positions : (portfolio.position ? [portfolio.position] : []);
+      if (open.length >= maxOpenPositions) break;
+      if (open.some(position => position.tokenAddress === coin.tokenAddress)) continue;
+
+      const eligible =
+        coin.signal === "EARLY RUNNER" ||
+        coin.signal === "PROVISIONAL EARLY RUNNER" ||
+        coin.signal === "FAILED LAUNCH RETRY";
+      if (!eligible) continue;
+
+      console.log(`R3 SELECTED | ${coin.symbol} | Score ${coin.score} | 5m ${coin.priceChange5m}% | Vol5m ${coin.volume5m || 0}`);
+      const trade = buy(coin);
+      if (trade.success) {
+        opened += 1;
+        void notifier.notifyTrade("BUY", trade.trade);
+      }
+      console.log("R3 PAPER TRADE:", trade);
     }
-    console.log(`R3 SELECTED | ${coin.symbol} | Score ${coin.score} | 5m ${coin.priceChange5m}% | Vol5m $${coin.volume5m || 0}`);
-    const trade = buy(coin);
-    if (trade.success) void notifier.notifyTrade("BUY", trade.trade);
-    console.log("R3 PAPER TRADE:", trade);
+
+    if (!opened) console.log("R3 | No confirmed EARLY RUNNER.");
   }
 
-  async function monitorPosition(session) {
-    const portfolio = getPortfolio();
-    if (!portfolio.position) return;
-    let position = portfolio.position;
+  async function monitorSinglePosition(session, snapshotPosition) {
+    if (!snapshotPosition) return;
+    let position = snapshotPosition;
     const expected = positionKey(position);
     const fresh = await getTokenData(position.tokenAddress, {
       signal: session.signal,
       pairAddress: position.pairAddress || undefined,
       referencePrice: Number(position.highestPrice || position.entryPrice) || undefined
     });
-    if (!isActive(session) || positionKey(getPortfolio().position) !== expected || !fresh) return;
+    const currentAfterFetch = getPortfolio();
+    const currentPositionsAfterFetch = Array.isArray(currentAfterFetch.positions)
+      ? currentAfterFetch.positions
+      : (currentAfterFetch.position ? [currentAfterFetch.position] : []);
+    if (!isActive(session) || !currentPositionsAfterFetch.some(p => positionKey(p) === expected) || !fresh) return;
 
     const price = Number(fresh.priceUsd);
     if (!(price > 0)) return;
@@ -116,7 +133,12 @@ function createBotR3({
     }
 
     updateHigh(expected, price);
-    position = getPortfolio().position;
+    const refreshedPortfolio = getPortfolio();
+    const refreshedPositions = Array.isArray(refreshedPortfolio.positions)
+      ? refreshedPortfolio.positions
+      : (refreshedPortfolio.position ? [refreshedPortfolio.position] : []);
+    position = refreshedPositions.find(p => positionKey(p) === expected);
+    if (!position) return;
 
     const entry = Number(position.entryPrice);
     const high = Number(position.highestPrice || entry);
@@ -254,12 +276,23 @@ function createBotR3({
     }
   }
 
+  async function monitorPositions(session) {
+    const portfolio = getPortfolio();
+    const positions = Array.isArray(portfolio.positions)
+      ? portfolio.positions
+      : (portfolio.position ? [portfolio.position] : []);
+    for (const position of positions) {
+      if (!isActive(session)) return;
+      await monitorSinglePosition(session, position);
+    }
+  }
+
   async function tick(kind, session = activeSession) {
     if (!session || !isActive(session)) return;
     if (kind === "scanner" ? scannerBusy : monitorBusy) return;
     if (kind === "scanner") scannerBusy = true; else monitorBusy = true;
     try {
-      await (kind === "scanner" ? runScanner(session) : monitorPosition(session));
+      await (kind === "scanner" ? runScanner(session) : monitorPositions(session));
     } catch (error) {
       lastError = error.message;
       console.error("R3 paused:", error.message);
