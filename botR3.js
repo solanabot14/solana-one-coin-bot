@@ -80,6 +80,7 @@ function createBotR3({
       const eligible =
         coin.signal === "EARLY RUNNER" ||
         coin.signal === "PROVISIONAL EARLY RUNNER" ||
+        coin.signal === "BREAKOUT EARLY RUNNER" ||
         coin.signal === "FAILED LAUNCH RETRY";
       if (!eligible) continue;
 
