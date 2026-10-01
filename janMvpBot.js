@@ -6,7 +6,8 @@ const paperTrader = require("./paperTrader");
 
 const POSITION_MONITOR_MS = 5000;
 const OG_FOLLOW_INTERVAL_MS = 2000;
-const SWARM_CACHE_FILL_INTERVAL_MS = 1000;
+const SWARM_CACHE_FILL_INTERVAL_MS = 5000;
+const SWARM_DISCOVERY_INTERVAL_MS = 120000;
 const SWARM_CACHE_MAX_AGE_MS = 3 * 60 * 1000;
 const TOKEN_COOLDOWN_MS = 60 * 60 * 1000;
 
@@ -39,6 +40,8 @@ function createJanMvpBot({
   let fillBusy = false;
   let monitorBusy = false;
   let lastError = null;
+  let candidateCache = [];
+  let candidateCacheAt = 0;
   const isActive = session => activeSession === session && !session.signal.aborted;
 
   async function notifyMilestones(closedTrade, milestones) {
@@ -148,7 +151,12 @@ function createJanMvpBot({
     const slots = freeSlots();
     if (!slots.length || !isActive(session)) return;
 
-    const discovered = await discoverCandidates(session.signal);
+    const now = Date.now();
+    if (!candidateCacheAt || now - candidateCacheAt >= SWARM_DISCOVERY_INTERVAL_MS) {
+      candidateCache = await discoverCandidates(session.signal) || [];
+      candidateCacheAt = Date.now();
+    }
+    const discovered = candidateCache;
     if (!isActive(session)) return;
     const occupied = occupiedTokenAddresses();
     const usable = (discovered || []).filter(coin =>
@@ -283,7 +291,7 @@ function createJanMvpBot({
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("SWARM STARTED | Concurrent slots using OG candidate cache only");
+    console.log("SWARM STARTED | 5 concurrent slots | V3.1 discovery cached 120s");
     monitorInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
     followInterval = timers.setInterval(() => tick("follow", session), OG_FOLLOW_INTERVAL_MS);
     fillInterval = timers.setInterval(() => tick("fill", session), SWARM_CACHE_FILL_INTERVAL_MS);
