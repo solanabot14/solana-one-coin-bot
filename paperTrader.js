@@ -111,7 +111,7 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 		if (positions.some(p => p.tokenAddress === coin.tokenAddress)) return fail("Token already has an open position.");
 		if (state.cashBalance <= 0) return fail("No cash available.");
 		const next = structuredClone(state);
-		const amountInvested = Math.min(equity() * 0.10, next.cashBalance);
+		const amountInvested = Math.min(Math.max(equity() * 0.10, 10), next.cashBalance);
 		if (!(amountInvested > 0)) return fail("No cash available.");
 		const buys5m = Number(coin.buys5m) || 0, sells5m = Number(coin.sells5m) || 0;
 		const totalTransactions5m = buys5m + sells5m;
