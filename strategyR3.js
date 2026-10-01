@@ -20,15 +20,15 @@ const CONFIG = Object.freeze({
   maxLiquidityDrawdownPct: 12,
   provisionalMinVolume5mGrowthPct: 50,
   provisionalMinVolume5m: 2000,
-  breakoutMaxChange5m: 6,
-  breakoutMaxChange1h: 30,
-  breakoutMinScore: 11,
-  breakoutMinVolume5mGrowthPct: 50,
-  breakoutMinVolume5m: 5000,
-  breakoutMinTransactions5m: 30,
-  breakoutMinBuyRatio: 0.55,
-  breakoutMaxBuyRatio: 0.75,
-  breakoutMaxLiquidityDrawdownPct: 8
+  breakoutMaxChange5m: 7,
+  breakoutMaxChange1h: 35,
+  breakoutMinScore: 10,
+  breakoutMinVolume5mGrowthPct: 40,
+  breakoutMinVolume5m: 3000,
+  breakoutMinTransactions5m: 25,
+  breakoutMinBuyRatio: 0.52,
+  breakoutMaxBuyRatio: 0.80,
+  breakoutMaxLiquidityDrawdownPct: 10
 });
 
 function pctChange(current, previous) {
@@ -239,7 +239,7 @@ function analyzeEarlyRunner(history, data, config = CONFIG) {
     return {
       signal: "BREAKOUT EARLY RUNNER",
       score,
-      reasons: [...reasons, "Controlled 4-6% breakout with strong order flow and volume confirmation"],
+      reasons: [...reasons, "Controlled 4-7% breakout with strong order flow and volume confirmation"],
       metrics
     };
   }
