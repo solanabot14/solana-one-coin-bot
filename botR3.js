@@ -44,6 +44,8 @@ const MIN_EXIT_TX = 10;
 function createBotR3({
   getTokenData = market.getTokenData,
   discoverCandidates = scanner.discoverCandidatesR3,
+  refreshFreshDiscovery = scanner.refreshFreshDiscovery,
+  freshDiscoveryPollMs = scanner.FRESH_DISCOVERY_POLL_MS || 15000,
   timers = globalThis,
   notifier = telegram
 } = {}) {
@@ -51,6 +53,7 @@ function createBotR3({
   let activeSession = null;
   let scannerInterval = null;
   let monitorInterval = null;
+  let freshDiscoveryInterval = null;
   let scannerBusy = false;
   let monitorBusy = false;
   let lastError = null;
@@ -276,6 +279,17 @@ function createBotR3({
     console.log("R3 EARLY RUNNER STARTED | paper-only | separate account | V3.1R2 untouched");
     monitorInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
     scannerInterval = timers.setInterval(() => tick("scanner", session), SCANNER_INTERVAL_MS);
+    if (typeof refreshFreshDiscovery === "function") {
+      freshDiscoveryInterval = timers.setInterval(() => {
+        if (!isActive(session)) return;
+        void refreshFreshDiscovery({ signal: session.signal }).catch(error => {
+          console.log(`R3 FRESH DISCOVERY unavailable | ${error.message}`);
+        });
+      }, freshDiscoveryPollMs);
+      void refreshFreshDiscovery({ signal: session.signal }).catch(error => {
+        console.log(`R3 FRESH DISCOVERY unavailable | ${error.message}`);
+      });
+    }
     void tick("monitor", session);
     void tick("scanner", session);
   }
@@ -286,7 +300,8 @@ function createBotR3({
     activeSession = null;
     timers.clearInterval(scannerInterval);
     timers.clearInterval(monitorInterval);
-    scannerInterval = monitorInterval = null;
+    if (freshDiscoveryInterval) timers.clearInterval(freshDiscoveryInterval);
+    scannerInterval = monitorInterval = freshDiscoveryInterval = null;
     console.log("R3 EARLY RUNNER STOPPED");
   }
 
