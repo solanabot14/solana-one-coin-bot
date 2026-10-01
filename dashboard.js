@@ -6,6 +6,7 @@ const bot = require("./bot");
 const { getPortfolio } = require("./paperTrader");
 const { getTokenData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
+const swarm = require("./janMvpBot");
 
 function getConfig(env = process.env) {
   const railway = !!env.RAILWAY_ENVIRONMENT_ID;
@@ -368,7 +369,7 @@ th,td{
 </div>
 </div>
 
-<div class="card section">
+<div class="card section">\n<h2>Swarm — $10 / 5 Concurrent Slots</h2>\n<p class="muted">Independent paper experiment: five $2 slots can be occupied simultaneously.</p>\n<div class="grid"><div class="metric"><div class="metric-label">Status</div><div class="metric-value" id="swarmStatus">—</div></div><div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value">$10.00</div></div><div class="metric"><div class="metric-label">Equity</div><div class="metric-value" id="swarmEquity">—</div></div><div class="metric"><div class="metric-label">P/L</div><div class="metric-value" id="swarmPnl">—</div></div><div class="metric"><div class="metric-label">Open Slots</div><div class="metric-value" id="swarmOpen">0 / 5</div></div></div>\n<div style="overflow-x:auto;margin-top:16px"><table><thead><tr><th>Slot</th><th>Cash</th><th>Position</th><th>Invested</th><th>Trades</th><th>W</th><th>L</th></tr></thead><tbody id="swarmSlots"><tr><td colspan="7">Waiting...</td></tr></tbody></table></div>\n</div>\n\n<div class="card section">
 <h2>Entry Analytics</h2>
 <p class="muted">Read-only analysis of completed V3.1 trades. This section does not affect trading.</p>
 <div class="grid">
@@ -472,6 +473,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       }
       if (req.method !== "GET") return json(res, { error: "Method not allowed" }, 405);
       if (route === "/api/status") return json(res, { running: controls.getBotStatus(), error: controls.getLastError() });
+      if (route === "/api/swarm") return json(res, { running: swarm.getStatus(), error: swarm.getLastError(), ...swarm.getDashboardState() });
       if (route === "/api/data") return json(res, await buildDashboardData(portfolio(), marketData));
       if (route === "/dashboard-client.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(client); }
       if (route !== "/") return json(res, { error: "Not found" }, 404);
@@ -489,8 +491,11 @@ if (require.main === module) {
   const config = getConfig();
   getPortfolio();
   const server = createDashboardServer({ config });
+  bot.startBot();
+  swarm.start();
   server.listen(config.port, config.host, () => console.log("Dashboard listening on " + config.host + ":" + config.port));
   const shutdown = () => {
+    swarm.stop();
     bot.stopBot();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 12000).unref();
