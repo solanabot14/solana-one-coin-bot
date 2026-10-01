@@ -40,13 +40,10 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
   async function runScanner(session) {
     console.log("\nStarting automatic Solana scan...\n");
     const portfolio = getPortfolio();
-    if (portfolio.position) {
-      console.log(`Position already active: ${portfolio.position.symbol}. Skipping new entry.`);
-      return;
-    }
+    if ((portfolio.positions || []).length >= 3) { console.log("All 3 V3.1 slots occupied. Skipping new entry."); return; }
 
     const candidates = await discoverCandidates({ signal: session.signal });
-    if (!isActive(session) || getPortfolio().position) return;
+    if (!isActive(session) || (getPortfolio().positions || []).length >= 3) return;
     if (!candidates.length) {
       console.log("No candidates passed the filters.");
       return;
@@ -67,7 +64,8 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
       return;
     }
 
-    const bestCoin = availableCandidates.find(coin => coin.signal === "STRONG BUY");
+    const openTokens = new Set((getPortfolio().positions || []).map(p => p.tokenAddress));
+    const bestCoin = availableCandidates.find(coin => coin.signal === "STRONG BUY" && !openTokens.has(coin.tokenAddress));
     if (!bestCoin) {
       console.log("No STRONG BUY candidate available.");
       return;
@@ -101,60 +99,28 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
   }
 
   async function monitorPosition(session) {
-    const portfolio = getPortfolio();
-    if (!portfolio.position) return;
-    let position = portfolio.position;
-    const expectedPosition = positionKey(position);
-    const tokenAddress = position.tokenAddress;
-    const freshData = await getTokenData(tokenAddress, { signal: session.signal });
-    if (!isActive(session) || positionKey(getPortfolio().position) !== expectedPosition) return;
-    if (!freshData) {
-      console.log(`POSITION DATA UNAVAILABLE | ${position.symbol}`);
-      return;
+    const positions = getPortfolio().positions || [];
+    for (const snapshot of positions) {
+      if (!isActive(session)) return;
+      let position = snapshot; const expectedPosition = positionKey(position); const tokenAddress = position.tokenAddress;
+      const freshData = await getTokenData(tokenAddress,{signal:session.signal});
+      const current = (getPortfolio().positions || []).find(p=>positionKey(p)===expectedPosition);
+      if (!isActive(session) || !current || !freshData) continue;
+      const currentPrice=Number(freshData.priceUsd); if(!Number.isFinite(currentPrice)||currentPrice<=0) continue;
+      updateHigh(expectedPosition,currentPrice); position=(getPortfolio().positions||[]).find(p=>positionKey(p)===expectedPosition); if(!position) continue;
+      const entryPrice=Number(position.entryPrice), profitPercent=((currentPrice-entryPrice)/entryPrice)*100;
+      const dropFromHigh=((position.highestPrice-currentPrice)/position.highestPrice)*100;
+      const momentum5m=Number(freshData.priceChange5m)||0, buys5m=Number(freshData.buys5m)||0, sells5m=Number(freshData.sells5m)||0;
+      const totalTransactions=buys5m+sells5m, buyRatio=totalTransactions?buys5m/totalTransactions:0;
+      console.log(`V3.1 SLOT MONITOR | ${position.symbol} | P/L: ${profitPercent.toFixed(2)}%`);
+      const exit=(reason,percent=100)=>{ const result=sell(currentPrice,percent,{expectedPosition,reason}); if(result.success){startCooldown(tokenAddress,position.symbol,reason);void notifier.notifyTrade(reason,result.trade);} return result; };
+      if(profitPercent<=HARD_STOP_PERCENT){exit("HARD STOP");continue;}
+      const enoughActivity=totalTransactions>=MOMENTUM_EXIT_MIN_TRANSACTIONS, sellPressure=enoughActivity&&buyRatio<MOMENTUM_EXIT_BUY_RATIO;
+      if((profitPercent<=MOMENTUM_EXIT_MIN_LOSS&&momentum5m<=MOMENTUM_EXIT_5M&&sellPressure)||(profitPercent<=MOMENTUM_EXIT_STRONG_LOSS&&momentum5m<=MOMENTUM_EXIT_STRONG_5M)){exit("MOMENTUM EXIT");continue;}
+      if(profitPercent>=TAKE_PROFIT_1_PERCENT&&!position.firstTakeProfitDone){const r=sell(currentPrice,TAKE_PROFIT_1_SELL_PERCENT,{expectedPosition,takeProfit:"firstTakeProfitDone",reason:"TAKE PROFIT 1"});if(r.success)void notifier.notifyTrade("TAKE PROFIT 1",r.trade);continue;}
+      if(profitPercent>=TAKE_PROFIT_2_PERCENT&&position.firstTakeProfitDone&&!position.secondTakeProfitDone){const r=sell(currentPrice,TAKE_PROFIT_2_SELL_PERCENT,{expectedPosition,takeProfit:"secondTakeProfitDone",reason:"TAKE PROFIT 2"});if(r.success)void notifier.notifyTrade("TAKE PROFIT 2",r.trade);continue;}
+      if(position.secondTakeProfitDone&&dropFromHigh>=TRAILING_STOP_PERCENT) exit("TRAILING STOP");
     }
-
-    const currentPrice = Number(freshData.priceUsd);
-    if (!Number.isFinite(currentPrice) || currentPrice <= 0) return;
-    updateHigh(expectedPosition, currentPrice);
-    position = getPortfolio().position;
-    const entryPrice = Number(position.entryPrice);
-    const profitPercent = ((currentPrice - entryPrice) / entryPrice) * 100;
-    const dropFromHigh = ((position.highestPrice - currentPrice) / position.highestPrice) * 100;
-    const momentum5m = Number(freshData.priceChange5m) || 0;
-    const buys5m = Number(freshData.buys5m) || 0;
-    const sells5m = Number(freshData.sells5m) || 0;
-    const totalTransactions = buys5m + sells5m;
-    const buyRatio = totalTransactions ? buys5m / totalTransactions : 0;
-    console.log(`POSITION MONITOR | ${position.symbol} | P/L: ${profitPercent.toFixed(2)}% | 5m: ${momentum5m.toFixed(2)}% | Buy Ratio: ${(buyRatio * 100).toFixed(1)}% | Drop High: ${dropFromHigh.toFixed(2)}%`);
-
-    const exit = (reason, percent = 100) => {
-      console.log(`EXIT | ${position.symbol} | ${reason}`);
-      const result = sell(currentPrice, percent, { expectedPosition, reason });
-      if (result.success) {
-        startCooldown(tokenAddress, position.symbol, reason);
-        void notifier.notifyTrade(reason, result.trade);
-      }
-      return result;
-    };
-    if (profitPercent <= HARD_STOP_PERCENT) return void exit("HARD STOP");
-
-    const enoughActivity = totalTransactions >= MOMENTUM_EXIT_MIN_TRANSACTIONS;
-    const sellPressure = enoughActivity && buyRatio < MOMENTUM_EXIT_BUY_RATIO;
-    const momentumExitA = profitPercent <= MOMENTUM_EXIT_MIN_LOSS && momentum5m <= MOMENTUM_EXIT_5M && sellPressure;
-    const momentumExitB = profitPercent <= MOMENTUM_EXIT_STRONG_LOSS && momentum5m <= MOMENTUM_EXIT_STRONG_5M;
-    if (momentumExitA || momentumExitB) return void exit("MOMENTUM EXIT");
-
-    if (profitPercent >= TAKE_PROFIT_1_PERCENT && !position.firstTakeProfitDone) {
-      const result = sell(currentPrice, TAKE_PROFIT_1_SELL_PERCENT, { expectedPosition, takeProfit: "firstTakeProfitDone", reason: "TAKE PROFIT 1" });
-      if (result.success) void notifier.notifyTrade("TAKE PROFIT 1", result.trade);
-      return;
-    }
-    if (profitPercent >= TAKE_PROFIT_2_PERCENT && position.firstTakeProfitDone && !position.secondTakeProfitDone) {
-      const result = sell(currentPrice, TAKE_PROFIT_2_SELL_PERCENT, { expectedPosition, takeProfit: "secondTakeProfitDone", reason: "TAKE PROFIT 2" });
-      if (result.success) void notifier.notifyTrade("TAKE PROFIT 2", result.trade);
-      return;
-    }
-    if (position.secondTakeProfitDone && dropFromHigh >= TRAILING_STOP_PERCENT) exit("TRAILING STOP");
   }
 
   async function tick(kind, session = activeSession) {
@@ -181,7 +147,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("BOT STARTED | Risk Management V2");
+    console.log("BOT STARTED | V3.1-3Slot + 10% Compound");
     positionInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
     scannerInterval = timers.setInterval(() => tick("scanner", session), SCANNER_INTERVAL_MS);
     void tick("monitor", session);
