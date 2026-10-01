@@ -54,9 +54,7 @@ const REACTIVATION_MIN_RETAINED_VOLUME_RATIO = 0.50;
 const HISTORY_TTL_MS = 45 * 60 * 1000;
 const RESET_MIN_MS = 10 * 60 * 1000;
 const REENTRY_LOOKBACK_MS = 24 * 60 * 60 * 1000;
-const MAX_ENTRIES_PER_TOKEN_24H = 2;
 const MAX_LOSING_EXITS_PER_TOKEN_24H = 2;
-const FAILED_LAUNCH_MAX_ENTRIES_24H = 3;
 const FAILED_LAUNCH_RETRY_MIN_SCORE = 13;
 const FAILED_LAUNCH_RETRY_MIN_VOLUME5M = 20000;
 const FAILED_LAUNCH_RETRY_MIN_VOLUME_GROWTH_PCT = 75;
@@ -291,10 +289,7 @@ function resetEligible(tokenAddress, history) {
   if (!state) return true;
 
   const stats = recentTokenStats(tokenAddress);
-  if (
-    stats.entries >= MAX_ENTRIES_PER_TOKEN_24H ||
-    stats.losingFullExits >= MAX_LOSING_EXITS_PER_TOKEN_24H
-  ) {
+  if (stats.losingFullExits >= MAX_LOSING_EXITS_PER_TOKEN_24H) {
     return false;
   }
 
@@ -305,9 +300,6 @@ function failedLaunchRetryEligible(tokenAddress, history, analysis, data, stats)
   const state = exhausted.get(tokenAddress);
   if (!state || state.reason !== "FAILED LAUNCH") return false;
 
-  // Exactly one exceptional extra attempt beyond the normal 2-entry cap.
-  if (stats.entries !== MAX_ENTRIES_PER_TOKEN_24H) return false;
-  if (stats.entries >= FAILED_LAUNCH_MAX_ENTRIES_24H) return false;
   if (stats.losingFullExits > MAX_LOSING_EXITS_PER_TOKEN_24H) return false;
   if (!resetStructureEligible(state, history)) return false;
 
@@ -685,8 +677,7 @@ async function discoverCandidatesR3({ signal } = {}) {
       entryNeedsSecurity && !security.ok ? "SECURITY VETO" :
       failedLaunchRetryOk ? "FAILED LAUNCH RETRY" :
       isEntrySignal &&
-        (reentryStats.entries >= MAX_ENTRIES_PER_TOKEN_24H ||
-         reentryStats.losingFullExits >= MAX_LOSING_EXITS_PER_TOKEN_24H)
+        reentryStats.losingFullExits >= MAX_LOSING_EXITS_PER_TOKEN_24H
         ? "REENTRY BLOCK"
         : isEntrySignal && !resetOk ? "RESET WAIT" :
       analysis.signal;
