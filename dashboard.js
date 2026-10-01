@@ -236,21 +236,15 @@ th,td{
 </div>
 
 <div class="controls">
-  <button class="start" id="startButton">
-    START BOT
-  </button>
-
-  <button class="stop" id="stopButton">
-    STOP BOT
-  </button>
-
-  <a class="panel-link swarm" href="#swarmPanel">VIEW SWARM</a>
-  <a class="panel-link" href="#v31Panel">VIEW V3.1</a>
+  <a class="panel-link" href="#v31Panel">V3.1 BOT</a>
+  <a class="panel-link swarm" href="#swarmPanel">SWARM</a>
 </div>
 
 <p id="notice" role="status">
-  Stopping pauses automatic exits and keeps your open position.
+  V3.1 and Swarm start automatically with the service.
 </p>
+
+<div id="v31Panel"></div>
 
 <div class="grid">
 
@@ -294,7 +288,7 @@ th,td{
 
 </div>
 
-<div class="card section" id="v31Panel">
+<div class="card section">
 
 <h2>V3.1 Performance</h2>
 
