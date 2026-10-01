@@ -369,6 +369,22 @@ th,td{
 </div>
 
 <div class="card section">
+<h2>Entry Analytics</h2>
+<p class="muted">Read-only analysis of completed V3.1 trades. This section does not affect trading.</p>
+<div class="grid">
+  <div class="metric"><div class="metric-label">Avg Entry Score</div><div class="metric-value" id="avgEntryScore">—</div></div>
+  <div class="metric"><div class="metric-label">Avg Entry 5m</div><div class="metric-value" id="avgEntry5m">—</div></div>
+  <div class="metric"><div class="metric-label">Avg Entry 1h</div><div class="metric-value" id="avgEntry1h">—</div></div>
+  <div class="metric"><div class="metric-label">Avg Entry Buy Ratio</div><div class="metric-value" id="avgEntryRatio">—</div></div>
+  <div class="metric"><div class="metric-label">Avg Entry Transactions</div><div class="metric-value" id="avgEntryTx">—</div></div>
+  <div class="metric"><div class="metric-label">Avg Entry Liquidity</div><div class="metric-value" id="avgEntryLiquidity">—</div></div>
+  <div class="metric"><div class="metric-label">Avg Entry 24h Volume</div><div class="metric-value" id="avgEntryVolume">—</div></div>
+  <div class="metric"><div class="metric-label">Best Trade Return</div><div class="metric-value" id="bestReturn">—</div></div>
+  <div class="metric"><div class="metric-label">Worst Trade Return</div><div class="metric-value" id="worstReturn">—</div></div>
+</div>
+</div>
+
+<div class="card section">
 
 <h2>Exit Reasons</h2>
 
@@ -395,6 +411,12 @@ th,td{
   <th>Entry 5m</th>
   <th>Entry 1h</th>
   <th>Entry Buy Ratio</th>
+  <th>Entry Tx</th>
+  <th>Entry Liquidity</th>
+  <th>Entry 24h Volume</th>
+  <th>Entry 24h</th>
+  <th>Entry Signal</th>
+  <th>Entry Reasons</th>
   <th>Entry</th>
   <th>Average Exit</th>
   <th>Invested</th>
