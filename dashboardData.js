@@ -166,9 +166,20 @@ async function buildDashboardData(data, getTokenData) {
 	const holdTimes=completedTrades.map(t=>Number(t.holdTimeMs)).filter(Number.isFinite), maxGains=completedTrades.map(t=>Number(t.maxGainPercent)).filter(Number.isFinite);
 	const exitReasonCounts={}; for(const trade of completedTrades) for(const reason of trade.exitReasons) exitReasonCounts[reason]=(exitReasonCounts[reason]||0)+1;
 	const netPnl=grossProfit-grossLoss;
+	const entryAnalytics={
+		averageScore:average(completedTrades.map(t=>Number(t.entryScore))),
+		average5m:average(completedTrades.map(t=>Number(t.entryPriceChange5m))),
+		average1h:average(completedTrades.map(t=>Number(t.entryPriceChange1h))),
+		averageBuyRatio:average(completedTrades.map(t=>Number(t.entryBuyRatio??t.entryBuyRatio5m))),
+		averageTransactions:average(completedTrades.map(t=>Number(t.entryTransactions5m))),
+		averageLiquidity:average(completedTrades.map(t=>Number(t.entryLiquidityUsd))),
+		averageVolume24h:average(completedTrades.map(t=>Number(t.entryVolume24h))),
+		bestReturn:completedTrades.length?Math.max(...completedTrades.map(t=>Number(t.pnlPercent)||0)):null,
+		worstReturn:completedTrades.length?Math.min(...completedTrades.map(t=>Number(t.pnlPercent)||0)):null
+	};
 	return {...data, position:positions[0]||null, positions, live:livePositions[0]?.live||null, livePositions,
 		openSlots:positions.length,maxSlots:3,equity,totalPnl:equity===null?null:equity-data.startingBalance,
-		priceUnavailable:positions.length>0&&!pricesAvailable,completedTrades,scoreStats:buildScoreStats(completedTrades),exitReasonCounts,
+		priceUnavailable:positions.length>0&&!pricesAvailable,completedTrades,scoreStats:buildScoreStats(completedTrades),exitReasonCounts,entryAnalytics,
 		stats:{completedTrades:completedTrades.length,winners,losers,winRate:completedTrades.length?winners/completedTrades.length*100:0,
 			netPnl,grossProfit,grossLoss,profitFactor:grossLoss>0?grossProfit/grossLoss:null,profitFactorLabel:grossLoss>0?(grossProfit/grossLoss).toFixed(2):grossProfit>0?"∞":"—",
 			averageWinnerPercent:average(winnerReturns),averageLoserPercent:average(loserReturns),averageHoldTimeMs:average(holdTimes),averageMaxGainPercent:average(maxGains)}};
