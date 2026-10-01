@@ -516,11 +516,31 @@ async function discoverCandidatesR3({ signal } = {}) {
     }
   }
 
-  const candidates = [];
-  for (const token of unique.values()) {
+  // Process multi-source discoveries first, and fetch DexScreener market data
+  // in small concurrent batches so broader discovery does not turn into a serial bottleneck.
+  const TOKEN_DATA_CONCURRENCY = 6;
+  const prioritizedTokens = [...unique.values()].sort((a, b) => {
+    const sourceDiff = (b.discoverySources?.length || 0) - (a.discoverySources?.length || 0);
+    if (sourceDiff !== 0) return sourceDiff;
+    return 0;
+  });
+
+  const enriched = [];
+  for (let i = 0; i < prioritizedTokens.length; i += TOKEN_DATA_CONCURRENCY) {
     if (signal?.aborted) return [];
-    const data = await getTokenData(token.tokenAddress, { signal });
-    if (!data) continue;
+    const batch = prioritizedTokens.slice(i, i + TOKEN_DATA_CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async token => ({
+        token,
+        data: await getTokenData(token.tokenAddress, { signal })
+      }))
+    );
+    enriched.push(...results.filter(item => item.data));
+  }
+
+  const candidates = [];
+  for (const { token, data } of enriched) {
+    if (signal?.aborted) return [];
 
     const liquidity = Number(data.liquidityUsd) || 0;
     // R3 intentionally does not use 24h volume as a discovery gate.
