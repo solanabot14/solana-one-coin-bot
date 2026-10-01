@@ -2,12 +2,13 @@ function tradeKey(trade) {
 	return `${trade.tokenAddress || trade.symbol}-${trade.entryTime}`;
 }
 
-function groupCompletedTrades(history = [], position = null) {
+function groupCompletedTrades(history = [], openPositions = []) {
+	const positions = Array.isArray(openPositions) ? openPositions.filter(Boolean) : (openPositions ? [openPositions] : []);
 	const groups = new Map();
 	// Bridge legacy rows only when their token/time identifies one known position.
 	const legacyIds = new Map();
 	const positionId = trade => trade.positionId || (trade.type !== "SELL" ? trade.id : null);
-	for (const trade of [...history, ...(position ? [position] : [])]) {
+	for (const trade of [...history, ...positions]) {
 		const id = positionId(trade);
 		if (!id || !trade.entryTime) continue;
 		const key = tradeKey(trade);
@@ -99,7 +100,7 @@ function groupCompletedTrades(history = [], position = null) {
 
 	return [...groups.entries()]
 		.filter(([id, group]) => {
-			if (position && id === groupKey(position)) return false;
+			if (positions.some(position => id === groupKey(position))) return false;
 			return group.quantityBought > 0 && group.sells.length > 0 &&
 				(group.sells.some(sell => Number(sell.percentSold) === 100) ||
 					group.quantitySold >= group.quantityBought * (1 - 1e-10));
@@ -188,7 +189,8 @@ const DIVERSITY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DIVERSITY_RUNNER_GAIN_PERCENT = 30;
 const DIVERSITY_MAX_LOSS_ENTRIES = 2;
 
-function buildTokenDiversityView(completedTrades = [], openPosition = null, now = Date.now()) {
+function buildTokenDiversityView(completedTrades = [], openPositions = [], now = Date.now()) {
+	const positions = Array.isArray(openPositions) ? openPositions.filter(Boolean) : (openPositions ? [openPositions] : []);
 	const cutoff = now - DIVERSITY_WINDOW_MS;
 	const rows = new Map();
 
@@ -227,7 +229,8 @@ function buildTokenDiversityView(completedTrades = [], openPosition = null, now 
 		}
 	}
 
-	if (openPosition?.tokenAddress) {
+	for (const openPosition of positions) {
+		if (!openPosition?.tokenAddress) continue;
 		const existed = rows.has(openPosition.tokenAddress);
 		if (!existed) {
 			rows.set(openPosition.tokenAddress, {
@@ -451,13 +454,15 @@ function buildScoreStats(completedTrades) {
 }
 
 async function buildDashboardData(data, getTokenData, baselineData = null) {
-	const completedTrades = groupCompletedTrades(data.history, data.position);
+	const openPositions = Array.isArray(data.positions) ? data.positions.filter(Boolean) : (data.position ? [data.position] : []);
+	const completedTrades = groupCompletedTrades(data.history, openPositions);
+	const livePositions = [];
 	let live = null;
-	if (data.position) {
-		const fresh = await getTokenData(data.position.tokenAddress, { pairAddress: data.position.pairAddress || undefined });
-		const currentPrice = Number(fresh?.priceUsd);
-		if (Number.isFinite(currentPrice) && currentPrice > 0) {
-			const p = data.position;
+	if (openPositions.length) {
+		for (const p of openPositions) {
+			const fresh = await getTokenData(p.tokenAddress, { pairAddress: p.pairAddress || undefined });
+			const currentPrice = Number(fresh?.priceUsd);
+			if (!(Number.isFinite(currentPrice) && currentPrice > 0)) continue;
 			const currentValue = p.quantity * currentPrice;
 			const pnl = currentValue - p.amountInvested;
 			const highestPrice = Number(p.highestPrice || p.entryPrice);
@@ -475,7 +480,10 @@ async function buildDashboardData(data, getTokenData, baselineData = null) {
 			const buys5m = Number(fresh.buys5m) || 0;
 			const sells5m = Number(fresh.sells5m) || 0;
 			const transactions5m = buys5m + sells5m;
-			live = {
+			const liveEntry = {
+				positionId: p.id || null,
+				symbol: p.symbol,
+				tokenAddress: p.tokenAddress,
 				currentPrice, currentValue, pnl, pnlPercent: p.amountInvested > 0 ? pnl / p.amountInvested * 100 : 0,
 				highestPrice, maxGainPercent, holdTimeMs,
 				mode, profitLockActive, protectedFloorPercent, trailingExitPrice, trailingExitPercent,
@@ -484,16 +492,21 @@ async function buildDashboardData(data, getTokenData, baselineData = null) {
 				buyRatio5m: transactions5m > 0 ? buys5m / transactions5m : 0,
 				pairAddress: p.pairAddress || fresh.pairAddress || null
 			};
+			livePositions.push(liveEntry);
 		}
+		live = livePositions[0] || null;
 	}
 
-	const equity = data.position && !live ? null : data.cashBalance + (live?.currentValue || 0);
+	const allLivePriced = livePositions.length === openPositions.length;
+	const equity = openPositions.length && !allLivePriced
+		? null
+		: data.cashBalance + livePositions.reduce((sum, item) => sum + Number(item.currentValue || 0), 0);
 	const exitReasonCounts = {};
 	for (const trade of completedTrades) for (const reason of trade.exitReasons) exitReasonCounts[reason] = (exitReasonCounts[reason] || 0) + 1;
 
 	const stats = summarizeTrades(completedTrades, data.startingBalance);
 	const baselineCompletedTrades = baselineData
-		? groupCompletedTrades(baselineData.history || [], baselineData.position || null)
+		? groupCompletedTrades(baselineData.history || [], baselineData.positions || baselineData.position || null)
 		: [];
 	const v35Research = {
 		strategyVersion: "V3.1R2",
@@ -521,13 +534,13 @@ async function buildDashboardData(data, getTokenData, baselineData = null) {
 	};
 
 	return {
-		...data, live, equity, totalPnl: equity === null ? null : equity - data.startingBalance,
-		priceUnavailable: !!data.position && !live, completedTrades, scoreStats: buildScoreStats(completedTrades), exitReasonCounts,
+		...data, live, livePositions, equity, totalPnl: equity === null ? null : equity - data.startingBalance,
+		priceUnavailable: openPositions.length > 0 && !allLivePriced, completedTrades, scoreStats: buildScoreStats(completedTrades), exitReasonCounts,
 		strategyVersionStats: buildStrategyVersionStats(completedTrades),
 		v35Research,
 		v36Research,
 		slotSimulation: buildSlotSimulation(completedTrades),
-		tokenDiversity: buildTokenDiversityView(completedTrades, data.position),
+		tokenDiversity: buildTokenDiversityView(completedTrades, openPositions),
 		stats
 	};
 }
