@@ -460,7 +460,10 @@ async function buildDashboardData(data, getTokenData, baselineData = null) {
 	let live = null;
 	if (openPositions.length) {
 		for (const p of openPositions) {
-			const fresh = await getTokenData(p.tokenAddress, { pairAddress: p.pairAddress || undefined });
+			const fresh = await getTokenData(p.tokenAddress, {
+				pairAddress: p.pairAddress || undefined,
+				consumer: "dashboard"
+			});
 			const currentPrice = Number(fresh?.priceUsd);
 			if (!(Number.isFinite(currentPrice) && currentPrice > 0)) continue;
 			const currentValue = p.quantity * currentPrice;
