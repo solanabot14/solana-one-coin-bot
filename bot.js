@@ -12,6 +12,8 @@ const TAKE_PROFIT_1_SELL_PERCENT = 25;
 const TAKE_PROFIT_2_PERCENT = 30;
 const TAKE_PROFIT_2_SELL_PERCENT = 35;
 const TRAILING_STOP_PERCENT = 8;
+const PROFIT_LOCK_TRIGGER_PERCENT = 10;
+const PROFIT_LOCK_FLOOR_PERCENT = 4;
 const MOMENTUM_EXIT_MIN_LOSS = -2;
 const MOMENTUM_EXIT_5M = -3;
 const MOMENTUM_EXIT_STRONG_LOSS = -5;
@@ -121,6 +123,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
       updateHigh(expectedPosition,currentPrice); position=(getPortfolio().positions||[]).find(p=>positionKey(p)===expectedPosition); if(!position) continue;
       const entryPrice=Number(position.entryPrice), profitPercent=((currentPrice-entryPrice)/entryPrice)*100;
       const dropFromHigh=((position.highestPrice-currentPrice)/position.highestPrice)*100;
+      const highestProfitPercent=((Number(position.highestPrice)-entryPrice)/entryPrice)*100;
       const momentum5m=Number(freshData.priceChange5m)||0, buys5m=Number(freshData.buys5m)||0, sells5m=Number(freshData.sells5m)||0;
       const totalTransactions=buys5m+sells5m, buyRatio=totalTransactions?buys5m/totalTransactions:0;
       console.log(`V3.1 SLOT MONITOR | ${position.symbol} | P/L: ${profitPercent.toFixed(2)}%`);
@@ -128,6 +131,8 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
       if(profitPercent<=HARD_STOP_PERCENT){exit("HARD STOP");continue;}
       const enoughActivity=totalTransactions>=MOMENTUM_EXIT_MIN_TRANSACTIONS, sellPressure=enoughActivity&&buyRatio<MOMENTUM_EXIT_BUY_RATIO;
       if((profitPercent<=MOMENTUM_EXIT_MIN_LOSS&&momentum5m<=MOMENTUM_EXIT_5M&&sellPressure)||(profitPercent<=MOMENTUM_EXIT_STRONG_LOSS&&momentum5m<=MOMENTUM_EXIT_STRONG_5M)){exit("MOMENTUM EXIT");continue;}
+      const profitLockActive=highestProfitPercent>=PROFIT_LOCK_TRIGGER_PERCENT&&!position.secondTakeProfitDone;
+      if(profitLockActive&&profitPercent<=PROFIT_LOCK_FLOOR_PERCENT){exit("PROFIT LOCK");continue;}
       if(profitPercent>=TAKE_PROFIT_1_PERCENT&&!position.firstTakeProfitDone){const r=sell(currentPrice,TAKE_PROFIT_1_SELL_PERCENT,{expectedPosition,takeProfit:"firstTakeProfitDone",reason:"TAKE PROFIT 1"});if(r.success)void notifier.notifyTrade("TAKE PROFIT 1",r.trade);continue;}
       if(profitPercent>=TAKE_PROFIT_2_PERCENT&&position.firstTakeProfitDone&&!position.secondTakeProfitDone){const r=sell(currentPrice,TAKE_PROFIT_2_SELL_PERCENT,{expectedPosition,takeProfit:"secondTakeProfitDone",reason:"TAKE PROFIT 2"});if(r.success)void notifier.notifyTrade("TAKE PROFIT 2",r.trade);continue;}
       if(position.secondTakeProfitDone&&dropFromHigh>=TRAILING_STOP_PERCENT) exit("TRAILING STOP");
