@@ -552,9 +552,10 @@ async function discoverCandidatesR3({ signal } = {}) {
     }
   }
 
-  // Process multi-source discoveries first, and fetch DexScreener market data
-  // in small concurrent batches so broader discovery does not turn into a serial bottleneck.
-  const TOKEN_DATA_CONCURRENCY = 6;
+  // Process multi-source discoveries first. Keep DexScreener enrichment fast enough
+  // for the 1-minute scanner, but deliberately pace requests to avoid 429 bursts.
+  const TOKEN_DATA_CONCURRENCY = 3;
+  const TOKEN_DATA_BATCH_DELAY_MS = 800;
   const prioritizedTokens = [...unique.values()].sort((a, b) => {
     const sourceDiff = (b.discoverySources?.length || 0) - (a.discoverySources?.length || 0);
     if (sourceDiff !== 0) return sourceDiff;
@@ -572,6 +573,11 @@ async function discoverCandidatesR3({ signal } = {}) {
       }))
     );
     enriched.push(...results.filter(item => item.data));
+
+    const hasMore = i + TOKEN_DATA_CONCURRENCY < prioritizedTokens.length;
+    if (hasMore && !signal?.aborted) {
+      await new Promise(resolve => setTimeout(resolve, TOKEN_DATA_BATCH_DELAY_MS));
+    }
   }
 
   const candidates = [];
