@@ -47,7 +47,7 @@ const FRESH_DISCOVERY_TTL_MS = 3 * 60 * 1000;
 const freshDiscoveryQueue = new Map();
 
 const WATCH_MIN_LIQUIDITY = 25000;
-const MAX_ENTRY_PAIR_AGE_MS = 48 * 60 * 60 * 1000;
+const MAX_ENTRY_PAIR_AGE_MS = 72 * 60 * 60 * 1000;
 const knownPairCreatedAt = new Map();
 const REACTIVATION_AGE_MS = 24 * 60 * 60 * 1000;
 const REACTIVATION_DEAD_BASELINE_VOL5M = 500;
@@ -644,7 +644,7 @@ async function discoverCandidatesR3({ signal } = {}) {
   }
 
   if (ageFilteredBeforeEnrichment > 0) {
-    console.log(`R3 AGE FILTER | skipped ${ageFilteredBeforeEnrichment} known pairs older than 48h before enrichment`);
+    console.log(`R3 AGE FILTER | skipped ${ageFilteredBeforeEnrichment} known pairs older than 72h before enrichment`);
   }
 
   // Process multi-source discoveries first. Keep DexScreener enrichment fast enough
@@ -783,7 +783,7 @@ async function discoverCandidatesR3({ signal } = {}) {
   }
 
   if (ageFilteredAfterEnrichment > 0) {
-    console.log(`R3 AGE FILTER | blocked ${ageFilteredAfterEnrichment} newly-resolved pairs older than 48h`);
+    console.log(`R3 AGE FILTER | blocked ${ageFilteredAfterEnrichment} newly-resolved pairs older than 72h`);
   }
 
   const updatedAt = new Date().toISOString();
