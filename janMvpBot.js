@@ -16,8 +16,6 @@ const TAKE_PROFIT_1_SELL_PERCENT = 15;
 const TAKE_PROFIT_2_PERCENT = 30;
 const TAKE_PROFIT_2_SELL_PERCENT = 35;
 const TRAILING_STOP_PERCENT = 8;
-const PROFIT_LOCK_TRIGGER_PERCENT = 10;
-const PROFIT_LOCK_TRAIL_POINTS = 8;
 const MOMENTUM_EXIT_MIN_LOSS = -2;
 const MOMENTUM_EXIT_5M = -3;
 const MOMENTUM_EXIT_STRONG_LOSS = -5;
@@ -211,7 +209,6 @@ function createJanMvpBot({
     const entryPrice = Number(p.entryPrice);
     const profitPercent = (currentPrice - entryPrice) / entryPrice * 100;
     const highestProfitPercent = (Number(p.highestPrice) - entryPrice) / entryPrice * 100;
-    const profitLockFloor = highestProfitPercent - PROFIT_LOCK_TRAIL_POINTS;
     const dropFromHigh = (Number(p.highestPrice) - currentPrice) / Number(p.highestPrice) * 100;
     const momentum5m = Number(fresh.priceChange5m) || 0;
     const buys5m = Number(fresh.buys5m) || 0;
@@ -235,9 +232,6 @@ function createJanMvpBot({
     const momentumExitA = profitPercent <= MOMENTUM_EXIT_MIN_LOSS && momentum5m <= MOMENTUM_EXIT_5M && sellPressure;
     const momentumExitB = profitPercent <= MOMENTUM_EXIT_STRONG_LOSS && momentum5m <= MOMENTUM_EXIT_STRONG_5M;
     if (momentumExitA || momentumExitB) { await exit("MOMENTUM EXIT"); return; }
-
-    const profitLockActive = !p.secondTakeProfitDone && highestProfitPercent >= PROFIT_LOCK_TRIGGER_PERCENT;
-    if (profitLockActive && profitPercent <= profitLockFloor) { await exit("PROFIT LOCK"); return; }
 
     if (profitPercent >= TAKE_PROFIT_1_PERCENT && !p.firstTakeProfitDone) {
       return void trader.sell(slot.id, currentPrice, TAKE_PROFIT_1_SELL_PERCENT, {
