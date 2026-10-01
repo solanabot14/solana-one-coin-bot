@@ -34,49 +34,30 @@ async function request(url, options = {}) {
 }
 
 function renderLiveTrade(d) {
-	const position = d.position, live = d.live;
-	if (!position) { $("live").textContent = "Waiting for a trade..."; return; }
-	if (!live) { $("live").textContent = (position.symbol || "Open position") + " — price unavailable. Position remains open."; return; }
-	const chart = dexLink(position, live);
-	const reasons = Array.isArray(position.entryReasons) && position.entryReasons.length ? position.entryReasons.map(escapeHtml).join(" • ") : "No entry reasons recorded.";
-	const tp1 = position.firstTakeProfitDone ? "DONE" : "Waiting +15%";
-	const tp2 = position.secondTakeProfitDone ? "DONE" : "Waiting +30%";
-	$("live").innerHTML = `
-		<div class="live-title"><span class="coin-name">${escapeHtml(position.symbol)}</span>
-			<span class="badge">${escapeHtml(position.strategyVersion || "V3.1")}</span>
-			<span class="badge">Score ${escapeHtml(position.entryScore ?? "—")}</span>
-			<span class="badge">${escapeHtml(position.entrySignal || "—")}</span>
-			${chart ? `<a class="small-link" href="${chart}" target="_blank" rel="noopener noreferrer">View on DexScreener</a>` : ""}
-		</div>
+	const slots = Array.isArray(d.livePositions) ? d.livePositions : [];
+	$("slots").textContent = (d.openSlots ?? slots.length) + " / 3";
+	if (!slots.length) { $("live").textContent = "Waiting for trades..."; return; }
+	$("live").innerHTML = slots.map((slot,index) => {
+		const position=slot.position, live=slot.live;
+		if(!live) return `<div class="metric"><div class="live-title"><span class="coin-name">Slot ${index+1}: ${escapeHtml(position.symbol)}</span></div><div>Price unavailable. Position remains open.</div></div>`;
+		const chart=dexLink(position,live), reasons=Array.isArray(position.entryReasons)&&position.entryReasons.length?position.entryReasons.map(escapeHtml).join(" • "):"No entry reasons recorded.";
+		const tp1=position.firstTakeProfitDone?"DONE":"Waiting +15%", tp2=position.secondTakeProfitDone?"DONE":"Waiting +30%";
+		return `<div class="metric" style="margin-bottom:16px">
+		<div class="live-title"><span class="coin-name">Slot ${index+1}: ${escapeHtml(position.symbol)}</span>
+		<span class="badge">${escapeHtml(position.strategyVersion||"V3.1-3Slot")}</span><span class="badge">Score ${escapeHtml(position.entryScore??"—")}</span>
+		${chart?`<a class="small-link" href="${chart}" target="_blank" rel="noopener noreferrer">DexScreener</a>`:""}</div>
 		<div class="grid">
-			<div class="metric"><div class="metric-label">Entry Price</div><div class="metric-value">${price(position.entryPrice)}</div></div>
-			<div class="metric"><div class="metric-label">Current Price</div><div class="metric-value">${price(live.currentPrice)}</div></div>
-			<div class="metric"><div class="metric-label">Highest Price</div><div class="metric-value">${price(live.highestPrice)}</div></div>
-			<div class="metric"><div class="metric-label">Amount Invested</div><div class="metric-value">${money(position.amountInvested)}</div></div>
-			<div class="metric"><div class="metric-label">Current Value</div><div class="metric-value">${money(live.currentValue)}</div></div>
-			<div class="metric"><div class="metric-label">Live P/L</div><div class="metric-value ${cls(live.pnl)}">${money(live.pnl)} (${pct(live.pnlPercent)})</div></div>
-			<div class="metric"><div class="metric-label">Max Gain</div><div class="metric-value ${cls(live.maxGainPercent)}">${pct(live.maxGainPercent)}</div></div>
-			<div class="metric"><div class="metric-label">Time in Trade</div><div class="metric-value">${duration(live.holdTimeMs)}</div></div>
-			<div class="metric"><div class="metric-label">Current 5m</div><div class="metric-value ${cls(live.priceChange5m)}">${pct(live.priceChange5m)}</div></div>
-			<div class="metric"><div class="metric-label">Current 1h</div><div class="metric-value ${cls(live.priceChange1h)}">${pct(live.priceChange1h)}</div></div>
-			<div class="metric"><div class="metric-label">Current 24h</div><div class="metric-value ${cls(live.priceChange24h)}">${pct(live.priceChange24h)}</div></div>
-			<div class="metric"><div class="metric-label">Current Buy Ratio</div><div class="metric-value">${pct(Number(live.buyRatio5m || 0) * 100)}</div></div>
-			<div class="metric"><div class="metric-label">5m Buys / Sells</div><div class="metric-value">${number(live.buys5m)} / ${number(live.sells5m)}</div></div>
-			<div class="metric"><div class="metric-label">Liquidity</div><div class="metric-value">${money(live.liquidityUsd)}</div></div>
-			<div class="metric"><div class="metric-label">24h Volume</div><div class="metric-value">${money(live.volume24h)}</div></div>
-			<div class="metric"><div class="metric-label">TP1</div><div class="metric-value">${tp1}</div></div>
-			<div class="metric"><div class="metric-label">TP2</div><div class="metric-value">${tp2}</div></div>
-		</div>
-		<div class="reasons"><strong>Entry Conditions</strong><br>
-			Entry 5m: ${pct(position.entryPriceChange5m)} &nbsp; | &nbsp;
-			Entry 1h: ${pct(position.entryPriceChange1h)} &nbsp; | &nbsp;
-			Entry 24h: ${pct(position.entryPriceChange24h)}<br>
-			Entry Buy Ratio: ${entryRatio(position)} &nbsp; | &nbsp;
-			Transactions: ${number(position.entryTransactions5m)}<br>
-			Entry Liquidity: ${money(position.entryLiquidityUsd)} &nbsp; | &nbsp;
-			Entry Volume: ${money(position.entryVolume24h)}<br><br>
-			<strong>Strategy Reasons:</strong> ${reasons}
-		</div>`;
+		<div class="metric"><div class="metric-label">Invested</div><div class="metric-value">${money(position.amountInvested)}</div></div>
+		<div class="metric"><div class="metric-label">Entry</div><div class="metric-value">${price(position.entryPrice)}</div></div>
+		<div class="metric"><div class="metric-label">Current</div><div class="metric-value">${price(live.currentPrice)}</div></div>
+		<div class="metric"><div class="metric-label">Live P/L</div><div class="metric-value ${cls(live.pnl)}">${money(live.pnl)} (${pct(live.pnlPercent)})</div></div>
+		<div class="metric"><div class="metric-label">Max Gain</div><div class="metric-value ${cls(live.maxGainPercent)}">${pct(live.maxGainPercent)}</div></div>
+		<div class="metric"><div class="metric-label">Time</div><div class="metric-value">${duration(live.holdTimeMs)}</div></div>
+		<div class="metric"><div class="metric-label">5m / 1h</div><div class="metric-value">${pct(live.priceChange5m)} / ${pct(live.priceChange1h)}</div></div>
+		<div class="metric"><div class="metric-label">Buy Ratio</div><div class="metric-value">${pct(Number(live.buyRatio5m||0)*100)}</div></div>
+		<div class="metric"><div class="metric-label">TP1 / TP2</div><div class="metric-value">${tp1} / ${tp2}</div></div></div>
+		<div class="reasons"><strong>Entry:</strong> 5m ${pct(position.entryPriceChange5m)} | 1h ${pct(position.entryPriceChange1h)} | Transactions ${number(position.entryTransactions5m)}<br><strong>Reasons:</strong> ${reasons}</div></div>`;
+	}).join("");
 }
 
 function renderScoreStats(d) {
