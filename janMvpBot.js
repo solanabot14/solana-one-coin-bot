@@ -27,7 +27,7 @@ function createJanMvpBot({
   trader = createJanMvpTrader(),
   getTokenData = market.getTokenData,
   getOgPortfolio = paperTrader.getPortfolio,
-  getCachedCandidates = scanner.getCachedCandidates,
+  discoverCandidates = scanner.discoverCandidates,
   timers = globalThis,
   notifier = telegram
 } = {}) {
@@ -148,13 +148,10 @@ function createJanMvpBot({
     const slots = freeSlots();
     if (!slots.length || !isActive(session)) return;
 
-    const cache = getCachedCandidates();
-    const updatedAtMs = Date.parse(cache?.updatedAt || "");
-    const ageMs = Number.isFinite(updatedAtMs) ? Date.now() - updatedAtMs : Infinity;
-    if (ageMs > SWARM_CACHE_MAX_AGE_MS) return;
-
+    const discovered = await discoverCandidates(session.signal);
+    if (!isActive(session)) return;
     const occupied = occupiedTokenAddresses();
-    const usable = (cache?.candidates || []).filter(coin =>
+    const usable = (discovered || []).filter(coin =>
       coin.signal === "STRONG BUY" &&
       coin.tokenAddress &&
       !occupied.has(coin.tokenAddress)
@@ -163,23 +160,16 @@ function createJanMvpBot({
     let candidateIndex = 0;
     for (const slot of slots) {
       if (!isActive(session)) return;
-
       let coin = null;
       while (candidateIndex < usable.length) {
         const candidate = usable[candidateIndex++];
-        if (!occupied.has(candidate.tokenAddress)) {
-          coin = candidate;
-          break;
-        }
+        if (!occupied.has(candidate.tokenAddress)) { coin = candidate; break; }
       }
       if (!coin) break;
-
-      const result = trader.buy(slot.id, coin, { source: "SWARM_CACHE" });
+      const result = trader.buy(slot.id, coin, { source: "SWARM_V31_DISCOVERY" });
       if (result.success) {
         occupied.add(coin.tokenAddress);
-        console.log(
-          `SWARM CACHE BUY | Slot ${slot.id} | ${coin.symbol} | ${Number(result.trade.amountInvested).toFixed(2)} | Cache age ${Math.round(ageMs / 1000)}s`
-        );
+        console.log(`SWARM BUY | Slot ${slot.id} | ${coin.symbol} | $${Number(result.trade.amountInvested).toFixed(2)}`);
       }
     }
   }
