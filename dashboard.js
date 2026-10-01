@@ -80,6 +80,21 @@ button{
   cursor:pointer
 }
 
+.panel-link{
+  display:inline-block;
+  border-radius:8px;
+  padding:11px 18px;
+  font-weight:bold;
+  text-decoration:none;
+  background:#172033;
+  color:#fff;
+}
+
+.panel-link.swarm{
+  background:#8fa7ff;
+  color:#080b12;
+}
+
 .start{background:#4cff9a}
 
 .stop{
@@ -228,6 +243,9 @@ th,td{
   <button class="stop" id="stopButton">
     STOP BOT
   </button>
+
+  <a class="panel-link swarm" href="#swarmPanel">VIEW SWARM</a>
+  <a class="panel-link" href="#v31Panel">VIEW V3.1</a>
 </div>
 
 <p id="notice" role="status">
@@ -276,7 +294,7 @@ th,td{
 
 </div>
 
-<div class="card section">
+<div class="card section" id="v31Panel">
 
 <h2>V3.1 Performance</h2>
 
@@ -369,7 +387,7 @@ th,td{
 </div>
 </div>
 
-<div class="card section">\n<h2>Swarm — $10 / 5 Concurrent Slots</h2>\n<p class="muted">Independent paper experiment: five $2 slots can be occupied simultaneously.</p>\n<div class="grid"><div class="metric"><div class="metric-label">Status</div><div class="metric-value" id="swarmStatus">—</div></div><div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value">$10.00</div></div><div class="metric"><div class="metric-label">Equity</div><div class="metric-value" id="swarmEquity">—</div></div><div class="metric"><div class="metric-label">P/L</div><div class="metric-value" id="swarmPnl">—</div></div><div class="metric"><div class="metric-label">Open Slots</div><div class="metric-value" id="swarmOpen">0 / 5</div></div></div>\n<div style="overflow-x:auto;margin-top:16px"><table><thead><tr><th>Slot</th><th>Cash</th><th>Position</th><th>Invested</th><th>Trades</th><th>W</th><th>L</th></tr></thead><tbody id="swarmSlots"><tr><td colspan="7">Waiting...</td></tr></tbody></table></div>\n</div>\n\n<div class="card section">
+<div class="card section" id="swarmPanel">\n<h2>Swarm — $10 / 5 Concurrent Slots</h2>\n<p class="muted">Independent paper experiment: five $2 slots can be occupied simultaneously.</p>\n<div class="grid"><div class="metric"><div class="metric-label">Status</div><div class="metric-value" id="swarmStatus">—</div></div><div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value">$10.00</div></div><div class="metric"><div class="metric-label">Equity</div><div class="metric-value" id="swarmEquity">—</div></div><div class="metric"><div class="metric-label">P/L</div><div class="metric-value" id="swarmPnl">—</div></div><div class="metric"><div class="metric-label">Open Slots</div><div class="metric-value" id="swarmOpen">0 / 5</div></div></div>\n<div style="overflow-x:auto;margin-top:16px"><table><thead><tr><th>Slot</th><th>Cash</th><th>Position</th><th>Invested</th><th>Trades</th><th>W</th><th>L</th></tr></thead><tbody id="swarmSlots"><tr><td colspan="7">Waiting...</td></tr></tbody></table></div>\n</div>\n\n<div class="card section">
 <h2>Entry Analytics</h2>
 <p class="muted">Read-only analysis of completed V3.1 trades. This section does not affect trading.</p>
 <div class="grid">
