@@ -77,10 +77,13 @@ function renderHistory(d) {
 	$("history").innerHTML = d.completedTrades.map(t => {
 		const reason = Array.isArray(t.exitReasons) ? t.exitReasons.join(" / ") : "—";
 		const chartAddress = t.pairAddress || t.tokenAddress || "";
+		const entryReasons = Array.isArray(t.entryReasons) ? t.entryReasons.join(" • ") : "—";
 		return `<tr><td><strong>${escapeHtml(t.symbol)}</strong></td>
 			<td>${money(t.amountInvested)}</td><td>${money(t.saleValue)}</td>
 			<td class="${cls(t.pnl)}"><strong>${money(t.pnl)}</strong></td><td class="${cls(t.pnlPercent)}">${pct(t.pnlPercent)}</td>
 			<td>${escapeHtml(t.entryScore ?? "—")}</td><td>${pct(t.entryPriceChange5m)}</td><td>${pct(t.entryPriceChange1h)}</td><td>${entryRatio(t)}</td>
+			<td>${number(t.entryTransactions5m)}</td><td>${money(t.entryLiquidityUsd)}</td><td>${money(t.entryVolume24h)}</td><td>${pct(t.entryPriceChange24h)}</td>
+			<td>${escapeHtml(t.entrySignal || "—")}</td><td>${escapeHtml(entryReasons)}</td>
 			<td>${price(t.entryPrice)}</td><td>${price(t.exitPrice)}</td>
 			<td>${money(t.tp1SaleValue)}</td><td>${money(t.tp2SaleValue)}</td><td>${money(t.trailingSaleValue)}</td><td>${money(t.otherExitSaleValue)}</td>
 			<td class="${cls(t.maxGainPercent)}">${pct(t.maxGainPercent)}</td><td>${duration(t.holdTimeMs)}</td><td>${escapeHtml(reason)}</td>
