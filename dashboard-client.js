@@ -77,11 +77,12 @@ function renderHistory(d) {
 	$("history").innerHTML = d.completedTrades.map(t => {
 		const reason = Array.isArray(t.exitReasons) ? t.exitReasons.join(" / ") : "—";
 		const chartAddress = t.pairAddress || t.tokenAddress || "";
-		return `<tr><td><strong>${escapeHtml(t.symbol)}</strong></td><td>${escapeHtml(t.entryScore ?? "—")}</td>
-			<td>${pct(t.entryPriceChange5m)}</td><td>${pct(t.entryPriceChange1h)}</td><td>${entryRatio(t)}</td>
-			<td>${price(t.entryPrice)}</td><td>${price(t.exitPrice)}</td><td>${money(t.amountInvested)}</td>
-			<td>${money(t.tp1SaleValue)}</td><td>${money(t.tp2SaleValue)}</td><td>${money(t.trailingSaleValue)}</td><td>${money(t.otherExitSaleValue)}</td><td>${money(t.saleValue)}</td>
-			<td class="${cls(t.pnl)}">${money(t.pnl)}</td><td class="${cls(t.pnlPercent)}">${pct(t.pnlPercent)}</td>
+		return `<tr><td><strong>${escapeHtml(t.symbol)}</strong></td>
+			<td>${money(t.amountInvested)}</td><td>${money(t.saleValue)}</td>
+			<td class="${cls(t.pnl)}"><strong>${money(t.pnl)}</strong></td><td class="${cls(t.pnlPercent)}">${pct(t.pnlPercent)}</td>
+			<td>${escapeHtml(t.entryScore ?? "—")}</td><td>${pct(t.entryPriceChange5m)}</td><td>${pct(t.entryPriceChange1h)}</td><td>${entryRatio(t)}</td>
+			<td>${price(t.entryPrice)}</td><td>${price(t.exitPrice)}</td>
+			<td>${money(t.tp1SaleValue)}</td><td>${money(t.tp2SaleValue)}</td><td>${money(t.trailingSaleValue)}</td><td>${money(t.otherExitSaleValue)}</td>
 			<td class="${cls(t.maxGainPercent)}">${pct(t.maxGainPercent)}</td><td>${duration(t.holdTimeMs)}</td><td>${escapeHtml(reason)}</td>
 			<td><a class="small-link" target="_blank" rel="noopener noreferrer" href="https://dexscreener.com/solana/${encodeURIComponent(chartAddress)}">DexScreener</a></td></tr>`;
 	}).join("") || `<tr><td colspan="19">No completed positions yet.</td></tr>`;
