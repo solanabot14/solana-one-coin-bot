@@ -5,7 +5,8 @@
   "main": "dashboard.js",
   "scripts": {
     "start": "node dashboard.js",
-    "test": "node --test"
+    "test": "node --test test/token-cooldown.test.js test/dex-batching.test.js",
+    "test:all": "node --test"
   },
   "keywords": [],
   "author": "",
