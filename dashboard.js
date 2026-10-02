@@ -411,7 +411,8 @@ th,td{
 
 <div class="card section">
 
-<h2>Completed Positions</h2>
+<h2>Completed Transactions</h2>
+<p class="muted">Dollar amounts: invested, total sold, and realized profit or loss. Swipe horizontally for the remaining trade details.</p>
 
 <div style="overflow-x:auto">
 
@@ -420,26 +421,20 @@ th,td{
 <thead>
 <tr>
   <th>Coin</th>
+  <th>Invested ($)</th>
+  <th>Total Sold ($)</th>
+  <th>Profit / Loss ($)</th>
+  <th>Return (%)</th>
   <th>Score</th>
   <th>Entry 5m</th>
   <th>Entry 1h</th>
   <th>Entry Buy Ratio</th>
-  <th>Entry Tx</th>
-  <th>Entry Liquidity</th>
-  <th>Entry 24h Volume</th>
-  <th>Entry 24h</th>
-  <th>Entry Signal</th>
-  <th>Entry Reasons</th>
   <th>Entry</th>
   <th>Average Exit</th>
-  <th>Invested</th>
-  <th>TP1 $</th>
-  <th>TP2 $</th>
-  <th>Trailing $</th>
-  <th>Other Exit $</th>
-  <th>Total Sold $</th>
-  <th>P/L</th>
-  <th>Return</th>
+  <th>TP1 Sold ($)</th>
+  <th>TP2 Sold ($)</th>
+  <th>Trailing Sold ($)</th>
+  <th>Other Exit ($)</th>
   <th>Max Gain</th>
   <th>Hold Time</th>
   <th>Exit Reason</th>
