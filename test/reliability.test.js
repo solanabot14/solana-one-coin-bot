@@ -213,21 +213,23 @@ test("storage errors pause the bot and remove timers", async t => {
 });
 
 test("market requests carry a timeout and cancellation signal and reject another base token", async () => {
-  let options;
+  let options, requestUrl;
   const controller = new AbortController();
   const sandbox = { module: { exports: {} }, console, require: name => {
     assert.equal(name, "axios");
     return { get: async (url, config) => {
+      requestUrl = url;
       options = config;
-      return { data: { pairs: [
+      return { data: [
         { chainId: "solana", baseToken: { address: "wrong-token" }, liquidity: { usd: 999999 }, priceUsd: "999" },
         { chainId: "solana", baseToken: { address: "token1" }, liquidity: { usd: 100000 }, priceUsd: "1" }
-      ] } };
+      ] };
     } };
   } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../dexscreener.js"), "utf8"), sandbox);
-  const data = await sandbox.module.exports.getTokenData("token1", { signal: controller.signal });
+  const data = (await sandbox.module.exports.getTokensData(["token1"], { signal: controller.signal })).get("token1");
   assert.equal(data.priceUsd, "1");
+  assert.match(requestUrl, /tokens\/v1\/solana\/token1$/);
   assert.equal(options.timeout, 10000);
   assert.equal(options.signal, controller.signal);
 });
