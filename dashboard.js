@@ -2,6 +2,7 @@ require("dotenv").config();
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const bot = require("./bot");
 const { getPortfolio } = require("./paperTrader");
 const { getTokenData, getTokensData } = require("./dexscreener");
@@ -15,7 +16,27 @@ function getConfig(env = process.env) {
   const port = Number(env.PORT || 3000);
   const localOnly = ["127.0.0.1", "::1", "localhost"].includes(host);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid PORT.");
-  return { host, port, localOnly };
+  const dashboardUser = env.DASHBOARD_USER || "";
+  const dashboardPassword = env.DASHBOARD_PASSWORD || "";
+  if ((dashboardUser && !dashboardPassword) || (!dashboardUser && dashboardPassword)) {
+    throw new Error("Set both DASHBOARD_USER and DASHBOARD_PASSWORD.");
+  }
+  if (!localOnly && (!dashboardUser || !dashboardPassword)) {
+    throw new Error("Public dashboard access requires DASHBOARD_USER and DASHBOARD_PASSWORD.");
+  }
+  return { host, port, localOnly, dashboardUser, dashboardPassword };
+}
+
+function authorized(req, config) {
+  if (!config.dashboardUser && !config.dashboardPassword) return true;
+  const match = /^Basic\s+([A-Za-z0-9+/]+=*)$/i.exec(req.headers.authorization || "");
+  if (!match) return false;
+  let supplied;
+  try { supplied = Buffer.from(match[1], "base64").toString("utf8"); } catch (_) { return false; }
+  const expected = config.dashboardUser + ":" + config.dashboardPassword;
+  const suppliedBytes = Buffer.from(supplied);
+  const expectedBytes = Buffer.from(expected);
+  return suppliedBytes.length === expectedBytes.length && crypto.timingSafeEqual(suppliedBytes, expectedBytes);
 }
 
 const page = `<!doctype html>
@@ -507,6 +528,10 @@ function createDashboardServer({ config = getConfig(), controls = bot,
     try {
       const route = new URL(req.url, "http://localhost").pathname;
       if (req.method === "GET" && route === "/healthz") return json(res, { ok: true });
+      if (!authorized(req, config)) {
+        res.setHeader("WWW-Authenticate", 'Basic realm="Trading dashboard", charset="UTF-8"');
+        return json(res, { error: "Authentication required" }, 401);
+      }
       if (config.localOnly) {
         const hostname = new URL("http://" + req.headers.host).hostname;
         if (!["127.0.0.1", "localhost", "[::1]"].includes(hostname)) return json(res, { error: "Invalid host" }, 403);

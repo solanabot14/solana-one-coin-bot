@@ -241,23 +241,36 @@ test("HTTP authentication, POST controls, cross-site rejection and health endpoi
     startBot() { running = true; }, stopBot() { running = false; },
     getBotStatus: () => running, getLastError: () => null
   }, portfolio: () => ({ startingBalance: 100, cashBalance: 100, position: null, history: [] }) });
-  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
-  const url = "http://127.0.0.1:" + server.address().port;
+  t.after(() => server.close());
+  const request = (url, { method = "GET", headers = {} } = {}) => new Promise(resolve => {
+    const responseHeaders = {};
+    const res = {
+      statusCode: 200,
+      setHeader(name, value) { responseHeaders[name.toLowerCase()] = value; },
+      writeHead(status, headers = {}) {
+        this.statusCode = status;
+        for (const [name, value] of Object.entries(headers)) responseHeaders[name.toLowerCase()] = value;
+      },
+      end(body = "") { resolve({ status: this.statusCode, headers: responseHeaders, body: String(body) }); }
+    };
+    const normalizedHeaders = { host: "127.0.0.1", ...Object.fromEntries(Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value])) };
+    server.emit("request", { method, url, headers: normalizedHeaders }, res);
+  });
   const headers = { Authorization: "Basic " + Buffer.from("admin:test-password-long-enough").toString("base64") };
-  assert.equal((await fetch(url + "/healthz")).status, 200);
-  assert.equal((await fetch(url + "/api/data")).status, 401);
-  assert.equal((await fetch(url + "/api/start", { headers })).status, 405);
-  assert.equal((await fetch(url + "/api/start", { method: "POST", headers })).status, 403);
+  assert.equal((await request("/healthz")).status, 200);
+  assert.equal((await request("/api/data")).status, 401);
+  assert.equal((await request("/api/data", { headers: { Authorization: "Basic " + Buffer.from("admin:wrong-password").toString("base64") } })).status, 401);
+  assert.equal((await request("/api/start", { headers })).status, 405);
+  assert.equal((await request("/api/start", { method: "POST", headers })).status, 403);
   headers["X-Bot-Control"] = "1";
-  assert.equal((await fetch(url + "/api/start", { method: "POST", headers })).status, 200);
+  assert.equal((await request("/api/start", { method: "POST", headers })).status, 200);
   assert.equal(running, true);
-  assert.equal((await fetch(url + "/api/stop", { method: "POST", headers: { ...headers, "Sec-Fetch-Site": "cross-site" } })).status, 403);
-  await fetch(url + "/api/stop", { method: "POST", headers });
+  assert.equal((await request("/api/stop", { method: "POST", headers: { ...headers, "Sec-Fetch-Site": "cross-site" } })).status, 403);
+  await request("/api/stop", { method: "POST", headers });
   assert.equal(running, false);
-  const page = await fetch(url, { headers });
-  assert.match(page.headers.get("Content-Security-Policy"), /script-src 'self'/);
-  assert.match(await page.text(), /dashboard-client.js/);
+  const page = await request("/", { headers });
+  assert.match(page.headers["content-security-policy"], /script-src 'self'/);
+  assert.match(page.body, /dashboard-client.js/);
 });
 
 test("browser renders hostile symbols as text and unavailable equity honestly", () => {
@@ -272,11 +285,11 @@ test("browser renders hostile symbols as text and unavailable equity honestly", 
   vm.runInNewContext(source, context);
   const symbol = '<img src=x onerror="alert(1)">';
   context.renderData({ startingBalance: 100, cashBalance: 90, equity: null, totalPnl: null,
-    position: { symbol }, live: null,
+    position: { symbol }, live: null, livePositions: [{ position: { symbol }, live: null }], openSlots: 1,
     stats: { completedTrades: 0, winRate: 0, winners: 0, losers: 0, grossProfit: 0, grossLoss: 0, netPnl: 0, profitFactorLabel: "—" },
     completedTrades: [{ symbol, tokenAddress: "token1", entryPrice: 1, exitPrice: 1, amountInvested: 10, pnl: 0, pnlPercent: 0 }] });
   assert.equal(nodes.get("equity").textContent, "Unavailable");
-  assert.match(nodes.get("live").textContent, /price unavailable/);
+  assert.match(nodes.get("live").innerHTML, /Price unavailable/);
   assert.ok(!nodes.get("history").innerHTML.includes("<img"));
   assert.match(nodes.get("history").innerHTML, /&lt;img/);
 });
