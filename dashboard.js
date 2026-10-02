@@ -4,9 +4,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const bot = require("./bot");
 const { getPortfolio } = require("./paperTrader");
-const { getTokenData } = require("./dexscreener");
+const { getTokenData, getTokensData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
 const swarm = require("./janMvpBot");
+const pullbackBot = require("./pullbackBot");
 
 function getConfig(env = process.env) {
   const railway = !!env.RAILWAY_ENVIRONMENT_ID;
@@ -237,11 +238,12 @@ th,td{
 
 <div class="controls">
   <a class="panel-link" href="#v31Panel">V3.1 BOT</a>
+  <a class="panel-link" href="#pullbackPanel">PULLBACK TEST</a>
   <a class="panel-link swarm" href="#swarmPanel">SWARM</a>
 </div>
 
 <p id="notice" role="status">
-  V3.1 and Swarm start automatically with the service.
+  V3.1, Swarm, and the pullback paper experiment start automatically with the service.
 </p>
 
 <div id="v31Panel"></div>
@@ -269,6 +271,11 @@ th,td{
   </div>
 
   <div class="card">
+    <div class="label">Total Return</div>
+    <div class="value" id="pnlPct">0.00%</div>
+  </div>
+
+  <div class="card">
     <div class="label">Completed Positions</div>
     <div class="value" id="count">0</div>
   </div>
@@ -286,6 +293,29 @@ th,td{
     Waiting for a trade...
   </div>
 
+</div>
+
+<div class="card section" id="pullbackPanel">
+<h2>Experimental Strategy — First Pump, Pullback, Reclaim</h2>
+<p class="muted">Separate $100 paper account, 3 slots, same V3.1 exit rules and compounding. It shares the existing DexScreener scan; this is a snapshot-based experiment, not a historical-candle strategy.</p>
+<p class="muted">Entry test: observe a 1.5–8% first 5m pump, wait for a 2–12% pullback, then require a reclaim 0.2% above that high, 0.25–6% current 5m momentum, at least 30 transactions, 60% buys, and $5,000 5m volume or 10% of liquidity (whichever is higher). Open positions are monitored every 5 seconds.</p>
+<div class="grid">
+  <div class="metric"><div class="metric-label">Status</div><div class="metric-value" id="pullbackStatus">—</div></div>
+  <div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value" id="pullbackStarting">$100.00</div></div>
+  <div class="metric"><div class="metric-label">Cash</div><div class="metric-value" id="pullbackCash">$100.00</div></div>
+  <div class="metric"><div class="metric-label">Equity</div><div class="metric-value" id="pullbackEquity">$100.00</div></div>
+  <div class="metric"><div class="metric-label">Total P/L ($)</div><div class="metric-value" id="pullbackPnl">$0.00</div></div>
+  <div class="metric"><div class="metric-label">Total Return (%)</div><div class="metric-value" id="pullbackPnlPct">0.00%</div></div>
+  <div class="metric"><div class="metric-label">Completed Positions</div><div class="metric-value" id="pullbackCount">0</div></div>
+  <div class="metric"><div class="metric-label">Win Rate</div><div class="metric-value" id="pullbackWinRate">0.00%</div></div>
+  <div class="metric"><div class="metric-label">Open Slots</div><div class="metric-value" id="pullbackSlots">0 / 3</div></div>
+  <div class="metric"><div class="metric-label">Watching Pumps / Pullbacks</div><div class="metric-value" id="pullbackWatching">0 / 0</div></div>
+</div>
+<div class="section"><h3>Experimental Open Positions</h3><div id="pullbackLive" class="empty">Waiting for the first pump / pullback pattern...</div></div>
+<div class="section"><h3>Experimental Completed Transactions</h3><p class="muted">Each trade shows dollars invested, dollars sold, realized P/L in dollars, and return percentage.</p><div style="overflow-x:auto"><table>
+<thead><tr><th>Coin</th><th>Invested ($)</th><th>Total Sold ($)</th><th>Profit / Loss ($)</th><th>Return (%)</th><th>Entry Price</th><th>Average Exit Price</th><th>Entry Evidence</th><th>Exit Reason</th><th>Chart</th></tr></thead>
+<tbody id="pullbackHistory"><tr><td colspan="10">No experimental trades yet.</td></tr></tbody>
+</table></div></div>
 </div>
 
 <div class="card section">
@@ -463,7 +493,9 @@ th,td{
 </html>`;
 
 function createDashboardServer({ config = getConfig(), controls = bot,
-  portfolio = getPortfolio, marketData = getTokenData } = {}) {
+  portfolio = getPortfolio, marketData = getTokenData,
+  batchMarketData = marketData === getTokenData ? getTokensData : null,
+  experiment = pullbackBot, experimentPortfolio = pullbackBot.getPortfolio } = {}) {
   const client = fs.readFileSync(path.join(__dirname, "dashboard-client.js"));
   return http.createServer(async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
@@ -487,7 +519,33 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       if (req.method !== "GET") return json(res, { error: "Method not allowed" }, 405);
       if (route === "/api/status") return json(res, { running: controls.getBotStatus(), error: controls.getLastError() });
       if (route === "/api/swarm") return json(res, { running: swarm.getStatus(), error: swarm.getLastError(), ...swarm.getDashboardState() });
-      if (route === "/api/data") return json(res, await buildDashboardData(portfolio(), marketData));
+      if (route === "/api/data") {
+        const baseAccount = portfolio();
+        const experimentAccount = experimentPortfolio();
+        const addresses = [...new Set([
+          ...(baseAccount.positions || (baseAccount.position ? [baseAccount.position] : [])).map(p => p.tokenAddress),
+          ...(experimentAccount.positions || (experimentAccount.position ? [experimentAccount.position] : [])).map(p => p.tokenAddress)
+        ].filter(Boolean))];
+        const sharedQuotes = batchMarketData && addresses.length
+          ? await batchMarketData(addresses)
+          : null;
+        const sharedMarketData = sharedQuotes
+          ? async address => sharedQuotes.get(address) || null
+          : marketData;
+        const [v31, pullback] = await Promise.all([
+          buildDashboardData(baseAccount, sharedMarketData),
+          buildDashboardData(experimentAccount, sharedMarketData)
+        ]);
+        return json(res, {
+          v31,
+          pullback,
+          pullbackStatus: {
+            running: experiment.getStatus(),
+            error: experiment.getLastError(),
+            ...experiment.getStrategyStatus()
+          }
+        });
+      }
       if (route === "/dashboard-client.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(client); }
       if (route !== "/") return json(res, { error: "Not found" }, 404);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); res.end(page);
@@ -506,9 +564,11 @@ if (require.main === module) {
   const server = createDashboardServer({ config });
   bot.startBot();
   swarm.start();
+  pullbackBot.start();
   server.listen(config.port, config.host, () => console.log("Dashboard listening on " + config.host + ":" + config.port));
   const shutdown = () => {
     swarm.stop();
+    pullbackBot.stop();
     bot.stopBot();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 12000).unref();

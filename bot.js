@@ -32,7 +32,9 @@ const MOMENTUM_EXIT_MIN_TRANSACTIONS = 10;
 
 function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
   discoverCandidates = scanner.discoverCandidates, timers = globalThis,
-  notifier = telegram } = {}) {
+  notifier = telegram, positionMonitorMs = POSITION_MONITOR_MS,
+  scannerIntervalMs = SCANNER_INTERVAL_MS,
+  botLabel = "V3.1-3Slot + 10% Compound" } = {}) {
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
   let activeSession = null;
   let scannerInterval = null;
@@ -272,9 +274,9 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("BOT STARTED | V3.1-3Slot + 10% Compound");
-    positionInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
-    scannerInterval = timers.setInterval(() => tick("scanner", session), SCANNER_INTERVAL_MS);
+    console.log("BOT STARTED | " + botLabel);
+    positionInterval = timers.setInterval(() => tick("monitor", session), positionMonitorMs);
+    scannerInterval = timers.setInterval(() => tick("scanner", session), scannerIntervalMs);
     void tick("monitor", session);
     void tick("scanner", session);
   }

@@ -179,6 +179,7 @@ async function buildDashboardData(data, getTokenData) {
 	};
 	return {...data, position:positions[0]||null, positions, live:livePositions[0]?.live||null, livePositions,
 		openSlots:positions.length,maxSlots:3,equity,totalPnl:equity===null?null:equity-data.startingBalance,
+		totalPnlPercent:equity===null||!(Number(data.startingBalance)>0)?null:(equity-data.startingBalance)/data.startingBalance*100,
 		priceUnavailable:positions.length>0&&!pricesAvailable,completedTrades,scoreStats:buildScoreStats(completedTrades),exitReasonCounts,entryAnalytics,
 		stats:{completedTrades:completedTrades.length,winners,losers,winRate:completedTrades.length?winners/completedTrades.length*100:0,
 			netPnl,grossProfit,grossLoss,profitFactor:grossLoss>0?grossProfit/grossLoss:null,profitFactorLabel:grossLoss>0?(grossProfit/grossLoss).toFixed(2):grossProfit>0?"∞":"—",

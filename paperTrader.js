@@ -53,7 +53,7 @@ function validateState(data) {
 	}
 }
 
-function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
+function createPaperTrader(dataFile = defaultDataFile(), io = fs, { strategyVersion = "V3.1-3Slot-Compound10" } = {}) {
 	let state = {
 		startingBalance: 100,
 		cashBalance: 100,
@@ -118,8 +118,9 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs) {
 		const buyRatio5m = totalTransactions5m > 0 ? buys5m / totalTransactions5m : 0;
 		const position = { id: randomUUID(), symbol: coin.symbol, name: coin.name, tokenAddress: coin.tokenAddress,
 			pairAddress: coin.pairAddress || null, entryPrice: price, quantity: amountInvested / price, amountInvested,
+			...(coin.experimentEntry ? { experimentEntry: structuredClone(coin.experimentEntry) } : {}),
 			firstTakeProfitDone:false, secondTakeProfitDone:false, highestPrice:price, entryTime:new Date().toISOString(),
-			strategyVersion:"V3.1-3Slot-Compound10", entryScore:Number(coin.score)||0, entrySignal:coin.signal||null,
+			strategyVersion, entryScore:Number(coin.score)||0, entrySignal:coin.signal||null,
 			entryReasons:Array.isArray(coin.reasons)?[...coin.reasons]:[], entryPriceChange5m:Number(coin.priceChange5m)||0,
 			entryPriceChange1h:Number(coin.priceChange1h)||0, entryPriceChange24h:Number(coin.priceChange24h)||0,
 			entryLiquidityUsd:Number(coin.liquidityUsd)||0, entryVolume24h:Number(coin.volume24h)||0,

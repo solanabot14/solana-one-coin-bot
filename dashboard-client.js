@@ -33,11 +33,11 @@ async function request(url, options = {}) {
 	return response.json();
 }
 
-function renderLiveTrade(d) {
+function renderLiveTrade(d, targetId = "live", slotsId = "slots", maxSlots = 3) {
 	const slots = Array.isArray(d.livePositions) ? d.livePositions : [];
-	$("slots").textContent = (d.openSlots ?? slots.length) + " / 3";
-	if (!slots.length) { $("live").textContent = "Waiting for trades..."; return; }
-	$("live").innerHTML = slots.map((slot,index) => {
+	$(slotsId).textContent = (d.openSlots ?? slots.length) + " / " + maxSlots;
+	if (!slots.length) { $(targetId).textContent = "No open positions."; return; }
+	$(targetId).innerHTML = slots.map((slot,index) => {
 		const position=slot.position, live=slot.live;
 		if(!live) return `<div class="metric"><div class="live-title"><span class="coin-name">Slot ${index+1}: ${escapeHtml(position.symbol)}</span></div><div>Price unavailable. Position remains open.</div></div>`;
 		const chart=dexLink(position,live), reasons=Array.isArray(position.entryReasons)&&position.entryReasons.length?position.entryReasons.map(escapeHtml).join(" • "):"No entry reasons recorded.";
@@ -73,8 +73,8 @@ function renderExitReasons(d) {
 	$("exitReasons").innerHTML = entries.map(([reason, count]) => `<div class="metric"><div class="metric-label">${escapeHtml(reason)}</div><div class="metric-value">${count}</div></div>`).join("") || `<div class="metric">No completed positions yet.</div>`;
 }
 
-function renderHistory(d) {
-	$("history").innerHTML = d.completedTrades.map(t => {
+function renderHistory(d, targetId = "history") {
+	$(targetId).innerHTML = d.completedTrades.map(t => {
 		const reason = Array.isArray(t.exitReasons) ? t.exitReasons.join(" / ") : "—";
 		const chartAddress = t.pairAddress || t.tokenAddress || "";
 		const entryReasons = Array.isArray(t.entryReasons) ? t.entryReasons.join(" • ") : "—";
@@ -88,16 +88,54 @@ function renderHistory(d) {
 			<td>${money(t.tp1SaleValue)}</td><td>${money(t.tp2SaleValue)}</td><td>${money(t.trailingSaleValue)}</td><td>${money(t.otherExitSaleValue)}</td>
 			<td class="${cls(t.maxGainPercent)}">${pct(t.maxGainPercent)}</td><td>${duration(t.holdTimeMs)}</td><td>${escapeHtml(reason)}</td>
 			<td><a class="small-link" target="_blank" rel="noopener noreferrer" href="https://dexscreener.com/solana/${encodeURIComponent(chartAddress)}">DexScreener</a></td></tr>`;
-	}).join("") || `<tr><td colspan="19">No completed positions yet.</td></tr>`;
+	}).join("") || `<tr><td colspan="25">No completed positions yet.</td></tr>`;
+}
+
+function renderPullbackData(d, state = {}) {
+	if (!d) return;
+	const s = d.stats || {};
+	$("pullbackStatus").textContent = state.running ? "RUNNING — PAPER ONLY" : "STOPPED";
+	$("pullbackStarting").textContent = money(d.startingBalance);
+	$("pullbackCash").textContent = money(d.cashBalance);
+	$("pullbackEquity").textContent = money(d.equity);
+	$("pullbackPnl").textContent = money(d.totalPnl);
+	$("pullbackPnl").className = "metric-value " + cls(d.totalPnl);
+	$("pullbackPnlPct").textContent = pct(d.totalPnlPercent);
+	$("pullbackPnlPct").className = "metric-value " + cls(d.totalPnlPercent);
+	$("pullbackCount").textContent = number(s.completedTrades || 0);
+	$("pullbackWinRate").textContent = pct(s.winRate || 0);
+	$("pullbackSlots").textContent = (d.openSlots || 0) + " / 3";
+	$("pullbackWatching").textContent = number(state.firstPump || 0) + " / " + number(state.pullback || 0);
+	renderLiveTrade(d, "pullbackLive", "pullbackSlots", 3);
+	const trades = Array.isArray(d.completedTrades) ? d.completedTrades : [];
+	$("pullbackHistory").innerHTML = trades.map(t => {
+		const reason = Array.isArray(t.exitReasons) ? t.exitReasons.join(" / ") : "—";
+		const evidence = Array.isArray(t.entryReasons)
+			? t.entryReasons.filter(item => String(item).startsWith("PULLBACK EXPERIMENT:")).join(" • ")
+			: "—";
+		const chartAddress = t.pairAddress || t.tokenAddress || "";
+		return `<tr><td><strong>${escapeHtml(t.symbol)}</strong></td>
+			<td>${money(t.amountInvested)}</td><td>${money(t.saleValue)}</td>
+			<td class="${cls(t.pnl)}"><strong>${money(t.pnl)}</strong></td>
+			<td class="${cls(t.pnlPercent)}">${pct(t.pnlPercent)}</td>
+			<td>${price(t.entryPrice)}</td><td>${price(t.exitPrice)}</td>
+			<td>${escapeHtml(evidence)}</td><td>${escapeHtml(reason)}</td>
+			<td>${chartAddress ? `<a class="small-link" target="_blank" rel="noopener noreferrer" href="https://dexscreener.com/solana/${encodeURIComponent(chartAddress)}">DexScreener</a>` : "—"}</td></tr>`;
+	}).join("") || `<tr><td colspan="10">No experimental trades yet.</td></tr>`;
 }
 
 function renderData(d) {
+	const response = d;
+	d = response.v31 || response;
 	const s = d.stats;
-	const values = {starting:money(d.startingBalance), cash:money(d.cashBalance), equity:money(d.equity), pnl:money(d.totalPnl), count:s.completedTrades, winrate:pct(s.winRate), winners:s.winners, losers:s.losers, profit:money(s.grossProfit), loss:"-" + money(s.grossLoss), net:money(s.netPnl), factor:s.profitFactorLabel, avgWinner:pct(s.averageWinnerPercent), avgLoser:pct(s.averageLoserPercent), avgHold:duration(s.averageHoldTimeMs), avgMaxGain:pct(s.averageMaxGainPercent)};
+	const values = {starting:money(d.startingBalance), cash:money(d.cashBalance), equity:d.equity == null ? "Unavailable" : money(d.equity), pnl:d.totalPnl == null ? "Unavailable" : money(d.totalPnl), count:s.completedTrades, winrate:pct(s.winRate), winners:s.winners, losers:s.losers, profit:money(s.grossProfit), loss:"-" + money(s.grossLoss), net:money(s.netPnl), factor:s.profitFactorLabel, avgWinner:pct(s.averageWinnerPercent), avgLoser:pct(s.averageLoserPercent), avgHold:duration(s.averageHoldTimeMs), avgMaxGain:pct(s.averageMaxGainPercent)};
 	for (const [id, value] of Object.entries(values)) $(id).textContent = value;
+	$("pnlPct").textContent = pct(d.totalPnlPercent);
 	$("pnl").className = "value " + cls(d.totalPnl);
+	$("pnlPct").className = "value " + cls(d.totalPnlPercent);
 	$("net").className = "metric-value " + cls(s.netPnl);
 	renderLiveTrade(d); renderScoreStats(d); renderExitReasons(d); renderHistory(d);
+	renderPullbackData(response.pullback, response.pullbackStatus);
 }
 
 async function refreshStatus() {

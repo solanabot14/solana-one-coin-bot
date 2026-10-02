@@ -21,6 +21,14 @@ const DISCOVERY_SOURCES = [
 	}
 ];
 
+// Several paper strategies can consume one candidate snapshot without running
+// a second discovery pass against the public market API.
+const SHARED_SCAN_CACHE_MS = 5000;
+let sharedScanPromise = null;
+let sharedScanAt = 0;
+let sharedScanReady = false;
+let sharedScanCandidates = [];
+
 async function fetchDiscoverySource(source, signal) {
 	try {
 		const response = await axios.get(source.url, {
@@ -46,7 +54,7 @@ async function fetchDiscoverySource(source, signal) {
 	}
 }
 
-async function discoverCandidates({ signal } = {}) {
+async function discoverCandidatesFresh({ signal } = {}) {
 	console.log("\nScanning Solana for active tokens...");
 
 	try {
@@ -142,4 +150,20 @@ async function discoverCandidates({ signal } = {}) {
 	}
 }
 
-module.exports = { discoverCandidates };
+function discoverCandidates(options = {}) {
+	if (sharedScanPromise) return sharedScanPromise.then(items => structuredClone(items));
+	if (sharedScanReady && Date.now() - sharedScanAt < SHARED_SCAN_CACHE_MS) {
+		return Promise.resolve(structuredClone(sharedScanCandidates));
+	}
+	sharedScanPromise = discoverCandidatesFresh(options)
+		.then(items => {
+			sharedScanCandidates = structuredClone(items);
+			sharedScanAt = Date.now();
+			sharedScanReady = true;
+			return sharedScanCandidates;
+		})
+		.finally(() => { sharedScanPromise = null; });
+	return sharedScanPromise.then(items => structuredClone(items));
+}
+
+module.exports = { discoverCandidates, discoverCandidatesFresh };
