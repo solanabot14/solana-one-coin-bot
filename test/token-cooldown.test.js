@@ -27,8 +27,10 @@ function strongBuy(tokenAddress, changes = {}) {
 		score: 10,
 		priceChange5m: 1,
 		priceChange1h: 5,
-		buys5m: 12,
-		sells5m: 8,
+		liquidityUsd: 60000,
+		volume5m: 6000,
+		buys5m: 18,
+		sells5m: 12,
 		...changes
 	};
 }
@@ -65,7 +67,7 @@ function rig(history, candidates) {
 	return { bot, state, timers };
 }
 
-test("a losing pair is skipped while another qualified pair fills the open slot", async t => {
+test("a losing token is skipped while a different qualified token can fill the open slot", async t => {
 	const { bot, state } = rig(closedLoss("repeat"), [strongBuy("repeat"), strongBuy("fresh")]);
 	t.after(() => bot.stopBot());
 	bot.startBot();
@@ -73,21 +75,45 @@ test("a losing pair is skipped while another qualified pair fills the open slot"
 	assert.deepEqual(state.positions.map(position => position.tokenAddress), ["fresh"]);
 });
 
-test("an early re-entry requires two consecutive cooled and improving scans", async t => {
-	const candidate = strongBuy("repeat");
-	const { bot, state, timers } = rig(closedLoss("repeat"), [candidate]);
+test("a loss lock cannot be bypassed before the existing cooldown expires", async t => {
+	const repeatedCoin = strongBuy("repeat");
+	const { bot, state, timers } = rig(closedLoss("repeat", { minutesAgo: 30 }), [repeatedCoin]);
+	t.after(() => bot.stopBot());
+	bot.startBot();
+	await settle();
+	await timers.run(120000);
+	await settle();
+	assert.equal(state.positions.length, 0);
+});
+
+test("a losing token re-enters only after two confirmed high-volume scans", async t => {
+	const repeatedCoin = strongBuy("repeat");
+	const { bot, state, timers } = rig(closedLoss("repeat", { minutesAgo: 120 }), [repeatedCoin]);
 	t.after(() => bot.stopBot());
 	bot.startBot();
 	await settle();
 	assert.equal(state.positions.length, 0);
-
-	candidate.priceChange5m = 1.2;
 	await timers.run(120000);
 	await settle();
 	assert.deepEqual(state.positions.map(position => position.tokenAddress), ["repeat"]);
 });
 
-test("a hard stop uses the longer cooldown", async t => {
+test("both the absolute and liquidity-relative volume thresholds are required", async t => {
+	const belowAbsolute = strongBuy("below-absolute", { liquidityUsd: 30000, volume5m: 4999 });
+	const belowRelative = strongBuy("below-relative", { liquidityUsd: 60000, volume5m: 5999 });
+	const { bot, state, timers } = rig(
+		[...closedLoss("below-absolute", { minutesAgo: 120 }), ...closedLoss("below-relative", { minutesAgo: 120, id: "other" })],
+		[belowAbsolute, belowRelative]
+	);
+	t.after(() => bot.stopBot());
+	bot.startBot();
+	await settle();
+	await timers.run(120000);
+	await settle();
+	assert.equal(state.positions.length, 0);
+});
+
+test("a hard stop keeps the longer cooldown and still requires a high-volume breakout", async t => {
 	const hardStopHistory = closedLoss("repeat", { minutesAgo: 120, reason: "HARD STOP", id: "hard-stop" });
 	const { bot, state } = rig(hardStopHistory, [strongBuy("repeat"), strongBuy("fresh")]);
 	t.after(() => bot.stopBot());
@@ -96,7 +122,7 @@ test("a hard stop uses the longer cooldown", async t => {
 	assert.deepEqual(state.positions.map(position => position.tokenAddress), ["fresh"]);
 });
 
-test("two losing closes in 24 hours use the longer cooldown", async t => {
+test("two recent losing closes keep the longer cooldown and volume gate", async t => {
 	const history = [
 		...closedLoss("repeat", { minutesAgo: 180, id: "first-loss" }),
 		...closedLoss("repeat", { minutesAgo: 90, id: "second-loss" })

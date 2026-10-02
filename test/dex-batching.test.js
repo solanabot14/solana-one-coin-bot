@@ -9,7 +9,7 @@ function pair(address, liquidity, price) {
 		baseToken: { address, name: "Token " + address, symbol: "T" + address },
 		priceUsd: String(price),
 		liquidity: { usd: liquidity },
-		volume: { h24: 150000 },
+		volume: { m5: 2500, h24: 150000 },
 		priceChange: { m5: 1, h1: 4, h24: 12 },
 		txns: { m5: { buys: 20, sells: 5 } },
 		pairAddress: "pair-" + address + "-" + liquidity
@@ -41,4 +41,5 @@ test("scanner data lookup batches at most 30 tokens and keeps the most liquid So
 	assert.equal(data.get(addresses[0]).priceUsd, "3");
 	assert.equal(data.get(addresses[0]).liquidityUsd, 250);
 	assert.equal(data.get(addresses[30]).symbol, "Ttoken-30");
+	assert.equal(data.get(addresses[30]).volume5m, 2500);
 });

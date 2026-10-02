@@ -47,6 +47,7 @@ function dataFromPair(pair) {
 		symbol: pair.baseToken?.symbol,
 		priceUsd: pair.priceUsd,
 		liquidityUsd: pair.liquidity?.usd,
+		volume5m: pair.volume?.m5,
 		volume24h: pair.volume?.h24,
 		priceChange5m: pair.priceChange?.m5,
 		priceChange1h: pair.priceChange?.h1,

@@ -11,6 +11,10 @@ const HARD_STOP_OR_STREAK_COOLDOWN_MS = 3 * 60 * 60 * 1000;
 const LOSS_STREAK_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 const REENTRY_COOL_1H_MAX = 10;
 const REENTRY_CONFIRMATION_MAX_GAP_MS = SCANNER_INTERVAL_MS * 2;
+const REENTRY_MIN_VOLUME_5M_USD = 5000;
+const REENTRY_MIN_VOLUME_LIQUIDITY_RATIO = 0.10;
+const REENTRY_MIN_BUY_RATIO = 0.60;
+const REENTRY_MIN_TRANSACTIONS_5M = 30;
 const HARD_STOP_PERCENT = -10;
 const TAKE_PROFIT_1_PERCENT = 15;
 const TAKE_PROFIT_1_SELL_PERCENT = 25;
@@ -83,7 +87,11 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
         ? HARD_STOP_OR_STREAK_COOLDOWN_MS
         : LOSING_TOKEN_COOLDOWN_MS;
     const remainingMs = latest.closedAt + cooldownMs - now;
-    return remainingMs > 0 ? { remainingMs, loss: latest.pnl < 0 } : null;
+    if (latest.pnl < 0) {
+      // Losing tokens stay locked after the timer expires until a confirmed high-volume re-entry.
+      return { remainingMs: Math.max(0, remainingMs), loss: true };
+    }
+    return remainingMs > 0 ? { remainingMs, loss: false } : null;
   }
 
   function confirmsFreshReentry(coin, now) {
@@ -92,26 +100,32 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     const sellCount = Number(coin.sells5m) || 0;
     const totalTransactions = buyCount + sellCount;
     const buyRatio = totalTransactions ? buyCount / totalTransactions : 0;
+    const liquidityUsd = Number(coin.liquidityUsd) || 0;
+    const volume5m = Number(coin.volume5m) || 0;
+    const requiredVolume5m = Math.max(
+      REENTRY_MIN_VOLUME_5M_USD,
+      liquidityUsd * REENTRY_MIN_VOLUME_LIQUIDITY_RATIO
+    );
     const observation = {
       at: now,
       priceChange5m: Number(coin.priceChange5m) || 0,
       priceChange1h: Number(coin.priceChange1h) || 0,
-      buyRatio
+      buyRatio,
+      volume5m
     };
     const qualifies = coin.signal === "STRONG BUY" &&
       observation.priceChange1h > 0 && observation.priceChange1h <= REENTRY_COOL_1H_MAX &&
       observation.priceChange5m >= 0.25 && observation.priceChange5m <= 6 &&
-      buyRatio >= 0.55 && totalTransactions >= 20;
+      buyRatio >= REENTRY_MIN_BUY_RATIO &&
+      totalTransactions >= REENTRY_MIN_TRANSACTIONS_5M &&
+      volume5m >= requiredVolume5m;
     const previous = reentryObservations.get(tokenAddress);
 
     if (!qualifies) {
       reentryObservations.delete(tokenAddress);
       return false;
     }
-    if (previous && now - previous.at <= REENTRY_CONFIRMATION_MAX_GAP_MS &&
-      observation.priceChange5m >= previous.priceChange5m &&
-      observation.buyRatio >= previous.buyRatio &&
-      (observation.priceChange5m > previous.priceChange5m || observation.buyRatio > previous.buyRatio)) {
+    if (previous && now - previous.at <= REENTRY_CONFIRMATION_MAX_GAP_MS) {
       reentryObservations.delete(tokenAddress);
       return true;
     }
@@ -138,11 +152,21 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
         reentryObservations.delete(coin.tokenAddress);
         return true;
       }
-      if (cooldown.loss && confirmsFreshReentry(coin, now)) {
-        console.log(`COOLDOWN RELEASED | ${coin.symbol} | Fresh re-entry confirmed`);
+      if (!cooldown.loss) {
+        reentryObservations.delete(coin.tokenAddress);
+        console.log(`TOKEN COOLDOWN | ${coin.symbol} | ${Math.ceil(cooldown.remainingMs / 60000)} minutes remaining`);
+        return false;
+      }
+      if (cooldown.remainingMs > 0) {
+        reentryObservations.delete(coin.tokenAddress);
+        console.log(`TOKEN LOSS COOLDOWN | ${coin.symbol} | ${Math.ceil(cooldown.remainingMs / 60000)} minutes remaining`);
+        return false;
+      }
+      if (confirmsFreshReentry(coin, now)) {
+        console.log(`COOLDOWN RELEASED | ${coin.symbol} | High-volume breakout confirmed`);
         return true;
       }
-      console.log(`TOKEN COOLDOWN | ${coin.symbol} | ${Math.ceil(cooldown.remainingMs / 60000)} minutes remaining`);
+      console.log(`TOKEN LOSS LOCK | ${coin.symbol} | Waiting for confirmed high-volume breakout`);
       return false;
     });
     if (!availableCandidates.length) {
