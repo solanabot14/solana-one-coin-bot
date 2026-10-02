@@ -106,6 +106,9 @@ function renderPullbackData(d, state = {}) {
 	$("pullbackWinRate").textContent = pct(s.winRate || 0);
 	$("pullbackSlots").textContent = (d.openSlots || 0) + " / 3";
 	$("pullbackWatching").textContent = number(state.firstPump || 0) + " / " + number(state.pullback || 0);
+	$("pullbackCandleFeed").textContent = state.candleSource && state.candleInterval
+		? state.candleSource + " · " + state.candleInterval + " closed candles"
+		: "Waiting for candle data";
 	renderLiveTrade(d, "pullbackLive", "pullbackSlots", 3);
 	const trades = Array.isArray(d.completedTrades) ? d.completedTrades : [];
 	$("pullbackHistory").innerHTML = trades.map(t => {

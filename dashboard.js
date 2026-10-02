@@ -297,8 +297,8 @@ th,td{
 
 <div class="card section" id="pullbackPanel">
 <h2>Experimental Strategy — First Pump, Pullback, Reclaim</h2>
-<p class="muted">Separate $100 paper account, 3 slots, same V3.1 exit rules and compounding. It shares the existing DexScreener scan; this is a snapshot-based experiment, not a historical-candle strategy.</p>
-<p class="muted">Entry test: observe a 1.5–8% first 5m pump, wait for a 2–12% pullback, then require a reclaim 0.2% above that high, 0.25–6% current 5m momentum, at least 30 transactions, 60% buys, and $5,000 5m volume or 10% of liquidity (whichever is higher). Open positions are monitored every 5 seconds.</p>
+<p class="muted">Separate $100 paper account, 3 slots, same V3.1 exit rules and compounding. DexScreener finds candidates; GeckoTerminal public 1-minute OHLCV candles confirm the pattern. Up to 4 pools are checked per scan. If candle data is missing or stale, the experiment does not enter.</p>
+<p class="muted">Entry test: a closed candle confirms a 1.5–8% first pump, then a 2–12% pullback, then a close 0.2% above the recovery micro-high with at least 1.5x the prior five-candle average volume. The current DexScreener quote must remain within 2% of the breakout close. Existing 5m momentum, buy ratio, transaction count, and dollar-volume filters still apply. Open positions are monitored every 5 seconds.</p>
 <div class="grid">
   <div class="metric"><div class="metric-label">Status</div><div class="metric-value" id="pullbackStatus">—</div></div>
   <div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value" id="pullbackStarting">$100.00</div></div>
@@ -310,6 +310,7 @@ th,td{
   <div class="metric"><div class="metric-label">Win Rate</div><div class="metric-value" id="pullbackWinRate">0.00%</div></div>
   <div class="metric"><div class="metric-label">Open Slots</div><div class="metric-value" id="pullbackSlots">0 / 3</div></div>
   <div class="metric"><div class="metric-label">Watching Pumps / Pullbacks</div><div class="metric-value" id="pullbackWatching">0 / 0</div></div>
+  <div class="metric"><div class="metric-label">Entry Candle Data</div><div class="metric-value" id="pullbackCandleFeed">Waiting for candle data</div></div>
 </div>
 <div class="section"><h3>Experimental Open Positions</h3><div id="pullbackLive" class="empty">Waiting for the first pump / pullback pattern...</div></div>
 <div class="section"><h3>Experimental Completed Transactions</h3><p class="muted">Each trade shows dollars invested, dollars sold, realized P/L in dollars, and return percentage.</p><div style="overflow-x:auto"><table>
