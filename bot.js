@@ -6,6 +6,11 @@ const telegram = require("./telegram");
 const POSITION_MONITOR_MS = 2000;
 const SCANNER_INTERVAL_MS = 120000;
 const TOKEN_COOLDOWN_MS = 60 * 60 * 1000;
+const LOSING_TOKEN_COOLDOWN_MS = 90 * 60 * 1000;
+const HARD_STOP_OR_STREAK_COOLDOWN_MS = 3 * 60 * 60 * 1000;
+const LOSS_STREAK_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+const REENTRY_COOL_1H_MAX = 10;
+const REENTRY_CONFIRMATION_MAX_GAP_MS = SCANNER_INTERVAL_MS * 2;
 const HARD_STOP_PERCENT = -10;
 const TAKE_PROFIT_1_PERCENT = 15;
 const TAKE_PROFIT_1_SELL_PERCENT = 25;
@@ -32,11 +37,86 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
   let monitorBusy = false;
   let lastError = null;
   const isActive = session => activeSession === session && !session.signal.aborted;
-  const tokenCooldowns = new Map();
+  const reentryObservations = new Map();
 
   function startCooldown(tokenAddress, symbol, reason) {
-    tokenCooldowns.set(tokenAddress, Date.now());
-    console.log(`COOLDOWN STARTED | ${symbol} | 60 minutes | ${reason}`);
+    const cooldown = getTokenCooldown(tokenAddress, getPortfolio(), Date.now());
+    const minutes = cooldown ? Math.ceil(cooldown.remainingMs / 60000) : 0;
+    console.log(`COOLDOWN STARTED | ${symbol} | ${minutes} minutes | ${reason}`);
+  }
+
+  function getTokenCooldown(tokenAddress, portfolio, now) {
+    const sellsByPosition = new Map();
+    for (const trade of portfolio.history || []) {
+      if (trade?.type !== "SELL" || trade.tokenAddress !== tokenAddress || !trade.positionId) continue;
+      const events = sellsByPosition.get(trade.positionId) || [];
+      events.push(trade);
+      sellsByPosition.set(trade.positionId, events);
+    }
+
+    const closedPositions = [...sellsByPosition.values()]
+      .filter(events => events.some(event => Number(event.percentSold) === 100))
+      .map(events => {
+        events.sort((a, b) => Date.parse(a.exitTime) - Date.parse(b.exitTime));
+        const closingEvent = [...events].reverse().find(event => Number(event.percentSold) === 100);
+        return {
+          closedAt: Date.parse(closingEvent?.exitTime),
+          pnl: events.reduce((sum, event) => sum + (Number(event.pnl) || 0), 0),
+          reason: closingEvent?.reason
+        };
+      })
+      .filter(position => Number.isFinite(position.closedAt))
+      .sort((a, b) => b.closedAt - a.closedAt);
+
+    const latest = closedPositions[0];
+    if (!latest) return null;
+    const recentLossStreak = closedPositions
+      .filter(position => position.closedAt >= now - LOSS_STREAK_LOOKBACK_MS)
+      .reduce((streak, position) => {
+        if (streak.stopped || position.pnl >= 0) return { ...streak, stopped: true };
+        return { count: streak.count + 1, stopped: false };
+      }, { count: 0, stopped: false }).count;
+
+    const cooldownMs = latest.pnl >= 0
+      ? TOKEN_COOLDOWN_MS
+      : latest.reason === "HARD STOP" || recentLossStreak >= 2
+        ? HARD_STOP_OR_STREAK_COOLDOWN_MS
+        : LOSING_TOKEN_COOLDOWN_MS;
+    const remainingMs = latest.closedAt + cooldownMs - now;
+    return remainingMs > 0 ? { remainingMs, loss: latest.pnl < 0 } : null;
+  }
+
+  function confirmsFreshReentry(coin, now) {
+    const tokenAddress = coin.tokenAddress;
+    const buyCount = Number(coin.buys5m) || 0;
+    const sellCount = Number(coin.sells5m) || 0;
+    const totalTransactions = buyCount + sellCount;
+    const buyRatio = totalTransactions ? buyCount / totalTransactions : 0;
+    const observation = {
+      at: now,
+      priceChange5m: Number(coin.priceChange5m) || 0,
+      priceChange1h: Number(coin.priceChange1h) || 0,
+      buyRatio
+    };
+    const qualifies = coin.signal === "STRONG BUY" &&
+      observation.priceChange1h > 0 && observation.priceChange1h <= REENTRY_COOL_1H_MAX &&
+      observation.priceChange5m >= 0.25 && observation.priceChange5m <= 6 &&
+      buyRatio >= 0.55 && totalTransactions >= 20;
+    const previous = reentryObservations.get(tokenAddress);
+
+    if (!qualifies) {
+      reentryObservations.delete(tokenAddress);
+      return false;
+    }
+    if (previous && now - previous.at <= REENTRY_CONFIRMATION_MAX_GAP_MS &&
+      observation.priceChange5m >= previous.priceChange5m &&
+      observation.buyRatio >= previous.buyRatio &&
+      (observation.priceChange5m > previous.priceChange5m || observation.buyRatio > previous.buyRatio)) {
+      reentryObservations.delete(tokenAddress);
+      return true;
+    }
+    reentryObservations.set(tokenAddress, observation);
+    return false;
   }
 
   async function runScanner(session) {
@@ -53,12 +133,16 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
 
     const now = Date.now();
     const availableCandidates = candidates.filter(coin => {
-      const started = tokenCooldowns.get(coin.tokenAddress);
-      if (!started) return true;
-      if (now - started >= TOKEN_COOLDOWN_MS) {
-        tokenCooldowns.delete(coin.tokenAddress);
+      const cooldown = getTokenCooldown(coin.tokenAddress, getPortfolio(), now);
+      if (!cooldown) {
+        reentryObservations.delete(coin.tokenAddress);
         return true;
       }
+      if (cooldown.loss && confirmsFreshReentry(coin, now)) {
+        console.log(`COOLDOWN RELEASED | ${coin.symbol} | Fresh re-entry confirmed`);
+        return true;
+      }
+      console.log(`TOKEN COOLDOWN | ${coin.symbol} | ${Math.ceil(cooldown.remainingMs / 60000)} minutes remaining`);
       return false;
     });
     if (!availableCandidates.length) {
@@ -88,6 +172,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
 
       const trade = buy(coin);
       if (trade.success) {
+        reentryObservations.delete(coin.tokenAddress);
         openTokens.add(coin.tokenAddress);
         void notifier.notifyTrade("BUY", trade.trade);
       }
