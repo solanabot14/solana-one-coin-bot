@@ -1,5 +1,5 @@
 const axios = require("axios");
-const { getTokenData } = require("./dexscreener");
+const { getTokensData } = require("./dexscreener");
 const { analyzeToken } = require("./strategy");
 
 const DISCOVERY_SOURCES = [
@@ -33,13 +33,13 @@ async function fetchDiscoverySource(source, signal) {
 			: [];
 
 		console.log(
-			`${source.name}: ${tokens.length} tokens received`
+			source.name + ": " + tokens.length + " tokens received"
 		);
 
 		return tokens;
 	} catch (error) {
 		console.log(
-			`${source.name} unavailable: ${error.message}`
+			source.name + " unavailable: " + error.message
 		);
 
 		return [];
@@ -79,29 +79,25 @@ async function discoverCandidates({ signal } = {}) {
 			Array.from(uniqueSolanaTokens.values());
 
 		console.log(
-			`Unique Solana candidates: ${solanaTokens.length}`
+			"Unique Solana candidates: " + solanaTokens.length
 		);
 
+		const tokenDataByAddress = await getTokensData(
+			solanaTokens.map(token => token.tokenAddress),
+			{ signal }
+		);
 		const candidates = [];
 
 		for (const token of solanaTokens) {
-			if (signal?.aborted) {
-				return [];
-			}
+			if (signal?.aborted) return [];
 
-			const data = await getTokenData(
-				token.tokenAddress,
-				{ signal }
-			);
-
-			if (!data) {
-				continue;
-			}
+			const data = tokenDataByAddress.get(token.tokenAddress);
+			if (!data) continue;
 
 			console.log(
-				`CHECK ${data.symbol} | ` +
-				`Liquidity: $${data.liquidityUsd || 0} | ` +
-				`Volume24h: $${data.volume24h || 0}`
+				"CHECK " + data.symbol + " | " +
+				"Liquidity: $" + (data.liquidityUsd || 0) + " | " +
+				"Volume24h: $" + (data.volume24h || 0)
 			);
 
 			// Safety filters
@@ -115,9 +111,9 @@ async function discoverCandidates({ signal } = {}) {
 			const analysis = analyzeToken(data);
 
 			console.log(
-				`PASSED FILTERS: ${data.symbol} | ` +
-				`Score: ${analysis.score} | ` +
-				`Signal: ${analysis.signal}`
+				"PASSED FILTERS: " + data.symbol + " | " +
+				"Score: " + analysis.score + " | " +
+				"Signal: " + analysis.signal
 			);
 
 			candidates.push({
@@ -132,7 +128,7 @@ async function discoverCandidates({ signal } = {}) {
 		candidates.sort((a, b) => b.score - a.score);
 
 		console.log(
-			`Candidates after safety filters: ${candidates.length}`
+			"Candidates after safety filters: " + candidates.length
 		);
 
 		return candidates;
