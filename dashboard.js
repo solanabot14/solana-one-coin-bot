@@ -445,10 +445,6 @@ th,td{
   <th>Hold Time</th>
   <th>Exit Reason</th>
   <th>Chart</th>
-  <th>Max Gain</th>
-  <th>Hold Time</th>
-  <th>Exit Reason</th>
-  <th>Chart</th>
 </tr>
 </thead>
 
