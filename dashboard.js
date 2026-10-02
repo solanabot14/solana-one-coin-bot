@@ -429,12 +429,22 @@ th,td{
   <th>Entry 5m</th>
   <th>Entry 1h</th>
   <th>Entry Buy Ratio</th>
-  <th>Entry</th>
-  <th>Average Exit</th>
+  <th>Entry Tx</th>
+  <th>Entry Liquidity ($)</th>
+  <th>Entry 24h Volume ($)</th>
+  <th>Entry 24h</th>
+  <th>Entry Signal</th>
+  <th>Entry Reasons</th>
+  <th>Entry Price</th>
+  <th>Average Exit Price</th>
   <th>TP1 Sold ($)</th>
   <th>TP2 Sold ($)</th>
   <th>Trailing Sold ($)</th>
   <th>Other Exit ($)</th>
+  <th>Max Gain</th>
+  <th>Hold Time</th>
+  <th>Exit Reason</th>
+  <th>Chart</th>
   <th>Max Gain</th>
   <th>Hold Time</th>
   <th>Exit Reason</th>
