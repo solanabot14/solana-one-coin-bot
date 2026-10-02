@@ -1,10 +1,10 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const scanner = require("./scanner");
 const { createBot } = require("./bot");
 const { createPaperTrader } = require("./paperTrader");
 const { createPullbackStrategy } = require("./pullbackStrategy");
 const geckoTerminal = require("./geckoTerminal");
+const pullbackDiscovery = require("./pullbackDiscovery");
 
 const EXPERIMENT_VERSION = "PULLBACK-RECLAIM-OHLCV-V2";
 const MAX_CANDLE_WATCHLIST = 4;
@@ -18,7 +18,7 @@ function experimentDataFile(env = process.env) {
 }
 
 function createPullbackBot({ trader, timers = globalThis, getTokenData,
-	discover = scanner.discoverCandidates, notifier = null,
+	discover = pullbackDiscovery.discoverCandidates, notifier = null,
 	getPoolCandles = geckoTerminal.getPoolCandles,
 	positionMonitorMs = 5000, scannerIntervalMs = 120000 } = {}) {
 	const strategy = createPullbackStrategy();

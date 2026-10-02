@@ -3,6 +3,7 @@ const axios = require("axios");
 const API_BASE = "https://api.geckoterminal.com/api/v2";
 const CANDLE_INTERVAL_SECONDS = 60;
 const CANDLE_CACHE_MS = 60 * 1000;
+const NEW_POOLS_CACHE_MS = 60 * 1000;
 // Keep a margin under the public API's approximate 10 requests/minute limit.
 const REQUEST_SPACING_MS = 7500;
 const FAILURE_CACHE_MS = 30 * 1000;
@@ -41,6 +42,45 @@ function createGeckoTerminalClient({
 	const cache = new Map();
 	let requestQueue = Promise.resolve();
 	let lastRequestAt = 0;
+	let newPoolsCache = null;
+	let newPoolsRequest = null;
+
+	function queueRequest(run) {
+		const request = requestQueue.then(async () => {
+			const delayMs = Math.max(0, requestSpacingMs - (clock() - lastRequestAt));
+			if (delayMs > 0) await sleep(delayMs);
+			if (run.signal?.aborted) throw new Error("GeckoTerminal request aborted.");
+			lastRequestAt = clock();
+			return run.execute();
+		});
+		requestQueue = request.catch(() => {});
+		return request;
+	}
+
+	async function getNewSolanaPools({ signal } = {}) {
+		if (newPoolsCache && clock() - newPoolsCache.at < NEW_POOLS_CACHE_MS) {
+			return structuredClone(newPoolsCache.pools);
+		}
+		if (newPoolsRequest) return structuredClone(await newPoolsRequest);
+
+		newPoolsRequest = queueRequest({
+			signal,
+			execute: async () => {
+				const url = `${API_BASE}/networks/solana/new_pools`;
+				const response = await httpGet(url, {
+					params: { include: "base_token,quote_token" },
+					headers: { Accept: "application/json;version=20230203" },
+					timeout: 10000,
+					signal
+				});
+				return Array.isArray(response?.data?.data) ? response.data.data : [];
+			}
+		}).then(pools => {
+			newPoolsCache = { at: clock(), pools };
+			return pools;
+		}).finally(() => { newPoolsRequest = null; });
+		return structuredClone(await newPoolsRequest);
+	}
 
 	async function getPoolCandles(poolAddress, tokenAddress, { signal } = {}) {
 		if (!poolAddress || !tokenAddress) return [];
@@ -48,11 +88,7 @@ function createGeckoTerminalClient({
 		const cached = cache.get(cacheKey);
 		if (cached && clock() - cached.at < cached.ttl) return structuredClone(cached.candles);
 
-		const request = requestQueue.then(async () => {
-			const delayMs = Math.max(0, requestSpacingMs - (clock() - lastRequestAt));
-			if (delayMs > 0) await sleep(delayMs);
-			if (signal?.aborted) throw new Error("GeckoTerminal candle request aborted.");
-			lastRequestAt = clock();
+		const request = queueRequest({ signal, execute: async () => {
 			const url = `${API_BASE}/networks/solana/pools/${encodeURIComponent(poolAddress)}/ohlcv/minute`;
 			const response = await httpGet(url, {
 				params: { aggregate: 1, limit: 60, currency: "usd", token: "base" },
@@ -63,8 +99,7 @@ function createGeckoTerminalClient({
 			const candles = normalizeCandles(response?.data, clock());
 			cache.set(cacheKey, { at: clock(), ttl: cacheMs, candles });
 			return candles;
-		});
-		requestQueue = request.catch(() => {});
+		} });
 
 		try {
 			return structuredClone(await request);
@@ -76,7 +111,7 @@ function createGeckoTerminalClient({
 		}
 	}
 
-	return { getPoolCandles };
+	return { getPoolCandles, getNewSolanaPools };
 }
 
 const client = createGeckoTerminalClient();
@@ -86,5 +121,6 @@ module.exports = {
 	CANDLE_INTERVAL_SECONDS,
 	createGeckoTerminalClient,
 	normalizeCandles,
-	getPoolCandles: client.getPoolCandles
+	getPoolCandles: client.getPoolCandles,
+	getNewSolanaPools: client.getNewSolanaPools
 };

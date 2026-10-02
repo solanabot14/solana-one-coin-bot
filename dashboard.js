@@ -297,7 +297,7 @@ th,td{
 
 <div class="card section" id="pullbackPanel">
 <h2>Experimental Strategy — First Pump, Pullback, Reclaim</h2>
-<p class="muted">Separate $100 paper account, 3 slots, same V3.1 exit rules and compounding. DexScreener finds candidates; GeckoTerminal public 1-minute OHLCV candles confirm the pattern. Up to 4 pools are checked per scan. If candle data is missing or stale, the experiment does not enter.</p>
+<p class="muted">Separate $100 paper account, 3 slots, same V3.1 exit rules and compounding. Pullback discovery combines the existing DexScreener candidates with GeckoTerminal's public new-pool feed, then confirms new pools against DexScreener data. New pools skip only the $100k 24h discovery-volume floor; the $30k liquidity floor, entry activity checks, and closed-candle pattern still apply. Up to 4 pools are checked per scan.</p>
 <p class="muted">Entry test: a closed candle confirms a 1.5–8% first pump, then a 2–12% pullback, then a close 0.2% above the recovery micro-high with at least 1.5x the prior five-candle average volume. The current DexScreener quote must remain within 2% of the breakout close. Existing 5m momentum, buy ratio, transaction count, and dollar-volume filters still apply. Open positions are monitored every 5 seconds.</p>
 <div class="grid">
   <div class="metric"><div class="metric-label">Status</div><div class="metric-value" id="pullbackStatus">—</div></div>

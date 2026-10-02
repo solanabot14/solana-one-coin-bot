@@ -37,6 +37,28 @@ test("uses keyless GeckoTerminal public OHLCV, spaces calls, and clones cached r
 	assert.equal(second[0].close, 1.05);
 });
 
+test("fetches and caches the public Solana new-pools feed through the shared rate-limited queue", async () => {
+	const nowMs = 1_800_000_000_000;
+	const pool = { id: "solana_pool-A", attributes: { address: "pool-A" } };
+	let calls = 0;
+	const client = createGeckoTerminalClient({
+		clock: () => nowMs,
+		requestSpacingMs: 0,
+		httpGet: async (url, options) => {
+			calls += 1;
+			assert.match(url, /api\.geckoterminal\.com\/api\/v2\/networks\/solana\/new_pools$/);
+			assert.deepEqual(options.params, { include: "base_token,quote_token" });
+			assert.equal(options.params.api_key, undefined);
+			return { data: { data: [pool] } };
+		}
+	});
+	const first = await client.getNewSolanaPools();
+	first[0].attributes.address = "mutated";
+	const second = await client.getNewSolanaPools();
+	assert.equal(calls, 1);
+	assert.equal(second[0].attributes.address, "pool-A");
+});
+
 test("caches a public feed error briefly to prevent request retries", async () => {
 	let calls = 0;
 	const nowMs = 1_800_000_000_000;
