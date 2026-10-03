@@ -260,6 +260,7 @@ th,td{
 <div class="controls">
   <a class="panel-link" href="#v31Panel">V3.1 BOT</a>
   <a class="panel-link" href="#pullbackPanel">PULLBACK TEST</a>
+  <a class="panel-link" href="#pubxPanel">PUBX TRADES</a>
   <a class="panel-link swarm" href="#swarmPanel">SWARM</a>
 </div>
 
@@ -337,6 +338,27 @@ th,td{
 <div class="section"><h3>Experimental Completed Transactions</h3><p class="muted">Each trade shows dollars invested, dollars sold, realized P/L in dollars, and return percentage.</p><div style="overflow-x:auto"><table>
 <thead><tr><th>Coin</th><th>Invested ($)</th><th>Total Sold ($)</th><th>Profit / Loss ($)</th><th>Return (%)</th><th>Entry Price</th><th>Average Exit Price</th><th>Entry Evidence</th><th>Exit Reason</th><th>Chart</th></tr></thead>
 <tbody id="pullbackHistory"><tr><td colspan="10">No experimental trades yet.</td></tr></tbody>
+</table></div></div>
+</div>
+
+<div class="card section" id="pubxPanel">
+<h2>PubX Fast Momentum — Read-Only Mirror</h2>
+<p class="muted">PubX paper account shown here for convenience. This panel cannot start, stop, or change either bot.</p>
+<div class="grid">
+  <div class="metric"><div class="metric-label">PubX Feed</div><div class="metric-value" id="pubxStatus">Connecting…</div></div>
+  <div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value" id="pubxStarting">$100.00</div></div>
+  <div class="metric"><div class="metric-label">Cash</div><div class="metric-value" id="pubxCash">—</div></div>
+  <div class="metric"><div class="metric-label">Equity</div><div class="metric-value" id="pubxEquity">—</div></div>
+  <div class="metric"><div class="metric-label">Total P/L</div><div class="metric-value" id="pubxPnl">—</div></div>
+  <div class="metric"><div class="metric-label">Total Return</div><div class="metric-value" id="pubxReturn">—</div></div>
+  <div class="metric"><div class="metric-label">Completed Positions</div><div class="metric-value" id="pubxCount">—</div></div>
+  <div class="metric"><div class="metric-label">Win Rate</div><div class="metric-value" id="pubxWinRate">—</div></div>
+  <div class="metric"><div class="metric-label">Open Slots</div><div class="metric-value" id="pubxSlots">—</div></div>
+</div>
+<div class="section"><h3>PubX Open Positions</h3><div id="pubxOpen" class="empty">Waiting for PubX data…</div></div>
+<div class="section"><h3>PubX Completed Transactions</h3><div style="overflow-x:auto"><table>
+<thead><tr><th>Coin</th><th>Invested</th><th>Sold</th><th>Realized P/L</th><th>Return</th><th>Entry Price</th><th>Exit Price</th><th>Exit Reason</th><th>Chart</th></tr></thead>
+<tbody id="pubxHistory"><tr><td colspan="9">Waiting for PubX data…</td></tr></tbody>
 </table></div></div>
 </div>
 
@@ -514,6 +536,32 @@ th,td{
 </body>
 </html>`;
 
+const PUBX_DASHBOARD_API = "https://pubx-fast-momentum-production.up.railway.app/api/data";
+
+async function fetchPubxDashboard() {
+  const username = String(process.env.PUBX_DASHBOARD_USER || "").trim();
+  const password = String(process.env.PUBX_DASHBOARD_PASSWORD || "").trim();
+  if (!username || !password) return { data: null, error: "PubX feed credentials are not configured." };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const auth = Buffer.from(username + ":" + password).toString("base64");
+    const response = await fetch(PUBX_DASHBOARD_API, {
+      headers: { Authorization: "Basic " + auth },
+      signal: controller.signal
+    });
+    if (!response.ok) return { data: null, error: "PubX feed unavailable (" + response.status + ")." };
+    const body = await response.json();
+    if (!body || !body.pullback) return { data: null, error: "PubX account data was not returned." };
+    return { data: body.pullback, error: null };
+  } catch (error) {
+    console.error("PubX dashboard mirror unavailable:", error.message);
+    return { data: null, error: "PubX data is temporarily unavailable." };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function createDashboardServer({ config = getConfig(), controls = bot,
   portfolio = getPortfolio, marketData = getTokenData,
   batchMarketData = marketData === getTokenData ? getTokensData : null,
@@ -558,13 +606,16 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const sharedMarketData = sharedQuotes
           ? async address => sharedQuotes.get(address) || null
           : marketData;
-        const [v31, pullback] = await Promise.all([
+        const [v31, pullback, pubx] = await Promise.all([
           buildDashboardData(baseAccount, sharedMarketData),
-          buildDashboardData(experimentAccount, sharedMarketData)
+          buildDashboardData(experimentAccount, sharedMarketData),
+          fetchPubxDashboard()
         ]);
         return json(res, {
           v31,
           pullback,
+          pubx: pubx.data,
+          pubxError: pubx.error,
           pullbackStatus: {
             running: experiment.getStatus(),
             error: experiment.getLastError(),
