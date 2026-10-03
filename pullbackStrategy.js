@@ -2,7 +2,7 @@ const MIN_LIQUIDITY_USD = 20000;
 const MIN_VOLUME_5M_USD = 1000;
 const MIN_VOLUME_LIQUIDITY_RATIO = 0.01;
 const MIN_TRANSACTIONS_5M = 4;
-const MIN_BUY_RATIO = 0.55;
+const MIN_BUY_RATIO = 0.52;
 const MIN_CHANGE_5M = -1;
 const MAX_CHANGE_5M = 18;
 const MIN_CHANGE_1H = -15;
@@ -49,7 +49,7 @@ function createPullbackStrategy() {
       if (!coin?.pairAddress || !(price > 0)) reason = "MISSING_MARKET_DATA";
       else if (liquidity < MIN_LIQUIDITY_USD) reason = "LIQUIDITY_BELOW_20000";
       else if (totalTransactions < MIN_TRANSACTIONS_5M) reason = "FEWER_THAN_4_TRANSACTIONS";
-      else if (buyRatio < MIN_BUY_RATIO) reason = "BUY_RATIO_BELOW_55_PERCENT";
+      else if (buyRatio < MIN_BUY_RATIO) reason = "BUY_RATIO_BELOW_52_PERCENT";
       else if (volume5m < requiredVolume) reason = "FIVE_MINUTE_VOLUME_TOO_LOW";
       else if (change5m < MIN_CHANGE_5M || change5m > MAX_CHANGE_5M) reason = "FIVE_MINUTE_MOMENTUM_OUT_OF_RANGE";
       else if (change1h < MIN_CHANGE_1H || change1h > MAX_CHANGE_1H) reason = "ONE_HOUR_MOMENTUM_OUT_OF_RANGE";
