@@ -44,7 +44,7 @@ function coin(overrides = {}) {
 	};
 }
 
-test("recognizes a modest volume-confirmed 3-candle channel breakout in closed one-minute candles", () => {
+test("recognizes a modest volume-confirmed 2-candle channel breakout in closed one-minute candles", () => {
 	const now = Date.now();
 	const pattern = detectPattern(candlesForBreakout(now), now);
 	assert.equal(pattern.phase, "BREAKOUT");
@@ -58,7 +58,7 @@ test("paper entry accepts the looser candle setup and rejects weak activity, liq
 	const [entry] = strategy.observe([coin({ ohlcv1m: candlesForBreakout(now) })], now);
 	assert.equal(entry.tokenAddress, "token-A");
 	assert.equal(entry.signal, "STRONG BUY", "the common paper-trader contract needs STRONG BUY after the candle and LP gates");
-	assert.equal(entry.experimentEntry.model, "CANDLE_BREAKOUT_1M_V1_1_EXPANDED");
+	assert.equal(entry.experimentEntry.model, "CANDLE_BREAKOUT_1M_V1_2_AGGRESSIVE");
 	assert.equal(entry.experimentEntry.candleInterval, "1m");
 	assert.equal(entry.experimentEntry.candleSource, "GeckoTerminal public OHLCV");
 	assert.ok(entry.experimentEntry.breakoutVolumeMultiple >= 1.1);
@@ -67,7 +67,7 @@ test("paper entry accepts the looser candle setup and rejects weak activity, liq
 
 	const rejects = [
 		coin({ ohlcv1m: [] }),
-		coin({ ohlcv1m: candlesForBreakout(now, 99) }),
+		coin({ ohlcv1m: candlesForBreakout(now, 74) }),
 		coin({ priceUsd: 1.05, ohlcv1m: candlesForBreakout(now) }),
 		coin({ buys5m: 4, sells5m: 5, ohlcv1m: candlesForBreakout(now) }),
 		coin({ liquidityUsd: 19000, ohlcv1m: candlesForBreakout(now) })
@@ -77,17 +77,18 @@ test("paper entry accepts the looser candle setup and rejects weak activity, liq
 	}
 });
 
-test("expanded trigger accepts a fresh close just above the channel with average volume", () => {
+test("aggressive trigger accepts a close above the two-candle channel with 0.8x volume and a lower close location", () => {
 	const now = Date.now();
 	const bars = candlesForBreakout(now, 100);
-	Object.assign(bars[7], { open: 1.003, high: 1.01, low: 0.999, close: 1.004, volume: 100 });
+	Object.assign(bars[7], { open: 1.003, high: 1.0115, low: 0.999, close: 1.004, volume: 80 });
 	const pattern = detectPattern(bars, now);
 	assert.equal(pattern.phase, "BREAKOUT");
 	assert.ok(pattern.breakoutPercent > 0 && pattern.breakoutPercent < 0.1);
-	assert.equal(pattern.breakoutVolumeMultiple, 1);
-	const [entry] = createPullbackStrategy().observe([coin({ priceUsd: 1.004, ohlcv1m: bars })], now);
-	assert.equal(entry.experimentEntry.model, "CANDLE_BREAKOUT_1M_V1_1_EXPANDED");
-	assert.ok(entry.experimentEntry.closeLocation >= 0.45);
+	assert.equal(pattern.breakoutVolumeMultiple, 0.8);
+	const [entry] = createPullbackStrategy().observe([coin({ priceUsd: 1.004, volume5m: 1000, buys5m: 3, sells5m: 3, ohlcv1m: bars })], now);
+	assert.equal(entry.experimentEntry.model, "CANDLE_BREAKOUT_1M_V1_2_AGGRESSIVE");
+	assert.ok(entry.experimentEntry.closeLocation >= 0.35);
+	assert.ok(entry.experimentEntry.closeLocation < 0.45);
 });
 
 test("rejects stale candles, candle gaps, and insufficient candle history", () => {
@@ -124,7 +125,7 @@ test("the experiment paper account persists separately and reports dollar plus p
 	t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
 	const base = createPaperTrader(path.join(directory, "base.json"));
 	const experiment = createPaperTrader(path.join(directory, "experiment.json"), fs, {
-		strategyVersion: "CANDLE-BREAKOUT-1M-V1.1-EXPANDED"
+		strategyVersion: "CANDLE-BREAKOUT-1M-V1.2-AGGRESSIVE"
 	});
 
 	const baseBuy = base.buy(coin());
@@ -133,7 +134,7 @@ test("the experiment paper account persists separately and reports dollar plus p
 	assert.equal(experimentBuy.trade.amountInvested, 10);
 	assert.equal(base.getPortfolio().cashBalance, 90);
 	assert.equal(experiment.getPortfolio().cashBalance, 90);
-	assert.equal(experiment.getPortfolio().positions[0].strategyVersion, "CANDLE-BREAKOUT-1M-V1.1-EXPANDED");
+	assert.equal(experiment.getPortfolio().positions[0].strategyVersion, "CANDLE-BREAKOUT-1M-V1.2-AGGRESSIVE");
 
 	experiment.sell(1.1, 100, { expectedPosition: experiment.positionKey(experiment.getPortfolio().positions[0]), reason: "TEST" });
 	assert.equal(base.getPortfolio().history.filter(trade => trade.type === "SELL").length, 0);
