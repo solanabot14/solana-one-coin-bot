@@ -21,10 +21,8 @@ function getConfig(env = process.env) {
   if ((dashboardUser && !dashboardPassword) || (!dashboardUser && dashboardPassword)) {
     throw new Error("Set both DASHBOARD_USER and DASHBOARD_PASSWORD.");
   }
-  if (!localOnly && (!dashboardUser || !dashboardPassword)) {
-    throw new Error("Public dashboard access requires DASHBOARD_USER and DASHBOARD_PASSWORD.");
-  }
-  return { host, port, localOnly, dashboardUser, dashboardPassword };
+  return { host, port, localOnly, dashboardUser, dashboardPassword,
+    readOnly: !dashboardUser && !dashboardPassword };
 }
 
 function authorized(req, config) {
@@ -542,6 +540,7 @@ function createDashboardServer({ config = getConfig(), controls = pubxControls,
       }
       if (route === "/api/start" || route === "/api/stop") {
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
         if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
         if (route === "/api/start") controls.startBot(); else controls.stopBot();
         return json(res, { running: controls.getBotStatus() });
