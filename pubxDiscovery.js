@@ -7,7 +7,7 @@ const DISCOVERY_SOURCES = [
   { name: "Latest Boosts", url: "https://api.dexscreener.com/token-boosts/latest/v1" },
   { name: "Top Boosts", url: "https://api.dexscreener.com/token-boosts/top/v1" }
 ];
-const MIN_LIQUIDITY_USD = 30000;
+const MIN_LIQUIDITY_USD = 20000;
 const CACHE_MS = 10000;
 
 function createPubxDiscovery({
