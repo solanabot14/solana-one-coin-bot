@@ -4,14 +4,11 @@ const { createBot } = require("./bot");
 const { createPaperTrader } = require("./paperTrader");
 const { createCandleBreakoutExitPolicy } = require("./candleBreakoutExitPolicy");
 const { getLockStatus } = require("./lpLockChecker");
-const pullbackDiscovery = require("./pullbackDiscovery");
 const pubxDiscovery = require("./pubxDiscovery");
-const candidateDiscovery = pullbackDiscovery.createPullbackDiscovery({
-  discoverExisting: pubxDiscovery.discoverCandidates
-});
+const candidateDiscovery = pubxDiscovery.discoverCandidates;
 
-const EXPERIMENT_VERSION = "CANDLE-BREAKOUT-1M-V1.2-AGGRESSIVE";
-const MAX_CANDIDATES_PER_SCAN = 8;
+const EXPERIMENT_VERSION = "FAST-MOMENTUM-DEX-V1.3-AGGRESSIVE";
+const MAX_CANDIDATES_PER_SCAN = 25;
 const POSITION_MONITOR_MS = 2000;
 const SCANNER_INTERVAL_MS = 60000;
 
@@ -24,32 +21,34 @@ function experimentDataFile(env = process.env) {
 }
 
 function createPullbackBot({ trader, timers = globalThis, getTokenData,
-  discover = candidateDiscovery.discoverCandidates, notifier = null,
+  discover = candidateDiscovery, notifier = null,
   positionMonitorMs = POSITION_MONITOR_MS, scannerIntervalMs = SCANNER_INTERVAL_MS,
   checkLiquidityLock = getLockStatus } = {}) {
   const strategy = require("./pullbackStrategy").createPullbackStrategy();
-  let scanStats = { eligible: 0, candleCandidates: 0, lockConfirmed: 0, lockRejected: 0,
-    candleInterval: "1m", candleSource: "GeckoTerminal public OHLCV", minimumLockedPercent: 90 };
+  let scanStats = { eligible: 0, signalCandidates: 0, lockConfirmed: 0, lockRejected: 0,
+    discoverySource: "DexScreener profiles/boosts", minimumLockedPercent: 90, rejectedByFilter: {} };
   const telegram = require("./telegram");
   const notifyNone = notifier || {
     notifyTrade: (event, trade) => telegram.sendTelegramMessage(
       telegram.formatTradeNotification(event, trade)
-        .replace("ONE COIN BOT | ", "CANDLE BREAKOUT V1 | ")
+        .replace("ONE COIN BOT | ", "FAST MOMENTUM V1 | ")
     ),
     notifyCritical: message => telegram.sendTelegramMessage(
       telegram.formatCriticalNotification(message)
-        .replace("ONE COIN BOT | ", "CANDLE BREAKOUT V1 | ")
+        .replace("ONE COIN BOT | ", "FAST MOMENTUM V1 | ")
     )
   };
   const experimentScanner = async options => {
     const candidates = await discover(options || {});
     const ranked = (Array.isArray(candidates) ? candidates : [])
-      .filter(coin => coin?.tokenAddress && coin?.pairAddress && Array.isArray(coin.ohlcv1m))
+      .filter(coin => coin?.tokenAddress && coin?.pairAddress)
       .sort((a, b) => (Number(b.volume5m) || 0) - (Number(a.volume5m) || 0))
       .slice(0, MAX_CANDIDATES_PER_SCAN);
     const signals = strategy.observe(ranked);
-    scanStats = { ...scanStats, eligible: candidates?.length || 0, candleCandidates: ranked.length,
-      lockConfirmed: 0, lockRejected: 0, lastScanAt: new Date().toISOString() };
+    scanStats = { ...scanStats, eligible: candidates?.length || 0, signalCandidates: signals.length,
+      rejectedByFilter: strategy.getStatus().rejectedByFilter, lockConfirmed: 0, lockRejected: 0,
+      lastScanAt: new Date().toISOString() };
+    console.log(`FAST MOMENTUM SCAN | discovered: ${candidates?.length || 0} | checked: ${ranked.length} | signals: ${signals.length} | entry rejections: ${JSON.stringify(scanStats.rejectedByFilter)}`);
     const ready = [];
     for (const signal of signals) {
       const lock = await checkLiquidityLock(signal.tokenAddress);
@@ -60,7 +59,7 @@ function createPullbackBot({ trader, timers = globalThis, getTokenData,
       }
       scanStats.lockConfirmed += 1;
       signal.experimentEntry.lockedLiquidityPercent = lock.lockedPercent;
-      signal.reasons.push(`CANDLE BREAKOUT V1: LP lock ${lock.lockedPercent.toFixed(1)}% confirmed by RugCheck`);
+      signal.reasons.push(`FAST MOMENTUM V1: LP lock ${lock.lockedPercent.toFixed(1)}% confirmed by RugCheck`);
       ready.push(signal);
     }
     return ready;
