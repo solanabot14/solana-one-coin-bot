@@ -5,6 +5,10 @@ const { createPaperTrader } = require("./paperTrader");
 const { createPubxMomentumStrategy } = require("./pubxMomentumStrategy");
 const { createPubxExitPolicy } = require("./pubxExitPolicy");
 const pullbackDiscovery = require("./pullbackDiscovery");
+const pubxDiscovery = require("./pubxDiscovery");
+const candidateDiscovery = pullbackDiscovery.createPullbackDiscovery({
+  discoverExisting: pubxDiscovery.discoverCandidates
+});
 
 const EXPERIMENT_VERSION = "PUBX-FAST-MOMENTUM-V1";
 const MAX_CANDIDATES_PER_SCAN = 60;
@@ -20,7 +24,7 @@ function experimentDataFile(env = process.env) {
 }
 
 function createPullbackBot({ trader, timers = globalThis, getTokenData,
-  discover = pullbackDiscovery.discoverCandidates, notifier = null,
+  discover = candidateDiscovery.discoverCandidates, notifier = null,
   positionMonitorMs = POSITION_MONITOR_MS, scannerIntervalMs = SCANNER_INTERVAL_MS } = {}) {
   const strategy = createPubxMomentumStrategy();
   const notifyNone = notifier || {
