@@ -127,6 +127,56 @@ function renderPullbackData(d, state = {}) {
 	}).join("") || `<tr><td colspan="10">No experimental trades yet.</td></tr>`;
 }
 
+function renderPubxData(d, error) {
+	if (!$("pubxStatus")) return;
+	if (error) {
+		$("pubxStatus").textContent = "DATA UNAVAILABLE";
+		$("pubxStatus").className = "metric-value red";
+		$("pubxOpen").textContent = "PubX feed unavailable. V3.1 dashboard and trading are unaffected.";
+		$("pubxHistory").innerHTML = '<tr><td colspan="9">' + escapeHtml(error) + "</td></tr>";
+		return;
+	}
+	if (!d) {
+		$("pubxStatus").textContent = "CONNECTING";
+		return;
+	}
+	const stats = d.stats || {};
+	$("pubxStatus").textContent = "CONNECTED · PAPER ONLY";
+	$("pubxStatus").className = "metric-value green";
+	$("pubxStarting").textContent = money(d.startingBalance);
+	$("pubxCash").textContent = money(d.cashBalance);
+	$("pubxEquity").textContent = money(d.equity);
+	$("pubxPnl").textContent = money(d.totalPnl);
+	$("pubxPnl").className = "metric-value " + cls(d.totalPnl);
+	$("pubxReturn").textContent = pct(d.totalPnlPercent);
+	$("pubxReturn").className = "metric-value " + cls(d.totalPnlPercent);
+	$("pubxCount").textContent = number(stats.completedTrades || 0);
+	$("pubxWinRate").textContent = pct(stats.winRate || 0);
+	const slots = Array.isArray(d.livePositions) ? d.livePositions : [];
+	$("pubxSlots").textContent = (d.openSlots || slots.length) + " / " + (d.maxSlots || 3);
+	$("pubxOpen").innerHTML = slots.map((slot, index) => {
+		const position = slot.position || {}, live = slot.live || {};
+		const chart = dexLink(position, live);
+		return '<div class="metric" style="margin-bottom:12px"><div class="live-title"><span class="coin-name">Slot ' + (index + 1) + ': ' + escapeHtml(position.symbol) + '</span><span class="badge">PUBX</span>' +
+			(chart ? '<a class="small-link" href="' + chart + '" target="_blank" rel="noopener noreferrer">DexScreener</a>' : '') +
+			'</div><div class="grid"><div class="metric"><div class="metric-label">Invested</div><div class="metric-value">' + money(position.amountInvested) +
+			'</div></div><div class="metric"><div class="metric-label">Entry</div><div class="metric-value">' + price(position.entryPrice) +
+			'</div></div><div class="metric"><div class="metric-label">Current</div><div class="metric-value">' + price(live.currentPrice) +
+			'</div></div><div class="metric"><div class="metric-label">Live P/L</div><div class="metric-value ' + cls(live.pnl) + '">' + money(live.pnl) + ' (' + pct(live.pnlPercent) +
+			')</div></div></div></div>';
+	}).join("") || "No open PubX positions.";
+	const trades = Array.isArray(d.completedTrades) ? d.completedTrades : [];
+	$("pubxHistory").innerHTML = trades.map(t => {
+		const reasons = Array.isArray(t.exitReasons) ? t.exitReasons.join(" / ") : (t.reason || "—");
+		const chart = dexLink(t, null);
+		return '<tr><td><strong>' + escapeHtml(t.symbol) + '</strong></td><td>' + money(t.amountInvested) +
+			'</td><td>' + money(t.saleValue) + '</td><td class="' + cls(t.pnl) + '">' + money(t.pnl) +
+			'</td><td class="' + cls(t.pnlPercent) + '">' + pct(t.pnlPercent) + '</td><td>' + price(t.entryPrice) +
+			'</td><td>' + price(t.exitPrice) + '</td><td>' + escapeHtml(reasons) + '</td><td>' +
+			(chart ? '<a class="small-link" href="' + chart + '" target="_blank" rel="noopener noreferrer">Chart</a>' : "—") + '</td></tr>';
+	}).join("") || '<tr><td colspan="9">No completed PubX transactions recorded yet.</td></tr>';
+}
+
 function renderData(d) {
 	const response = d;
 	d = response.v31 || response;
@@ -139,6 +189,7 @@ function renderData(d) {
 	$("net").className = "metric-value " + cls(s.netPnl);
 	renderLiveTrade(d); renderScoreStats(d); renderExitReasons(d); renderHistory(d);
 	renderPullbackData(response.pullback, response.pullbackStatus);
+	renderPubxData(response.pubx, response.pubxError);
 }
 
 async function refreshStatus() {
