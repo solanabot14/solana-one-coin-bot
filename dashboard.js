@@ -318,7 +318,7 @@ th,td{
 
 <div class="card section" id="pullbackPanel">
 <h2>PubX Fast Momentum — Paper Test</h2>
-<p class="muted">Separate $100 paper account with 3 slots. PubX checks DexScreener and fresh Solana pools, ranking by 5m turnover, buy pressure, and active price momentum. It scans every 20 seconds and does not wait for a pullback pattern. The test requires at least $30k liquidity and checks 5m volume against liquidity.</p>
+<p class="muted">Separate $100 paper account with 3 slots. PubX checks DexScreener and fresh Solana pools, ranking by 5m turnover, buy pressure, and active price momentum. It scans every 20 seconds and has no $100k 24h-volume gate; instead, it requires at least $30k liquidity and checks 5m volume against liquidity.</p>
 <p class="muted">Entry test: 5m volume must reach at least $5k or 4% of liquidity, with 20+ transactions, 58%+ buys, and 0.75–22% 5m momentum. Exits: 8% hard stop, 50% sale at +10%, 5% trail for the runner, flow-fade exit, and 8-minute stale-trade exit. Open positions are checked every 2 seconds. Transaction counts are a flow proxy; this feed does not identify unique buyer wallets.</p>
 <div class="grid">
   <div class="metric"><div class="metric-label">Status</div><div class="metric-value" id="pullbackStatus">—</div></div>
