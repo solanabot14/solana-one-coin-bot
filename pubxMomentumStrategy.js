@@ -93,7 +93,9 @@ function createPubxMomentumStrategy() {
     return ready;
   }
 
-  return { observe, getStatus: () => ({ ...lastStats }), getTrackedTokens: () => [...priorSnapshots.keys()] };
+  return { observe, getStatus: () => ({ ...lastStats, firstPump: lastStats.qualified,
+    pullback: lastStats.scanned, candleSource: "DexScreener live volume and transactions",
+    candleInterval: "20s scan interval" }), getTrackedTokens: () => [...priorSnapshots.keys()] };
 }
 
 module.exports = {
