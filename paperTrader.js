@@ -53,7 +53,7 @@ function validateState(data) {
 	}
 }
 
-function createPaperTrader(dataFile = defaultDataFile(), io = fs, { strategyVersion = "V3.1-3Slot-Compound10" } = {}) {
+function createPaperTrader(dataFile = defaultDataFile(), io = fs, { strategyVersion = "V3.1-Original-2Slots" } = {}) {
 	let state = {
 		startingBalance: 100,
 		cashBalance: 100,
@@ -105,13 +105,13 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, { strategyVers
 
 	function buy(coin) {
 		const positions = state.positions || [];
-		if (positions.length >= 3) return fail("All 3 slots are occupied.");
+		if (positions.length >= 2) return fail("Both slots are occupied.");
 		const price = Number(coin.priceUsd);
 		if (!Number.isFinite(price) || price <= 0 || !coin.tokenAddress) return fail("Invalid token or price.");
 		if (positions.some(p => p.tokenAddress === coin.tokenAddress)) return fail("Token already has an open position.");
 		if (state.cashBalance <= 0) return fail("No cash available.");
 		const next = structuredClone(state);
-		const amountInvested = Math.min(Math.max(equity() * 0.10, 10), next.cashBalance);
+		const amountInvested = Math.min(10, next.cashBalance);
 		if (!(amountInvested > 0)) return fail("No cash available.");
 		const buys5m = Number(coin.buys5m) || 0, sells5m = Number(coin.sells5m) || 0;
 		const totalTransactions5m = buys5m + sells5m;

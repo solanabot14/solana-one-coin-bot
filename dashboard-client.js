@@ -33,7 +33,7 @@ async function request(url, options = {}) {
 	return response.json();
 }
 
-function renderLiveTrade(d, targetId = "live", slotsId = "slots", maxSlots = 3) {
+function renderLiveTrade(d, targetId = "live", slotsId = "slots", maxSlots = 2) {
 	const slots = Array.isArray(d.livePositions) ? d.livePositions : [];
 	$(slotsId).textContent = (d.openSlots ?? slots.length) + " / " + maxSlots;
 	if (!slots.length) { $(targetId).textContent = "No open positions."; return; }
