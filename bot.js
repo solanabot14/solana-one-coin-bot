@@ -2,6 +2,7 @@ const market = require("./dexscreener");
 const scanner = require("./scanner");
 const paperTrader = require("./paperTrader");
 const telegram = require("./telegram");
+const { getLockStatus } = require("./lpLockChecker");
 
 const POSITION_MONITOR_MS = 2000;
 const SCANNER_INTERVAL_MS = 120000;
@@ -32,7 +33,7 @@ const MOMENTUM_EXIT_MIN_TRANSACTIONS = 10;
 
 function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
   discoverCandidates = scanner.discoverCandidates, timers = globalThis,
-  notifier = telegram, positionMonitorMs = POSITION_MONITOR_MS,
+  notifier = telegram, checkLiquidityLock = getLockStatus, positionMonitorMs = POSITION_MONITOR_MS,
   scannerIntervalMs = SCANNER_INTERVAL_MS,
   botLabel = "V3.1-3Slot + 10% Compound" } = {}) {
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
@@ -178,12 +179,24 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
 
     const openTokens = new Set((getPortfolio().positions || []).map(p => p.tokenAddress));
     const freeSlots = Math.max(0, 3 - (getPortfolio().positions || []).length);
-    const strongBuys = availableCandidates
-      .filter(coin => coin.signal === "STRONG BUY" && !openTokens.has(coin.tokenAddress))
-      .slice(0, freeSlots);
+    const buyCandidates = availableCandidates
+      .filter(coin => coin.signal === "STRONG BUY" && !openTokens.has(coin.tokenAddress));
+    const strongBuys = [];
+    for (const coin of buyCandidates) {
+      const lock = await checkLiquidityLock(coin.tokenAddress);
+      if (!isActive(session)) return;
+      if (!lock?.allowed || Number(lock.lockedPercent) < 90) {
+        console.log(`LP LOCK GATE | ${coin.symbol} | skipped | ${lock?.reason || "LOCK_STATUS_UNAVAILABLE"}`);
+        continue;
+      }
+      coin.reasons = [...(Array.isArray(coin.reasons) ? coin.reasons : []),
+        `LP lock ${Number(lock.lockedPercent).toFixed(1)}% confirmed by RugCheck`];
+      strongBuys.push(coin);
+      if (strongBuys.length >= freeSlots) break;
+    }
 
     if (!strongBuys.length) {
-      console.log("No STRONG BUY candidate available.");
+      console.log("No STRONG BUY candidate with confirmed LP lock >=90% available.");
       return;
     }
 

@@ -44,7 +44,7 @@ function closedLoss(tokenAddress, { minutesAgo = 30, reason = "MOMENTUM EXIT", i
 	];
 }
 
-function rig(history, candidates) {
+function rig(history, candidates, checkLiquidityLock = async () => ({ allowed: true, lockedPercent: 95 })) {
 	const state = { startingBalance: 100, cashBalance: 100, positions: [], history: structuredClone(history) };
 	let nextPosition = 0;
 	const trader = {
@@ -63,9 +63,18 @@ function rig(history, candidates) {
 	const timers = fakeTimers();
 	const notifier = { notifyTrade: async () => {}, notifyCritical: async () => {} };
 	const bot = createBot({ trader, timers, discoverCandidates: async () => candidates,
-		getTokenData: async () => null, notifier });
+		getTokenData: async () => null, notifier, checkLiquidityLock });
 	return { bot, state, timers };
 }
+
+test("an unlocked pool cannot be bought even when its signal is STRONG BUY", async t => {
+	const { bot, state } = rig([], [strongBuy("unsafe")],
+		async () => ({ allowed: false, lockedPercent: 0, reason: "LIQUIDITY_NOT_LOCKED_ENOUGH" }));
+	t.after(() => bot.stopBot());
+	bot.startBot();
+	await settle();
+	assert.equal(state.positions.length, 0);
+});
 
 test("a losing token is skipped while a different qualified token can fill the open slot", async t => {
 	const { bot, state } = rig(closedLoss("repeat"), [strongBuy("repeat"), strongBuy("fresh")]);

@@ -314,8 +314,8 @@ th,td{
 </div>
 
 <div class="card section" id="candleBreakoutPanel">
-<h2>1m Candle Breakout V1 — Live Paper Test</h2>
-<p class="muted">This panel mirrors the separate Candle Breakout V1 paper account. The test enters on a closed 1-minute candle at least 0.1% above the previous 3-candle high, with 1.1× candle volume and a close in the top 45% of the range. It uses $20k minimum liquidity, at least 8 transactions and 52% buys, and checks no more than 2.5% above the breakout close. Entries require at least 90% LP lock confirmation. It rotates 5 pools each 45-second scan.</p>
+<h2>1m Candle Breakout V1.1 — Expanded Entry Live Paper Test</h2>
+<p class="muted">This panel mirrors the separate Candle Breakout V1.1 Expanded Entry paper account. It enters when a closed 1-minute candle closes above the previous 3-candle high, with at least average candle volume and a close in the upper 55% of its range. It keeps the $20k liquidity floor, 8+ transactions and 52% buys, $1.5k or 1.5% liquidity in five-minute volume, and a 2.5% maximum chase. It requires RugCheck-confirmed LP lock of at least 90% and checks up to 8 pools every 60 seconds.</p>
 <p class="muted">Exit plan: 9% hard stop, sell half at +12%, then trail the runner by 7% with a +3% protection floor; also exits on flow fade or after 12 minutes without enough progress. Paper trading only.</p>
 <p><a class="small-link" href="https://pubx-fast-momentum-production.up.railway.app/" target="_blank" rel="noopener noreferrer">Open the standalone Candle Breakout V1 dashboard</a></p>
 <div class="grid">
