@@ -10,10 +10,10 @@ const candidateDiscovery = pullbackDiscovery.createPullbackDiscovery({
   discoverExisting: pubxDiscovery.discoverCandidates
 });
 
-const EXPERIMENT_VERSION = "CANDLE-BREAKOUT-1M-V1";
-const MAX_CANDIDATES_PER_SCAN = 5;
+const EXPERIMENT_VERSION = "CANDLE-BREAKOUT-1M-V1.1-EXPANDED";
+const MAX_CANDIDATES_PER_SCAN = 8;
 const POSITION_MONITOR_MS = 2000;
-const SCANNER_INTERVAL_MS = 45000;
+const SCANNER_INTERVAL_MS = 60000;
 
 function experimentDataFile(env = process.env) {
   if (env.RAILWAY_ENVIRONMENT_ID && !env.RAILWAY_VOLUME_MOUNT_PATH) {

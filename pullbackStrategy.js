@@ -1,8 +1,8 @@
 const MIN_CANDLES = 6;
 const BREAKOUT_LOOKBACK = 3;
-const MIN_BREAKOUT_BUFFER_PERCENT = 0.1;
-const MIN_CLOSE_LOCATION = 0.55;
-const MIN_BREAKOUT_VOLUME_MULTIPLE = 1.1;
+const MIN_BREAKOUT_BUFFER_PERCENT = 0;
+const MIN_CLOSE_LOCATION = 0.45;
+const MIN_BREAKOUT_VOLUME_MULTIPLE = 1.0;
 const MAX_CANDLE_AGE_MS = 3 * 60 * 1000;
 const MAX_ENTRY_EXTENSION_PERCENT = 2.5;
 const MIN_LIQUIDITY_USD = 20000;
@@ -77,7 +77,7 @@ function createPullbackStrategy() {
 				`CANDLE BREAKOUT V1: ${pattern.breakoutPercent.toFixed(2)}% breakout, ${pattern.breakoutVolumeMultiple.toFixed(2)}x candle volume, close in top ${(pattern.closeLocation * 100).toFixed(0)}% of range`,
 				`CANDLE BREAKOUT V1: quote ${quoteExtensionPercent.toFixed(2)}% from breakout close; 5m activity ${total} tx, ${(buyRatio * 100).toFixed(0)}% buys`
 			], experimentEntry: {
-				model: "CANDLE_BREAKOUT_1M_V1", candleSource: "GeckoTerminal public OHLCV", candleInterval: "1m",
+				model: "CANDLE_BREAKOUT_1M_V1_1_EXPANDED", candleSource: "GeckoTerminal public OHLCV", candleInterval: "1m",
 				poolAddress: coin.pairAddress || null, breakoutAt: candleTime, breakoutClose: pattern.breakoutClose,
 				priorHigh: pattern.priorHigh, breakoutPercent: pattern.breakoutPercent, closeLocation: pattern.closeLocation,
 				breakoutVolumeMultiple: pattern.breakoutVolumeMultiple, quotePriceAtEntryCheck: price,

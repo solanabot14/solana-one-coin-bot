@@ -42,7 +42,7 @@ const page = `<!doctype html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>1m Candle Breakout V1 Paper Test</title>
+<title>1m Candle Breakout V1.1 Expanded Paper Test</title>
 
 <style>
 *{box-sizing:border-box}
@@ -244,7 +244,7 @@ th,td{
 
 <div class="header">
   <div>
-    <h1>1m Candle Breakout V1</h1>
+    <h1>1m Candle Breakout V1.1 Expanded</h1>
     <div class="subtitle">
       Closed candle breakout • Locked liquidity • Paper Trading
     </div>
@@ -257,12 +257,12 @@ th,td{
 
 <div class="controls">
   <a class="panel-link" href="#v31Panel">V3.1 RECORDS</a>
-  <a class="panel-link" href="#pullbackPanel">CANDLE BREAKOUT V1</a>
+  <a class="panel-link" href="#pullbackPanel">CANDLE BREAKOUT V1.1</a>
   <a class="panel-link swarm" href="#swarmPanel">SWARM</a>
 </div>
 
 <p id="notice" role="status">
-  The isolated candle breakout paper test starts automatically. V3.1 records and strategy remain untouched.
+  The isolated candle breakout paper test starts automatically. V3.1 records and strategy remain unchanged.
 </p>
 
 <div id="v31Panel"></div>
@@ -315,8 +315,8 @@ th,td{
 </div>
 
 <div class="card section" id="pullbackPanel">
-<h2>1m Candle Breakout V1 — Paper Test</h2>
-<p class="muted">Separate $100 paper account with 3 slots. The test rotates through DexScreener and fresh Solana pools, then checks closed GeckoTerminal 1-minute candles. An entry needs a close at least 0.1% above the previous 3-candle high, at least 1.1× recent candle volume, and a close in the top 45% of the candle range. It uses a $20k liquidity floor, 8+ five-minute transactions, 52%+ buys, and $1.5k or 1.5% of liquidity in five-minute volume. Price must be within 2.5% of the breakout close. LP lock must be confirmed at 90% or more by RugCheck; unavailable lock data blocks the paper entry. Candle checks rotate 5 pools per 45-second scan.</p>
+<h2>1m Candle Breakout V1.1 — Expanded Entry Paper Test</h2>
+<p class="muted">Candle Breakout V1.1 Expanded Entry runs a separate $100 paper account with 3 slots. It checks closed GeckoTerminal 1-minute candles from rotating Solana pools. An entry needs a close above the previous 3-candle high, at least average recent candle volume, and a close in the upper 55% of the candle range. It keeps the $20k liquidity floor, 8+ five-minute transactions, 52%+ buys, and $1.5k or 1.5% of liquidity in five-minute volume. Price must be within 2.5% of the breakout close. RugCheck must confirm at least 90% LP lock; unavailable lock data blocks entry. It scans up to 8 pools every 60 seconds.</p>
 <p class="muted">Exits: 9% hard stop, sell half at +12%, trail the runner by 7% after it reaches +12%, with a +3% protection floor and a 12-minute stale-trade exit. Open positions are checked every 2 seconds. This is a paper experiment; it does not establish that the setup is profitable.</p>
 <div class="grid">
   <div class="metric"><div class="metric-label">Status</div><div class="metric-value" id="pullbackStatus">—</div></div>

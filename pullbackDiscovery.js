@@ -2,7 +2,7 @@ const axios = require("axios");
 const scanner = require("./scanner");
 const geckoTerminal = require("./geckoTerminal");
 const { analyzeToken } = require("./strategy");
-const MAX_CANDLES_PER_SCAN = 5;
+const MAX_CANDLES_PER_SCAN = 8;
 
 const DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/pairs/solana";
 const MAX_PAIR_ADDRESSES_PER_REQUEST = 30;
