@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createPullbackStrategy, detectPattern } = require("../pullbackStrategy");
+const { createPullbackStrategy } = require("../pullbackStrategy");
 const { createPaperTrader } = require("../paperTrader");
 const { buildDashboardData } = require("../dashboardData");
 const fs = require("node:fs");
@@ -9,20 +9,6 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { createLpLockChecker } = require("../lpLockChecker");
 const { createCandleBreakoutExitPolicy } = require("../candleBreakoutExitPolicy");
-
-function candlesForBreakout(now = Date.now(), breakoutVolume = 140) {
-	const lastStart = Math.floor(now / 60000) * 60 - 60;
-	const candles = Array.from({ length: 8 }, (_, index) => ({
-		timestamp: lastStart - (7 - index) * 60,
-		open: 1,
-		high: 1.003,
-		low: 0.997,
-		close: 1,
-		volume: 100
-	}));
-	Object.assign(candles[7], { open: 1.002, high: 1.014, low: 0.999, close: 1.01, volume: breakoutVolume });
-	return candles;
-}
 
 function coin(overrides = {}) {
 	return {
@@ -39,65 +25,47 @@ function coin(overrides = {}) {
 		signal: "STRONG BUY",
 		score: 10,
 		reasons: [],
-		ohlcv1m: candlesForBreakout(),
 		...overrides
 	};
 }
 
-test("recognizes a modest volume-confirmed 2-candle channel breakout in closed one-minute candles", () => {
-	const now = Date.now();
-	const pattern = detectPattern(candlesForBreakout(now), now);
-	assert.equal(pattern.phase, "BREAKOUT");
-	assert.ok(pattern.breakoutPercent >= 0.1);
-	assert.ok(pattern.breakoutVolumeMultiple >= 1.1);
-});
-
-test("paper entry accepts the looser candle setup and rejects weak activity, liquidity, or a chased quote", () => {
+test("non-candle momentum entry accepts the aggressive market thresholds", () => {
 	const now = Date.now();
 	const strategy = createPullbackStrategy();
-	const [entry] = strategy.observe([coin({ ohlcv1m: candlesForBreakout(now) })], now);
+	const [entry] = strategy.observe([coin()], now);
 	assert.equal(entry.tokenAddress, "token-A");
-	assert.equal(entry.signal, "STRONG BUY", "the common paper-trader contract needs STRONG BUY after the candle and LP gates");
-	assert.equal(entry.experimentEntry.model, "CANDLE_BREAKOUT_1M_V1_2_AGGRESSIVE");
-	assert.equal(entry.experimentEntry.candleInterval, "1m");
-	assert.equal(entry.experimentEntry.candleSource, "GeckoTerminal public OHLCV");
-	assert.ok(entry.experimentEntry.breakoutVolumeMultiple >= 1.1);
-	assert.match(entry.reasons.join(" "), /closed 1m candle/);
-	assert.deepEqual(strategy.observe([coin({ ohlcv1m: candlesForBreakout(now) })], now), [], "same closed breakout candle is not emitted twice");
+	assert.equal(entry.signal, "STRONG BUY");
+	assert.equal(entry.experimentEntry.model, "FAST_MOMENTUM_V1_3_AGGRESSIVE");
+	assert.match(entry.reasons.join(" "), /no candle wait/);
+});
 
-	const rejects = [
-		coin({ ohlcv1m: [] }),
-		coin({ ohlcv1m: candlesForBreakout(now, 74) }),
-		coin({ priceUsd: 1.05, ohlcv1m: candlesForBreakout(now) }),
-		coin({ buys5m: 4, sells5m: 5, ohlcv1m: candlesForBreakout(now) }),
-		coin({ liquidityUsd: 19000, ohlcv1m: candlesForBreakout(now) })
+test("aggressive entry allows 6 transactions, 50% buys, $1,000 volume, and slight negative 5m momentum", () => {
+	const now = Date.now();
+	const [entry] = createPullbackStrategy().observe([coin({
+		volume5m: 1000, liquidityUsd: 20000, buys5m: 3, sells5m: 3,
+		priceChange5m: -0.5, priceChange1h: -10
+	})], now);
+	assert.ok(entry, "the softened thresholds should accept the boundary candidate");
+});
+
+test("rejects weak liquidity, activity, buy pressure, volume, and overheated momentum with reason counts", () => {
+	const now = Date.now();
+	const strategy = createPullbackStrategy();
+	const rejected = [
+		coin({ tokenAddress: "low-liquidity", liquidityUsd: 19999 }),
+		coin({ tokenAddress: "low-activity", buys5m: 2, sells5m: 3 }),
+		coin({ tokenAddress: "low-buy-ratio", buys5m: 2, sells5m: 4 }),
+		coin({ tokenAddress: "low-volume", volume5m: 999 }),
+		coin({ tokenAddress: "chase", priceChange5m: 15.1 })
 	];
-	for (const candidate of rejects) {
-		assert.deepEqual(createPullbackStrategy().observe([candidate], now), []);
-	}
-});
-
-test("aggressive trigger accepts a close above the two-candle channel with 0.8x volume and a lower close location", () => {
-	const now = Date.now();
-	const bars = candlesForBreakout(now, 100);
-	Object.assign(bars[7], { open: 1.003, high: 1.0115, low: 0.999, close: 1.004, volume: 80 });
-	const pattern = detectPattern(bars, now);
-	assert.equal(pattern.phase, "BREAKOUT");
-	assert.ok(pattern.breakoutPercent > 0 && pattern.breakoutPercent < 0.1);
-	assert.equal(pattern.breakoutVolumeMultiple, 0.8);
-	const [entry] = createPullbackStrategy().observe([coin({ priceUsd: 1.004, volume5m: 1000, buys5m: 3, sells5m: 3, ohlcv1m: bars })], now);
-	assert.equal(entry.experimentEntry.model, "CANDLE_BREAKOUT_1M_V1_2_AGGRESSIVE");
-	assert.ok(entry.experimentEntry.closeLocation >= 0.35);
-	assert.ok(entry.experimentEntry.closeLocation < 0.45);
-});
-
-test("rejects stale candles, candle gaps, and insufficient candle history", () => {
-	const now = Date.now();
-	const bars = candlesForBreakout(now);
-	assert.equal(detectPattern(bars.slice(0, 5), now).reason, "NOT_ENOUGH_CLOSED_CANDLES");
-	assert.equal(detectPattern(bars, now + 5 * 60 * 1000).reason, "STALE_CANDLES");
-	const broken = structuredClone(bars); broken[4].timestamp += 90;
-	assert.equal(detectPattern(broken, now).reason, "CANDLE_GAP");
+	assert.deepEqual(strategy.observe(rejected, now), []);
+	assert.deepEqual(strategy.getStatus().rejectedByFilter, {
+		LIQUIDITY_BELOW_20000: 1,
+		FEWER_THAN_6_TRANSACTIONS: 1,
+		BUY_RATIO_BELOW_50_PERCENT: 1,
+		FIVE_MINUTE_VOLUME_TOO_LOW: 1,
+		FIVE_MINUTE_MOMENTUM_OUT_OF_RANGE: 1
+	});
 });
 
 test("requires confirmed 90% LP lock and caches RugCheck decisions", async () => {
@@ -125,7 +93,7 @@ test("the experiment paper account persists separately and reports dollar plus p
 	t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
 	const base = createPaperTrader(path.join(directory, "base.json"));
 	const experiment = createPaperTrader(path.join(directory, "experiment.json"), fs, {
-		strategyVersion: "CANDLE-BREAKOUT-1M-V1.2-AGGRESSIVE"
+		strategyVersion: "FAST-MOMENTUM-DEX-V1.3-AGGRESSIVE"
 	});
 
 	const baseBuy = base.buy(coin());
@@ -134,7 +102,7 @@ test("the experiment paper account persists separately and reports dollar plus p
 	assert.equal(experimentBuy.trade.amountInvested, 10);
 	assert.equal(base.getPortfolio().cashBalance, 90);
 	assert.equal(experiment.getPortfolio().cashBalance, 90);
-	assert.equal(experiment.getPortfolio().positions[0].strategyVersion, "CANDLE-BREAKOUT-1M-V1.2-AGGRESSIVE");
+	assert.equal(experiment.getPortfolio().positions[0].strategyVersion, "FAST-MOMENTUM-DEX-V1.3-AGGRESSIVE");
 
 	experiment.sell(1.1, 100, { expectedPosition: experiment.positionKey(experiment.getPortfolio().positions[0]), reason: "TEST" });
 	assert.equal(base.getPortfolio().history.filter(trade => trade.type === "SELL").length, 0);
@@ -159,11 +127,11 @@ test("dashboard renders separate dollar and percent P/L for baseline and experim
 		equity: 100 + totalPnl, totalPnl, totalPnlPercent, positions: [], livePositions: [],
 		openSlots: 0, completedTrades: [], scoreStats: [], exitReasonCounts: {}, stats });
 	context.renderData({ v31: account(4.25, 4.25), pullback: account(-1.5, -1.5),
-		pullbackStatus: { running: true, lockConfirmed: 1, candleCandidates: 2, minimumLockedPercent: 90, candleSource: "GeckoTerminal public OHLCV", candleInterval: "1m" } });
+		pullbackStatus: { running: true, lockConfirmed: 1, signalCandidates: 2, minimumLockedPercent: 90, discoverySource: "DexScreener profiles/boosts", rejectedByFilter: {} } });
 	assert.equal(nodes.get("pnl").textContent, "$4.25");
 	assert.equal(nodes.get("pnlPct").textContent, "4.25%");
 	assert.equal(nodes.get("pullbackPnl").textContent, "$-1.50");
 	assert.equal(nodes.get("pullbackPnlPct").textContent, "-1.50%");
 	assert.equal(nodes.get("pullbackWatching").textContent, "1 / 2");
-	assert.equal(nodes.get("pullbackCandleFeed").textContent, "GeckoTerminal public OHLCV · 1m · LP lock ≥90%");
+	assert.equal(nodes.get("pullbackEntryFeed").textContent, "DexScreener profiles/boosts · LP lock ≥90%");
 });
