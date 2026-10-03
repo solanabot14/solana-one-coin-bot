@@ -29,43 +29,54 @@ function coin(overrides = {}) {
 	};
 }
 
-test("non-candle momentum entry accepts the aggressive market thresholds", () => {
-	const now = Date.now();
-	const strategy = createPullbackStrategy();
-	const [entry] = strategy.observe([coin()], now);
-	assert.equal(entry.tokenAddress, "token-A");
-	assert.equal(entry.signal, "STRONG BUY");
-	assert.equal(entry.experimentEntry.model, "FAST_MOMENTUM_V1_3_AGGRESSIVE");
-	assert.match(entry.reasons.join(" "), /no candle wait/);
+test("step-3 momentum waits for three checks and enters after two small rising steps", () => {
+  const strategy = createPullbackStrategy();
+  const t = Date.now();
+  const first = strategy.observe([coin({ priceUsd: 1.000 })], t);
+  const second = strategy.observe([coin({ priceUsd: 1.010 })], t + 30000);
+  assert.equal(first.length, 0);
+  assert.equal(second.length, 0);
+  const [entry] = strategy.observe([coin({ priceUsd: 1.020 })], t + 60000);
+  assert.equal(entry.tokenAddress, "token-A");
+  assert.equal(entry.signal, "STRONG BUY");
+  assert.equal(entry.experimentEntry.model, "FAST_MOMENTUM_STEP3_V1_5");
+  assert.deepEqual(entry.experimentEntry.stepChangesPct.map(n => Math.round(n)), [1, 1]);
 });
 
-test("aggressive entry allows 6 transactions, 50% buys, $1,000 volume, and slight negative 5m momentum", () => {
-	const now = Date.now();
-	const [entry] = createPullbackStrategy().observe([coin({
-		volume5m: 1000, liquidityUsd: 20000, buys5m: 3, sells5m: 3,
-		priceChange5m: -0.5, priceChange1h: -10
-	})], now);
-	assert.ok(entry, "the softened thresholds should accept the boundary candidate");
+test("step-3 accepts the softened 4-transaction threshold while keeping activity checks", () => {
+  const strategy = createPullbackStrategy();
+  const t = Date.now();
+  const base = { volume5m: 1000, liquidityUsd: 20000, buys5m: 3, sells5m: 1,
+    priceChange5m: -0.5, priceChange1h: -10 };
+  strategy.observe([coin({ ...base, priceUsd: 1.000 })], t);
+  strategy.observe([coin({ ...base, priceUsd: 1.010 })], t + 30000);
+  const [entry] = strategy.observe([coin({ ...base, priceUsd: 1.020 })], t + 60000);
+  assert.ok(entry, "locked-liquidity candidate with two small positive steps should qualify");
 });
 
-test("rejects weak liquidity, activity, buy pressure, volume, and overheated momentum with reason counts", () => {
-	const now = Date.now();
-	const strategy = createPullbackStrategy();
-	const rejected = [
-		coin({ tokenAddress: "low-liquidity", liquidityUsd: 19999 }),
-		coin({ tokenAddress: "low-activity", buys5m: 2, sells5m: 3 }),
-		coin({ tokenAddress: "low-buy-ratio", buys5m: 2, sells5m: 4 }),
-		coin({ tokenAddress: "low-volume", volume5m: 999 }),
-		coin({ tokenAddress: "chase", priceChange5m: 15.1 })
-	];
-	assert.deepEqual(strategy.observe(rejected, now), []);
-	assert.deepEqual(strategy.getStatus().rejectedByFilter, {
-		LIQUIDITY_BELOW_20000: 1,
-		FEWER_THAN_6_TRANSACTIONS: 1,
-		BUY_RATIO_BELOW_50_PERCENT: 1,
-		FIVE_MINUTE_VOLUME_TOO_LOW: 1,
-		FIVE_MINUTE_MOMENTUM_OUT_OF_RANGE: 1
-	});
+test("rejects weak liquidity/activity/buy pressure/volume and overheated or sharp single-step pumps", () => {
+  const now = Date.now();
+  const strategy = createPullbackStrategy();
+  const rejected = [
+    coin({ tokenAddress: "low-liquidity", liquidityUsd: 19999 }),
+    coin({ tokenAddress: "low-activity", buys5m: 1, sells5m: 2 }),
+    coin({ tokenAddress: "low-buy-ratio", buys5m: 2, sells5m: 4 }),
+    coin({ tokenAddress: "low-volume", volume5m: 999 }),
+    coin({ tokenAddress: "chase", priceChange5m: 18.1 })
+  ];
+  assert.deepEqual(strategy.observe(rejected, now), []);
+  assert.deepEqual(strategy.getStatus().rejectedByFilter, {
+    LIQUIDITY_BELOW_20000: 1,
+    FEWER_THAN_4_TRANSACTIONS: 1,
+    BUY_RATIO_BELOW_55_PERCENT: 1,
+    FIVE_MINUTE_VOLUME_TOO_LOW: 1,
+    FIVE_MINUTE_MOMENTUM_OUT_OF_RANGE: 1
+  });
+  const jumped = coin({ tokenAddress: "single-spike", priceUsd: 1.08 });
+  strategy.observe([coin({ ...jumped, priceUsd: 1.00 })], now + 1000);
+  const [none] = strategy.observe([jumped], now + 31000);
+  assert.equal(none, undefined);
+  assert.equal(strategy.getStatus().rejectedByFilter.SINGLE_STEP_MOVE_TOO_SHARP, 1);
 });
 
 test("requires confirmed 90% LP lock and caches RugCheck decisions", async () => {
