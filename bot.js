@@ -34,7 +34,8 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
   discoverCandidates = scanner.discoverCandidates, timers = globalThis,
   notifier = telegram, positionMonitorMs = POSITION_MONITOR_MS,
   scannerIntervalMs = SCANNER_INTERVAL_MS,
-  botLabel = "V3.1-3Slot + 10% Compound" } = {}) {
+  botLabel = "V3.1-3Slot + 10% Compound",
+  exitPolicy = null } = {}) {
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
   let activeSession = null;
   let scannerInterval = null;
@@ -238,7 +239,15 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
       const momentum5m=Number(freshData.priceChange5m)||0, buys5m=Number(freshData.buys5m)||0, sells5m=Number(freshData.sells5m)||0;
       const totalTransactions=buys5m+sells5m, buyRatio=totalTransactions?buys5m/totalTransactions:0;
       console.log(`V3.1 SLOT MONITOR | ${position.symbol} | P/L: ${profitPercent.toFixed(2)}%`);
-      const exit=(reason,percent=100)=>{ const result=sell(currentPrice,percent,{expectedPosition,reason}); if(result.success){startCooldown(tokenAddress,position.symbol,reason);void notifier.notifyTrade(reason,result.trade);} return result; };
+      const exit=(reason,percent=100,extra={})=>{ const result=sell(currentPrice,percent,{expectedPosition,reason,...extra}); if(result.success){if(percent===100)startCooldown(tokenAddress,position.symbol,reason);void notifier.notifyTrade(reason,result.trade);} return result; };
+      if (typeof exitPolicy === "function") {
+        const decision = exitPolicy({ position, currentPrice, profitPercent, dropFromHigh,
+          highestProfitPercent, freshData, now: Date.now() });
+        if (decision && Number.isFinite(Number(decision.percent)) && decision.reason) {
+          exit(decision.reason, Number(decision.percent), decision.takeProfit ? { takeProfit: decision.takeProfit } : {});
+        }
+        continue;
+      }
       if(profitPercent<=HARD_STOP_PERCENT){exit("HARD STOP");continue;}
       const enoughActivity=totalTransactions>=MOMENTUM_EXIT_MIN_TRANSACTIONS, sellPressure=enoughActivity&&buyRatio<MOMENTUM_EXIT_BUY_RATIO;
       if((profitPercent<=MOMENTUM_EXIT_MIN_LOSS&&momentum5m<=MOMENTUM_EXIT_5M&&sellPressure)||(profitPercent<=MOMENTUM_EXIT_STRONG_LOSS&&momentum5m<=MOMENTUM_EXIT_STRONG_5M)){exit("MOMENTUM EXIT");continue;}
