@@ -7,10 +7,10 @@ const { getLockStatus } = require("./lpLockChecker");
 const pubxDiscovery = require("./pubxDiscovery");
 const candidateDiscovery = pubxDiscovery.discoverCandidates;
 
-const EXPERIMENT_VERSION = "FAST-MOMENTUM-DEX-V1.3-AGGRESSIVE";
+const EXPERIMENT_VERSION = "FAST-MOMENTUM-STEP3-V1.5";
 const MAX_CANDIDATES_PER_SCAN = 25;
 const POSITION_MONITOR_MS = 2000;
-const SCANNER_INTERVAL_MS = 60000;
+const SCANNER_INTERVAL_MS = 30000;
 
 function experimentDataFile(env = process.env) {
   if (env.RAILWAY_ENVIRONMENT_ID && !env.RAILWAY_VOLUME_MOUNT_PATH) {
