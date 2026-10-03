@@ -24,7 +24,7 @@ test("uses keyless GeckoTerminal public OHLCV, spaces calls, and clones cached r
 		requestSpacingMs: 0,
 		httpGet: async (url, options) => {
 			calls += 1;
-			assert.match(url, /api\.geckoterminal\.com\/api\/v2\/networks\/solana\/pools\/pool-A\/ohlcv\/minute/);
+			assert.match(url, /api\\.geckoterminal\\.com\\/api\\/v2\\/networks\\/solana\\/pools\\/pool-A\\/ohlcv\\/minute/);
 			assert.deepEqual(options.params, { aggregate: 1, limit: 60, currency: "usd", token: "base" });
 			assert.equal(options.params.api_key, undefined);
 			return { data: { data: { attributes: { ohlcv_list: rows } } } };
@@ -46,7 +46,7 @@ test("fetches and caches the public Solana new-pools feed through the shared rat
 		requestSpacingMs: 0,
 		httpGet: async (url, options) => {
 			calls += 1;
-			assert.match(url, /api\.geckoterminal\.com\/api\/v2\/networks\/solana\/new_pools$/);
+			assert.match(url, /api\\.geckoterminal\\.com\\/api\\/v2\\/networks\\/solana\\/new_pools$/);
 			assert.deepEqual(options.params, { include: "base_token,quote_token" });
 			assert.equal(options.params.api_key, undefined);
 			return { data: { data: [pool] } };
@@ -72,6 +72,32 @@ test("caches a public feed error briefly to prevent request retries", async () =
 	assert.equal(calls, 1);
 });
 
+test("a 429 pauses the shared request queue and honors Retry-After", async () => {
+	let nowMs = 1_800_000_000_000;
+	const sleepDurations = [];
+	let calls = 0;
+	const client = createGeckoTerminalClient({
+		clock: () => nowMs,
+		sleep: async ms => { sleepDurations.push(ms); nowMs += ms; },
+		requestSpacingMs: 0,
+		rateLimitBackoffMs: 1000,
+		maxRateLimitBackoffMs: 5000,
+		httpGet: async () => {
+			calls += 1;
+			if (calls === 1) {
+				const error = new Error("Too Many Requests");
+				error.response = { status: 429, headers: { "retry-after": "2" } };
+				throw error;
+			}
+			return { data: { data: { attributes: { ohlcv_list: [] } } } };
+		}
+	});
+	await assert.rejects(client.getPoolCandles("pool-C1", "token-C1"), /Too Many Requests/);
+	await client.getPoolCandles("pool-C2", "token-C2");
+	assert.equal(calls, 2);
+	assert.ok(sleepDurations.some(ms => ms >= 2000), "next request waits for Retry-After");
+});
+
 test("spaces uncached pool requests below the public endpoint's approximate rate ceiling", async () => {
 	let nowMs = 1_800_000_000_000;
 	const requestTimes = [];
@@ -85,9 +111,9 @@ test("spaces uncached pool requests below the public endpoint's approximate rate
 			return { data: { data: { attributes: { ohlcv_list: [] } } } };
 		}
 	});
-	await client.getPoolCandles("pool-C1", "token-C1");
-	await client.getPoolCandles("pool-C2", "token-C2");
-	await client.getPoolCandles("pool-C3", "token-C3");
+	await client.getPoolCandles("pool-D1", "token-D1");
+	await client.getPoolCandles("pool-D2", "token-D2");
+	await client.getPoolCandles("pool-D3", "token-D3");
 	assert.ok(requestTimes[1] - requestTimes[0] >= 7500);
 	assert.ok(requestTimes[2] - requestTimes[1] >= 7500);
 });
