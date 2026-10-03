@@ -10,7 +10,7 @@ const candidateDiscovery = pullbackDiscovery.createPullbackDiscovery({
   discoverExisting: pubxDiscovery.discoverCandidates
 });
 
-const EXPERIMENT_VERSION = "CANDLE-BREAKOUT-1M-V1.1-EXPANDED";
+const EXPERIMENT_VERSION = "CANDLE-BREAKOUT-1M-V1.2-AGGRESSIVE";
 const MAX_CANDIDATES_PER_SCAN = 8;
 const POSITION_MONITOR_MS = 2000;
 const SCANNER_INTERVAL_MS = 60000;
