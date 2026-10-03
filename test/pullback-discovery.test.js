@@ -47,10 +47,11 @@ test("parses GeckoTerminal's Solana new-pool records safely", () => {
 
 test("adds recent DexScreener pairs with fresh 24h volume only to the Pullback candidate list", async () => {
 	let pairRequest;
-	const base = { tokenAddress: "base-token", pairAddress: "base-pool", signal: "WAIT" };
+	const base = { tokenAddress: "base-token", pairAddress: "base-pool", liquidityUsd: 25000, volume5m: 8000, signal: "WAIT" };
 	const discovery = createPullbackDiscovery({
 		discoverExisting: async () => [base],
 		getNewPools: async () => [pool()],
+		getPoolCandles: async () => [{ timestamp: 1 }],
 		httpGet: async (url, options) => {
 			pairRequest = { url, options };
 			return { data: { pairs: [dexPair()] } };
@@ -67,13 +68,13 @@ test("adds recent DexScreener pairs with fresh 24h volume only to the Pullback c
 	assert.equal(recent.liquidityUsd, 35000);
 	assert.equal(recent.pairAddress, "pool-A");
 	assert.equal(recent.newPoolCreatedAt, new Date(NOW - 5 * 60_000).toISOString());
-	assert.equal(candidates.find(candidate => candidate.tokenAddress === "base-token"), base);
+	assert.ok(candidates.find(candidate => candidate.tokenAddress === "base-token").ohlcv1m);
 });
 
-test("retains the existing $30k liquidity floor and requires the exact DexScreener pool/base token", () => {
+test("uses a $20k liquidity floor and requires the exact DexScreener pool/base token", () => {
 	const descriptor = describeNewPool(pool());
-	assert.equal(MIN_NEW_POOL_LIQUIDITY_USD, 30000);
-	assert.equal(mapPair(dexPair({ liquidity: { usd: 29999 } }), descriptor), null);
+	assert.equal(MIN_NEW_POOL_LIQUIDITY_USD, 20000);
+	assert.equal(mapPair(dexPair({ liquidity: { usd: 19999 } }), descriptor), null);
 	assert.equal(mapPair(dexPair({ pairAddress: "different-pool" }), descriptor), null);
 	assert.equal(mapPair(dexPair({ baseToken: { address: "different-token" } }), descriptor), null);
 });
@@ -83,6 +84,7 @@ test("remembers a new pool across scans so it can build candle history", async (
 	const discovery = createPullbackDiscovery({
 		discoverExisting: async () => [],
 		getNewPools: async () => (++rounds === 1 ? [pool()] : []),
+		getPoolCandles: async () => [{ timestamp: 1 }],
 		httpGet: async () => ({ data: { pairs: [dexPair()] } }),
 		clock: () => NOW
 	});
@@ -95,18 +97,20 @@ test("ignores stale pools and falls back to baseline discovery on source errors"
 	let pairCalls = 0;
 	const stalePool = pool({ pool_created_at: new Date(NOW - 61 * 60_000).toISOString() });
 	const discovery = createPullbackDiscovery({
-		discoverExisting: async () => [{ tokenAddress: "base-only" }],
+		discoverExisting: async () => [{ tokenAddress: "base-only", pairAddress: "base-pool", liquidityUsd: 25000 }],
 		getNewPools: async () => [stalePool],
+		getPoolCandles: async () => [{ timestamp: 1 }],
 		httpGet: async () => { pairCalls += 1; return { data: { pairs: [] } }; },
 		clock: () => NOW
 	});
-	assert.deepEqual(await discovery.discoverCandidates(), [{ tokenAddress: "base-only" }]);
+	assert.equal((await discovery.discoverCandidates())[0].tokenAddress, "base-only");
 	assert.equal(pairCalls, 0);
 
 	const fallback = createPullbackDiscovery({
-		discoverExisting: async () => [{ tokenAddress: "base-only" }],
+		discoverExisting: async () => [{ tokenAddress: "base-only", pairAddress: "base-pool", liquidityUsd: 25000 }],
 		getNewPools: async () => { throw new Error("offline"); },
+		getPoolCandles: async () => [{ timestamp: 1 }],
 		clock: () => NOW
 	});
-	assert.deepEqual(await fallback.discoverCandidates(), [{ tokenAddress: "base-only" }]);
+	assert.equal((await fallback.discoverCandidates())[0].tokenAddress, "base-only");
 });

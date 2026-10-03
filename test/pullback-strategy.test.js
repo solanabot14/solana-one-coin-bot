@@ -7,26 +7,20 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
+const { createLpLockChecker } = require("../lpLockChecker");
+const { createCandleBreakoutExitPolicy } = require("../candleBreakoutExitPolicy");
 
-function candlesForReclaim(now = Date.now(), breakoutVolume = 240) {
+function candlesForBreakout(now = Date.now(), breakoutVolume = 140) {
 	const lastStart = Math.floor(now / 60000) * 60 - 60;
-	const candles = Array.from({ length: 14 }, (_, index) => ({
-		timestamp: lastStart - (13 - index) * 60,
+	const candles = Array.from({ length: 8 }, (_, index) => ({
+		timestamp: lastStart - (7 - index) * 60,
 		open: 1,
-		high: 1.005,
-		low: 0.995,
+		high: 1.003,
+		low: 0.997,
 		close: 1,
 		volume: 100
 	}));
-	Object.assign(candles[5], { open: 1.01, high: 1.05, low: 1.01, close: 1.04, volume: 140 });
-	Object.assign(candles[6], { open: 1.04, high: 1.045, low: 1.03, close: 1.04, volume: 130 });
-	Object.assign(candles[7], { open: 1.04, high: 1.04, low: 1.02, close: 1.035, volume: 100 });
-	Object.assign(candles[8], { open: 1.035, high: 1.035, low: 1.015, close: 1.02, volume: 80 });
-	Object.assign(candles[9], { open: 1.02, high: 1.023, low: 1.018, close: 1.02, volume: 90 });
-	Object.assign(candles[10], { open: 1.02, high: 1.026, low: 1.019, close: 1.024, volume: 110 });
-	Object.assign(candles[11], { open: 1.024, high: 1.028, low: 1.022, close: 1.026, volume: 100 });
-	Object.assign(candles[12], { open: 1.026, high: 1.03, low: 1.024, close: 1.028, volume: 100 });
-	Object.assign(candles[13], { open: 1.028, high: 1.04, low: 1.027, close: 1.034, volume: breakoutVolume });
+	Object.assign(candles[7], { open: 1.002, high: 1.014, low: 0.999, close: 1.01, volume: breakoutVolume });
 	return candles;
 }
 
@@ -35,70 +29,81 @@ function coin(overrides = {}) {
 		tokenAddress: "token-A",
 		pairAddress: "pool-A",
 		symbol: "TEST",
-		priceUsd: 1.035,
+		priceUsd: 1.012,
 		priceChange5m: 1,
 		priceChange1h: 5,
-		volume5m: 12000,
-		liquidityUsd: 100000,
-		buys5m: 40,
-		sells5m: 20,
+		volume5m: 1800,
+		liquidityUsd: 25000,
+		buys5m: 7,
+		sells5m: 5,
 		signal: "STRONG BUY",
 		score: 10,
 		reasons: [],
-		ohlcv1m: candlesForReclaim(),
+		ohlcv1m: candlesForBreakout(),
 		...overrides
 	};
 }
 
-test("recognizes pump, pullback, and volume-backed reclaim in closed one-minute candles", () => {
+test("recognizes a modest volume-confirmed 3-candle channel breakout in closed one-minute candles", () => {
 	const now = Date.now();
-	const pattern = detectPattern(candlesForReclaim(now), now);
-	assert.equal(pattern.phase, "RECLAIMED");
-	assert.ok(pattern.firstPumpPercent >= 1.5 && pattern.firstPumpPercent <= 8);
-	assert.ok(pattern.pullbackPercent >= 2 && pattern.pullbackPercent <= 12);
-	assert.ok(pattern.breakoutVolumeMultiple >= 1.5);
+	const pattern = detectPattern(candlesForBreakout(now), now);
+	assert.equal(pattern.phase, "BREAKOUT");
+	assert.ok(pattern.breakoutPercent >= 0.1);
+	assert.ok(pattern.breakoutVolumeMultiple >= 1.1);
 });
 
-test("paper entry requires candle confirmation, activity filters, and a quote near breakout", () => {
+test("paper entry accepts the looser candle setup and rejects weak activity, liquidity, or a chased quote", () => {
 	const now = Date.now();
 	const strategy = createPullbackStrategy();
-	const [entry] = strategy.observe([coin({ ohlcv1m: candlesForReclaim(now) })], now);
+	const [entry] = strategy.observe([coin({ ohlcv1m: candlesForBreakout(now) })], now);
 	assert.equal(entry.tokenAddress, "token-A");
-	assert.equal(entry.experimentEntry.model, "PULLBACK_RECLAIM_OHLCV_V2");
+	assert.equal(entry.signal, "STRONG BUY", "the common paper-trader contract needs STRONG BUY after the candle and LP gates");
+	assert.equal(entry.experimentEntry.model, "CANDLE_BREAKOUT_1M_V1");
 	assert.equal(entry.experimentEntry.candleInterval, "1m");
 	assert.equal(entry.experimentEntry.candleSource, "GeckoTerminal public OHLCV");
-	assert.ok(entry.experimentEntry.breakoutVolumeMultiple >= 1.5);
-	assert.match(entry.reasons.join(" "), /closed GeckoTerminal 1m candles/);
-	assert.equal(strategy.getStatus().watching, 0);
-	assert.deepEqual(strategy.observe([coin({ ohlcv1m: candlesForReclaim(now) })], now), [], "same closed breakout candle is not emitted twice");
+	assert.ok(entry.experimentEntry.breakoutVolumeMultiple >= 1.1);
+	assert.match(entry.reasons.join(" "), /closed 1m candle/);
+	assert.deepEqual(strategy.observe([coin({ ohlcv1m: candlesForBreakout(now) })], now), [], "same closed breakout candle is not emitted twice");
 
 	const rejects = [
 		coin({ ohlcv1m: [] }),
-		coin({ ohlcv1m: candlesForReclaim(now, 100) }),
-		coin({ priceUsd: 1.07, ohlcv1m: candlesForReclaim(now) }),
-		coin({ buys5m: 20, sells5m: 15, ohlcv1m: candlesForReclaim(now) }),
-		coin({ volume5m: 9000, ohlcv1m: candlesForReclaim(now) })
+		coin({ ohlcv1m: candlesForBreakout(now, 100) }),
+		coin({ priceUsd: 1.05, ohlcv1m: candlesForBreakout(now) }),
+		coin({ buys5m: 4, sells5m: 5, ohlcv1m: candlesForBreakout(now) }),
+		coin({ liquidityUsd: 19000, ohlcv1m: candlesForBreakout(now) })
 	];
 	for (const candidate of rejects) {
 		assert.deepEqual(createPullbackStrategy().observe([candidate], now), []);
 	}
 });
 
-test("only counts a pullback after candle evidence and drops stale candle patterns", () => {
+test("rejects stale candles, candle gaps, and insufficient candle history", () => {
 	const now = Date.now();
-	const strategy = createPullbackStrategy();
-	const bars = candlesForReclaim(now);
-	const partial = bars.slice(0, 12);
-	const partialNow = Number(partial.at(-1).timestamp) * 1000 + 60 * 1000;
-	assert.deepEqual(strategy.observe([coin({ ohlcv1m: partial })], partialNow), []);
-	assert.equal(strategy.getStatus().watching, 1);
-	assert.equal(strategy.getStatus().candleInterval, "1m");
-	const fullNow = Number(bars.at(-1).timestamp) * 1000 + 60 * 1000;
-	assert.deepEqual(strategy.observe([coin({ priceUsd: 1.1, ohlcv1m: bars })], fullNow), []);
-	assert.equal(strategy.getStatus().pullback, 1);
-	const staleNow = fullNow + 10 * 60 * 1000;
-	assert.deepEqual(strategy.observe([coin({ ohlcv1m: bars })], staleNow), []);
-	assert.equal(strategy.getStatus().watching, 0);
+	const bars = candlesForBreakout(now);
+	assert.equal(detectPattern(bars.slice(0, 5), now).reason, "NOT_ENOUGH_CLOSED_CANDLES");
+	assert.equal(detectPattern(bars, now + 5 * 60 * 1000).reason, "STALE_CANDLES");
+	const broken = structuredClone(bars); broken[4].timestamp += 90;
+	assert.equal(detectPattern(broken, now).reason, "CANDLE_GAP");
+});
+
+test("requires confirmed 90% LP lock and caches RugCheck decisions", async () => {
+	let calls = 0;
+	const checker = createLpLockChecker({ httpGet: async () => { calls += 1; return { data: { lpLockedPct: 92 } }; } });
+	const first = await checker.getLockStatus("token-A");
+	const second = await checker.getLockStatus("token-A");
+	assert.deepEqual(first, { allowed: true, lockedPercent: 92, reason: "LOCKED_LIQUIDITY_CONFIRMED" });
+	assert.deepEqual(second, first);
+	assert.equal(calls, 1);
+	const unknown = createLpLockChecker({ httpGet: async () => { throw new Error("unavailable"); } });
+	assert.deepEqual(await unknown.getLockStatus("token-B"), { allowed: false, lockedPercent: null, reason: "LOCK_STATUS_UNAVAILABLE" });
+});
+
+test("candle breakout exits stop losses, trim at target, and protect the runner", () => {
+	const exit = createCandleBreakoutExitPolicy();
+	const position = { entryTime: new Date(Date.now() - 3 * 60 * 1000).toISOString() };
+	assert.equal(exit({ position, profitPercent: -9, dropFromHigh: 0, highestProfitPercent: 0 }).reason, "CANDLE BREAKOUT HARD STOP");
+	assert.equal(exit({ position: { ...position, firstTakeProfitDone: false }, profitPercent: 12, dropFromHigh: 0, highestProfitPercent: 12 }).percent, 50);
+	assert.equal(exit({ position: { ...position, firstTakeProfitDone: true }, profitPercent: 5, dropFromHigh: 7, highestProfitPercent: 15 }).reason, "CANDLE BREAKOUT RUNNER TRAIL");
 });
 
 test("the experiment paper account persists separately and reports dollar plus percent returns", async t => {
@@ -106,7 +111,7 @@ test("the experiment paper account persists separately and reports dollar plus p
 	t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
 	const base = createPaperTrader(path.join(directory, "base.json"));
 	const experiment = createPaperTrader(path.join(directory, "experiment.json"), fs, {
-		strategyVersion: "PULLBACK-RECLAIM-OHLCV-V2"
+		strategyVersion: "CANDLE-BREAKOUT-1M-V1"
 	});
 
 	const baseBuy = base.buy(coin());
@@ -115,12 +120,12 @@ test("the experiment paper account persists separately and reports dollar plus p
 	assert.equal(experimentBuy.trade.amountInvested, 10);
 	assert.equal(base.getPortfolio().cashBalance, 90);
 	assert.equal(experiment.getPortfolio().cashBalance, 90);
-	assert.equal(experiment.getPortfolio().positions[0].strategyVersion, "PULLBACK-RECLAIM-OHLCV-V2");
+	assert.equal(experiment.getPortfolio().positions[0].strategyVersion, "CANDLE-BREAKOUT-1M-V1");
 
 	experiment.sell(1.1, 100, { expectedPosition: experiment.positionKey(experiment.getPortfolio().positions[0]), reason: "TEST" });
 	assert.equal(base.getPortfolio().history.filter(trade => trade.type === "SELL").length, 0);
 	const summary = await buildDashboardData(experiment.getPortfolio(), async () => null);
-	const expectedPnl = (1.1 - 1.035) / 1.035 * 10;
+	const expectedPnl = (1.1 - 1.012) / 1.012 * 10;
 	assert.ok(Math.abs(summary.totalPnl - expectedPnl) < 1e-10);
 	assert.ok(Math.abs(summary.totalPnlPercent - expectedPnl) < 1e-10);
 });
@@ -140,10 +145,11 @@ test("dashboard renders separate dollar and percent P/L for baseline and experim
 		equity: 100 + totalPnl, totalPnl, totalPnlPercent, positions: [], livePositions: [],
 		openSlots: 0, completedTrades: [], scoreStats: [], exitReasonCounts: {}, stats });
 	context.renderData({ v31: account(4.25, 4.25), pullback: account(-1.5, -1.5),
-		pullbackStatus: { running: true, firstPump: 2, pullback: 1, candleSource: "GeckoTerminal public OHLCV", candleInterval: "1m" } });
+		pullbackStatus: { running: true, lockConfirmed: 1, candleCandidates: 2, minimumLockedPercent: 90, candleSource: "GeckoTerminal public OHLCV", candleInterval: "1m" } });
 	assert.equal(nodes.get("pnl").textContent, "$4.25");
 	assert.equal(nodes.get("pnlPct").textContent, "4.25%");
 	assert.equal(nodes.get("pullbackPnl").textContent, "$-1.50");
 	assert.equal(nodes.get("pullbackPnlPct").textContent, "-1.50%");
-	assert.equal(nodes.get("pullbackCandleFeed").textContent, "GeckoTerminal public OHLCV · 1m refresh");
+	assert.equal(nodes.get("pullbackWatching").textContent, "1 / 2");
+	assert.equal(nodes.get("pullbackCandleFeed").textContent, "GeckoTerminal public OHLCV · 1m · LP lock ≥90%");
 });

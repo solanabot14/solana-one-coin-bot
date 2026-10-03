@@ -2,12 +2,13 @@ const axios = require("axios");
 const scanner = require("./scanner");
 const geckoTerminal = require("./geckoTerminal");
 const { analyzeToken } = require("./strategy");
+const MAX_CANDLES_PER_SCAN = 2;
 
 const DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/pairs/solana";
 const MAX_PAIR_ADDRESSES_PER_REQUEST = 30;
 const MAX_TRACKED_NEW_POOLS = 60;
 const MAX_NEW_POOL_AGE_MS = 60 * 60 * 1000;
-const MIN_NEW_POOL_LIQUIDITY_USD = 30000;
+const MIN_NEW_POOL_LIQUIDITY_USD = 20000;
 const PAIR_REQUEST_TIMEOUT_MS = 10000;
 
 function addressFromResourceId(id) {
@@ -66,9 +67,12 @@ function createPullbackDiscovery({
 	httpGet = axios.get,
 	clock = Date.now,
 	maxPoolAgeMs = MAX_NEW_POOL_AGE_MS,
-	maxTrackedPools = MAX_TRACKED_NEW_POOLS
+	maxTrackedPools = MAX_TRACKED_NEW_POOLS,
+	getPoolCandles = geckoTerminal.getPoolCandles,
+	maxCandlesPerScan = MAX_CANDLES_PER_SCAN
 } = {}) {
 	const trackedPools = new Map();
+	let candleCursor = 0;
 
 	async function fetchDexPairs(poolAddresses, signal) {
 		const pairs = [];
@@ -91,8 +95,6 @@ function createPullbackDiscovery({
 			console.warn(`PULLBACK BASE DISCOVERY UNAVAILABLE | ${error.message}`);
 		}
 		if (!Array.isArray(existing)) existing = [];
-		if (signal?.aborted) return existing;
-
 		try {
 			const freshPools = await getNewPools({ signal });
 			const now = clock();
@@ -112,24 +114,40 @@ function createPullbackDiscovery({
 			}
 
 			const descriptors = [...trackedPools.values()];
-			if (!descriptors.length) return existing;
-			const dexPairs = await fetchDexPairs(descriptors.map(pool => pool.poolAddress), signal);
-			const descriptorByPool = new Map(descriptors.map(pool => [pool.poolAddress, pool]));
-			const recentCandidates = dexPairs.map(pair => mapPair(pair, descriptorByPool.get(pair?.pairAddress)))
-				.filter(Boolean);
-			const merged = new Map(existing.filter(coin => coin?.tokenAddress).map(coin => [coin.tokenAddress, coin]));
-			for (const coin of recentCandidates) {
-				const current = merged.get(coin.tokenAddress);
-				if (!current || Number(coin.pairCreatedAt) > Number(current.pairCreatedAt || 0)) {
-					merged.set(coin.tokenAddress, coin);
+			if (!descriptors.length) throw Object.assign(new Error("No recent pools."), { quiet: true });
+			if (descriptors.length) {
+				const dexPairs = await fetchDexPairs(descriptors.map(pool => pool.poolAddress), signal);
+				const descriptorByPool = new Map(descriptors.map(pool => [pool.poolAddress, pool]));
+				const recentCandidates = dexPairs.map(pair => mapPair(pair, descriptorByPool.get(pair?.pairAddress))).filter(Boolean);
+				for (const coin of recentCandidates) {
+					const current = existing.find(item => item.tokenAddress === coin.tokenAddress);
+					if (!current || Number(coin.pairCreatedAt) > Number(current.pairCreatedAt || 0)) {
+						existing = existing.filter(item => item.tokenAddress !== coin.tokenAddress).concat(coin);
+					}
 				}
+				console.log(`PULLBACK NEW DEX POOLS | tracked: ${descriptors.length} | eligible by liquidity: ${recentCandidates.length}`);
 			}
-			console.log(`PULLBACK NEW DEX POOLS | tracked: ${descriptors.length} | eligible by liquidity: ${recentCandidates.length}`);
-			return [...merged.values()];
 		} catch (error) {
-			if (!signal?.aborted) console.warn(`PULLBACK NEW DEX POOLS UNAVAILABLE | ${error.message}`);
-			return existing;
+			if (!error.quiet && !signal?.aborted) console.warn(`PULLBACK NEW DEX POOLS UNAVAILABLE | ${error.message}`);
 		}
+		if (signal?.aborted) return [];
+		const candidates = existing.filter(coin => coin?.tokenAddress && coin?.pairAddress && Number(coin.liquidityUsd) >= MIN_NEW_POOL_LIQUIDITY_USD)
+			.sort((a, b) => (Number(b.volume5m) || 0) - (Number(a.volume5m) || 0));
+		if (!candidates.length) return [];
+		const count = Math.min(Math.max(1, maxCandlesPerScan), candidates.length);
+		const selected = Array.from({ length: count }, (_, offset) => candidates[(candleCursor + offset) % candidates.length]);
+		candleCursor = (candleCursor + count) % candidates.length;
+		const withCandles = [];
+		for (const coin of selected) {
+			try {
+				const ohlcv1m = await getPoolCandles(coin.pairAddress, coin.tokenAddress, { signal });
+				withCandles.push({ ...coin, ohlcv1m });
+			} catch (error) {
+				console.warn(`CANDLE BREAKOUT CANDLES UNAVAILABLE | ${coin.symbol || coin.tokenAddress} | ${error.message}`);
+			}
+		}
+		console.log(`CANDLE BREAKOUT SCAN | eligible: ${candidates.length} | candles fetched: ${withCandles.length}`);
+		return withCandles;
 	}
 
 	return { discoverCandidates, getTrackedPoolCount: () => trackedPools.size };
@@ -142,6 +160,7 @@ module.exports = {
 	MAX_PAIR_ADDRESSES_PER_REQUEST,
 	MAX_TRACKED_NEW_POOLS,
 	MAX_NEW_POOL_AGE_MS,
+	MAX_CANDLES_PER_SCAN,
 	MIN_NEW_POOL_LIQUIDITY_USD,
 	addressFromResourceId,
 	toTimestamp,

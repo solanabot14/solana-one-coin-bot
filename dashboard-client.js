@@ -41,7 +41,8 @@ function renderLiveTrade(d, targetId = "live", slotsId = "slots", maxSlots = 3) 
 		const position=slot.position, live=slot.live;
 		if(!live) return `<div class="metric"><div class="live-title"><span class="coin-name">Slot ${index+1}: ${escapeHtml(position.symbol)}</span></div><div>Price unavailable. Position remains open.</div></div>`;
 		const chart=dexLink(position,live), reasons=Array.isArray(position.entryReasons)&&position.entryReasons.length?position.entryReasons.map(escapeHtml).join(" • "):"No entry reasons recorded.";
-		const tp1=position.firstTakeProfitDone?"DONE":"Waiting +15%", tp2=position.secondTakeProfitDone?"DONE":"Waiting +30%";
+		const candleTest=String(position.strategyVersion||"").startsWith("CANDLE-BREAKOUT");
+		const tp1=position.firstTakeProfitDone?"DONE":candleTest?"Waiting +12%":"Waiting +15%", tp2=position.secondTakeProfitDone?"RUNNER":"Waiting +30%";
 		return `<div class="metric" style="margin-bottom:16px">
 		<div class="live-title"><span class="coin-name">Slot ${index+1}: ${escapeHtml(position.symbol)}</span>
 		<span class="badge">${escapeHtml(position.strategyVersion||"V3.1-3Slot")}</span><span class="badge">Score ${escapeHtml(position.entryScore??"—")}</span>
@@ -105,16 +106,17 @@ function renderPullbackData(d, state = {}) {
 	$("pullbackCount").textContent = number(s.completedTrades || 0);
 	$("pullbackWinRate").textContent = pct(s.winRate || 0);
 	$("pullbackSlots").textContent = (d.openSlots || 0) + " / 3";
-	$("pullbackWatching").textContent = number(state.firstPump || 0) + " / " + number(state.pullback || 0);
+	$("pullbackWatching").textContent = number(state.lockConfirmed || 0) + " / " + number(state.candleCandidates || 0);
+	$("pullbackLockRejected").textContent = number(state.lockRejected || 0);
 	$("pullbackCandleFeed").textContent = state.candleSource && state.candleInterval
-		? state.candleSource + " · " + state.candleInterval + " refresh"
-		: "Waiting for momentum data";
+		? state.candleSource + " · " + state.candleInterval + " · LP lock ≥" + number(state.minimumLockedPercent || 90) + "%"
+		: "Waiting for closed candle data";
 	renderLiveTrade(d, "pullbackLive", "pullbackSlots", 3);
 	const trades = Array.isArray(d.completedTrades) ? d.completedTrades : [];
 	$("pullbackHistory").innerHTML = trades.map(t => {
 		const reason = Array.isArray(t.exitReasons) ? t.exitReasons.join(" / ") : "—";
 		const evidence = Array.isArray(t.entryReasons)
-			? t.entryReasons.filter(item => String(item).startsWith("PULLBACK EXPERIMENT:")).join(" • ")
+			? t.entryReasons.filter(item => String(item).startsWith("CANDLE BREAKOUT V1:")).join(" • ")
 			: "—";
 		const chartAddress = t.pairAddress || t.tokenAddress || "";
 		return `<tr><td><strong>${escapeHtml(t.symbol)}</strong></td>

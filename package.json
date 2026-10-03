@@ -5,7 +5,7 @@
   "main": "dashboard.js",
   "scripts": {
     "start": "node dashboard.js",
-		"test": "node --test test/token-cooldown.test.js test/dex-batching.test.js test/pullback-strategy.test.js test/pubx-fast-momentum.test.js test/pubx-discovery.test.js test/pullback-discovery.test.js test/scanner-shared-cache.test.js test/gecko-terminal.test.js",
+		"test": "node --test test/token-cooldown.test.js test/dex-batching.test.js test/pullback-strategy.test.js test/candle-breakout-discovery.test.js test/pubx-fast-momentum.test.js test/pubx-discovery.test.js test/pullback-discovery.test.js test/scanner-shared-cache.test.js test/gecko-terminal.test.js",
     "test:all": "node --test"
   },
   "keywords": [],

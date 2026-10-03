@@ -1,234 +1,102 @@
-const MIN_FIRST_PUMP_PERCENT = 1.5;
-const MAX_FIRST_PUMP_PERCENT = 8;
-const MIN_PULLBACK_PERCENT = 2;
-const MAX_PULLBACK_PERCENT = 12;
-const RECLAIM_BUFFER_PERCENT = 0.2;
-const MIN_VOLUME_5M_USD = 5000;
-const MIN_VOLUME_LIQUIDITY_RATIO = 0.10;
-const MIN_BUY_RATIO = 0.60;
-const MIN_TRANSACTIONS_5M = 30;
-const MIN_BREAKOUT_VOLUME_MULTIPLE = 1.5;
-const MAX_ENTRY_EXTENSION_PERCENT = 2;
-const MAX_WATCH_AGE_MS = 30 * 60 * 1000;
+const MIN_CANDLES = 6;
+const BREAKOUT_LOOKBACK = 3;
+const MIN_BREAKOUT_BUFFER_PERCENT = 0.1;
+const MIN_CLOSE_LOCATION = 0.55;
+const MIN_BREAKOUT_VOLUME_MULTIPLE = 1.1;
 const MAX_CANDLE_AGE_MS = 3 * 60 * 1000;
-const CANDLE_SECONDS = 60;
-const CANDLE_LOOKBACK = 30;
-
-function buyRatio(coin) {
-	const buys = Number(coin.buys5m) || 0;
-	const sells = Number(coin.sells5m) || 0;
-	const total = buys + sells;
-	return { buys, sells, total, ratio: total ? buys / total : 0 };
-}
-
-function areContinuous(candles, start, end) {
-	for (let index = start + 1; index <= end; index += 1) {
-		if (candles[index].timestamp - candles[index - 1].timestamp !== CANDLE_SECONDS) return false;
-	}
-	return true;
-}
+const MAX_ENTRY_EXTENSION_PERCENT = 2.5;
+const MIN_LIQUIDITY_USD = 20000;
+const MIN_VOLUME_5M_USD = 1500;
+const MIN_VOLUME_LIQUIDITY_RATIO = 0.015;
+const MIN_TRANSACTIONS_5M = 8;
+const MIN_BUY_RATIO = 0.52;
 
 function detectPattern(inputCandles, now = Date.now()) {
 	const candles = (Array.isArray(inputCandles) ? inputCandles : [])
-		.filter(candle => candle && Number.isFinite(Number(candle.timestamp)) &&
-			[candle.open, candle.high, candle.low, candle.close, candle.volume].every(value => Number.isFinite(Number(value))) &&
-			Number(candle.close) > 0 && Number(candle.high) > 0 && Number(candle.low) > 0 && Number(candle.volume) >= 0)
-		.sort((a, b) => Number(a.timestamp) - Number(b.timestamp))
-		.slice(-CANDLE_LOOKBACK);
-	if (candles.length < 10) return { phase: null, reason: "NOT_ENOUGH_CLOSED_CANDLES" };
-
-	const last = candles.length - 1;
-	const lastCandle = candles[last];
-	if (now - Number(lastCandle.timestamp) * 1000 > MAX_CANDLE_AGE_MS) {
+		.filter(c => c && Number.isFinite(Number(c.timestamp)) &&
+			[c.open, c.high, c.low, c.close, c.volume].every(v => Number.isFinite(Number(v))) &&
+			Number(c.close) > 0 && Number(c.high) > 0 && Number(c.low) > 0 && Number(c.volume) >= 0)
+		.sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+	if (candles.length < MIN_CANDLES) return { phase: null, reason: "NOT_ENOUGH_CLOSED_CANDLES" };
+	const lastIndex = candles.length - 1;
+	const last = candles[lastIndex];
+	if (now - Number(last.timestamp) * 1000 > MAX_CANDLE_AGE_MS || Number(last.timestamp) * 1000 > now) {
 		return { phase: null, reason: "STALE_CANDLES" };
 	}
-
-	let bestWatch = null;
-	const oldestPeak = Math.max(5, last - CANDLE_LOOKBACK + 1);
-	for (let peakIndex = last - 4; peakIndex >= oldestPeak; peakIndex -= 1) {
-		const baselineIndex = peakIndex - 5;
-		if (!areContinuous(candles, baselineIndex, last)) continue;
-
-		const baseline = Number(candles[baselineIndex].close);
-		const peakHigh = Number(candles[peakIndex].high);
-		if (!(baseline > 0) || !(peakHigh > 0)) continue;
-		const firstPumpPercent = (peakHigh - baseline) / baseline * 100;
-		if (firstPumpPercent < MIN_FIRST_PUMP_PERCENT || firstPumpPercent > MAX_FIRST_PUMP_PERCENT) continue;
-
-		let troughIndex = peakIndex + 1;
-		for (let index = peakIndex + 2; index <= last; index += 1) {
-			if (Number(candles[index].low) < Number(candles[troughIndex].low)) troughIndex = index;
-		}
-		const pullbackLow = Number(candles[troughIndex].low);
-		const pullbackPercent = (peakHigh - pullbackLow) / peakHigh * 100;
-		if (pullbackPercent > MAX_PULLBACK_PERCENT) continue;
-
-		const evidence = {
-			phase: pullbackPercent >= MIN_PULLBACK_PERCENT ? "PULLBACK" : "FIRST_PUMP",
-			firstPumpHigh: peakHigh,
-			firstPumpPercent,
-			pullbackLow,
-			pullbackPercent,
-			firstPumpTimestamp: Number(candles[peakIndex].timestamp),
-			lastCandleTimestamp: Number(lastCandle.timestamp)
-		};
-		if (!bestWatch || evidence.phase === "PULLBACK") bestWatch = evidence;
-		if (pullbackPercent < MIN_PULLBACK_PERCENT || last - troughIndex < 4) continue;
-
-		const recoveryStart = last - 3;
-		if (recoveryStart <= troughIndex) continue;
-		const recentRecoveryHigh = Math.max(...candles.slice(recoveryStart, last).map(candle => Number(candle.high)));
-		const priorVolumes = candles.slice(Math.max(0, last - 5), last).map(candle => Number(candle.volume));
-		if (priorVolumes.length < 5 || priorVolumes.every(volume => volume === 0)) continue;
-		const averagePriorVolume = priorVolumes.reduce((sum, volume) => sum + volume, 0) / priorVolumes.length;
-		const breakoutVolumeMultiple = averagePriorVolume > 0 ? Number(lastCandle.volume) / averagePriorVolume : 0;
-		const breakout = Number(lastCandle.close) >= recentRecoveryHigh * (1 + RECLAIM_BUFFER_PERCENT / 100) &&
-			breakoutVolumeMultiple >= MIN_BREAKOUT_VOLUME_MULTIPLE;
-		if (breakout) {
-			return {
-				...evidence,
-				phase: "RECLAIMED",
-				breakoutClose: Number(lastCandle.close),
-				breakoutVolume: Number(lastCandle.volume),
-				averagePriorVolume,
-				breakoutVolumeMultiple,
-				breakoutTimestamp: Number(lastCandle.timestamp)
-			};
+	for (let i = lastIndex - 5; i < lastIndex; i++) {
+		if (Number(candles[i + 1].timestamp) - Number(candles[i].timestamp) !== 60) {
+			return { phase: null, reason: "CANDLE_GAP" };
 		}
 	}
-
-	return bestWatch || { phase: null, reason: "NO_VALID_PUMP_PATTERN" };
+	const prior = candles.slice(lastIndex - BREAKOUT_LOOKBACK, lastIndex);
+	const priorHigh = Math.max(...prior.map(c => Number(c.high)));
+	const close = Number(last.close);
+	const breakoutPercent = (close - priorHigh) / priorHigh * 100;
+	const range = Number(last.high) - Number(last.low);
+	const closeLocation = range > 0 ? (close - Number(last.low)) / range : 0;
+	const priorVolumes = candles.slice(lastIndex - 5, lastIndex).map(c => Number(c.volume));
+	const averagePriorVolume = priorVolumes.reduce((sum, value) => sum + value, 0) / priorVolumes.length;
+	const breakoutVolumeMultiple = averagePriorVolume > 0 ? Number(last.volume) / averagePriorVolume : 0;
+	if (breakoutPercent < MIN_BREAKOUT_BUFFER_PERCENT || closeLocation < MIN_CLOSE_LOCATION ||
+		breakoutVolumeMultiple < MIN_BREAKOUT_VOLUME_MULTIPLE) {
+		return { phase: null, reason: "NO_CHANNEL_BREAKOUT" };
+	}
+	return { phase: "BREAKOUT", breakoutClose: close, priorHigh, breakoutPercent, closeLocation,
+		breakoutVolume: Number(last.volume), averagePriorVolume, breakoutVolumeMultiple,
+		breakoutTimestamp: Number(last.timestamp) };
 }
 
 function createPullbackStrategy() {
-	const states = new Map();
-	const emittedBreakouts = new Map();
-
+	const emitted = new Map();
 	function observe(candidates = [], now = Date.now()) {
 		const ready = [];
-		const seen = new Set();
-
 		for (const coin of candidates) {
 			const address = coin?.tokenAddress;
 			const price = Number(coin?.priceUsd);
-			const candles = coin?.ohlcv1m;
-			if (!address || !(price > 0) || !Array.isArray(candles)) continue;
-			seen.add(address);
-
-			const pattern = detectPattern(candles, now);
-			if (!pattern.phase) {
-				states.delete(address);
-				continue;
-			}
-
-			states.set(address, {
-				phase: pattern.phase === "RECLAIMED" ? "PULLBACK" : pattern.phase,
-				firstSeenAt: Number(pattern.firstPumpTimestamp) * 1000,
-				lastSeenAt: now,
-				poolAddress: coin.pairAddress || null,
-				firstPumpHigh: pattern.firstPumpHigh,
-				pullbackLow: pattern.pullbackLow
-			});
-
-			if (pattern.phase !== "RECLAIMED" || coin.signal !== "STRONG BUY") continue;
-			const breakoutKey = `${address}:${pattern.breakoutTimestamp}`;
-			if (emittedBreakouts.has(breakoutKey)) continue;
-
+			if (!address || !(price > 0) || !Array.isArray(coin?.ohlcv1m)) continue;
+			const pattern = detectPattern(coin.ohlcv1m, now);
+			if (pattern.phase !== "BREAKOUT") continue;
+			const key = `${address}:${pattern.breakoutTimestamp}`;
+			if (emitted.has(key)) continue;
+			const buys = Number(coin.buys5m) || 0;
+			const sells = Number(coin.sells5m) || 0;
+			const total = buys + sells;
+			const buyRatio = total ? buys / total : 0;
+			const liquidity = Number(coin.liquidityUsd) || 0;
+			const volume5m = Number(coin.volume5m) || 0;
 			const momentum5m = Number(coin.priceChange5m) || 0;
 			const momentum1h = Number(coin.priceChange1h) || 0;
-			const activity = buyRatio(coin);
-			const volume5m = Number(coin.volume5m) || 0;
-			const liquidity = Number(coin.liquidityUsd) || 0;
-			const requiredVolume = Math.max(MIN_VOLUME_5M_USD, liquidity * MIN_VOLUME_LIQUIDITY_RATIO);
 			const quoteExtensionPercent = (price - pattern.breakoutClose) / pattern.breakoutClose * 100;
-			const confirmsMarketActivity = momentum5m >= 0.25 && momentum5m <= 6 &&
-				momentum1h > 0 && momentum1h <= 30 &&
-				activity.ratio >= MIN_BUY_RATIO && activity.total >= MIN_TRANSACTIONS_5M &&
-				volume5m >= requiredVolume;
-		const quoteStillNearBreakout = quoteExtensionPercent >= -0.2 && quoteExtensionPercent <= MAX_ENTRY_EXTENSION_PERCENT;
-		if (!confirmsMarketActivity || !quoteStillNearBreakout) continue;
-
-		const pullbackPercent = pattern.pullbackPercent;
-		const firstPumpTime = new Date(pattern.firstPumpTimestamp * 1000).toISOString();
-		const breakoutTime = new Date(pattern.breakoutTimestamp * 1000).toISOString();
-		ready.push({
-			...coin,
-			signal: "STRONG BUY",
-			reasons: [
-				...(Array.isArray(coin.reasons) ? coin.reasons : []),
-				"PULLBACK EXPERIMENT: confirmed with closed GeckoTerminal 1m candles",
-				`PULLBACK EXPERIMENT: first pump ${pattern.firstPumpPercent.toFixed(2)}%, pullback ${pullbackPercent.toFixed(2)}%`,
-				`PULLBACK EXPERIMENT: reclaim candle volume ${pattern.breakoutVolumeMultiple.toFixed(2)}x the previous 5-candle average`,
-				`PULLBACK EXPERIMENT: quote is ${quoteExtensionPercent.toFixed(2)}% from breakout close; 5m volume $${volume5m.toFixed(0)}, buy ratio ${(activity.ratio * 100).toFixed(1)}%`
-			],
-			experimentEntry: {
-				model: "PULLBACK_RECLAIM_OHLCV_V2",
-				candleSource: "GeckoTerminal public OHLCV",
-				candleInterval: "1m",
-				poolAddress: coin.pairAddress || null,
-				firstPumpAt: firstPumpTime,
-				firstPumpHigh: pattern.firstPumpHigh,
-				firstPumpPercent: pattern.firstPumpPercent,
-				pullbackLow: pattern.pullbackLow,
-				pullbackPercent,
-				breakoutAt: breakoutTime,
-				breakoutClose: pattern.breakoutClose,
-				breakoutVolume: pattern.breakoutVolume,
-				breakoutVolumeMultiple: pattern.breakoutVolumeMultiple,
-				quotePriceAtEntryCheck: price,
-				quoteExtensionPercent,
-				volume5mUsd: volume5m,
-				buyRatio: activity.ratio,
-				observedAt: new Date(now).toISOString()
-			}
-		});
-		emittedBreakouts.set(breakoutKey, now);
-		states.delete(address);
+			const requiredVolume = Math.max(MIN_VOLUME_5M_USD, liquidity * MIN_VOLUME_LIQUIDITY_RATIO);
+			if (liquidity < MIN_LIQUIDITY_USD || total < MIN_TRANSACTIONS_5M || buyRatio < MIN_BUY_RATIO ||
+				volume5m < requiredVolume || momentum5m < -3 || momentum5m > 12 || momentum1h < -15 || momentum1h > 80 ||
+				quoteExtensionPercent < -0.5 || quoteExtensionPercent > MAX_ENTRY_EXTENSION_PERCENT) continue;
+			const candleTime = new Date(pattern.breakoutTimestamp * 1000).toISOString();
+			ready.push({ ...coin, signal: "STRONG BUY", reasons: [
+				"CANDLE BREAKOUT V1: closed 1m candle cleared the prior 3-candle high",
+				`CANDLE BREAKOUT V1: ${pattern.breakoutPercent.toFixed(2)}% breakout, ${pattern.breakoutVolumeMultiple.toFixed(2)}x candle volume, close in top ${(pattern.closeLocation * 100).toFixed(0)}% of range`,
+				`CANDLE BREAKOUT V1: quote ${quoteExtensionPercent.toFixed(2)}% from breakout close; 5m activity ${total} tx, ${(buyRatio * 100).toFixed(0)}% buys`
+			], experimentEntry: {
+				model: "CANDLE_BREAKOUT_1M_V1", candleSource: "GeckoTerminal public OHLCV", candleInterval: "1m",
+				poolAddress: coin.pairAddress || null, breakoutAt: candleTime, breakoutClose: pattern.breakoutClose,
+				priorHigh: pattern.priorHigh, breakoutPercent: pattern.breakoutPercent, closeLocation: pattern.closeLocation,
+				breakoutVolumeMultiple: pattern.breakoutVolumeMultiple, quotePriceAtEntryCheck: price,
+				quoteExtensionPercent, volume5mUsd: volume5m, buyRatio, observedAt: new Date(now).toISOString()
+			} });
+			emitted.set(key, now);
 		}
-
-		for (const [address, state] of states) {
-			if (now - state.firstSeenAt > MAX_WATCH_AGE_MS || (!seen.has(address) && now - state.lastSeenAt > MAX_WATCH_AGE_MS)) {
-				states.delete(address);
-			}
-		}
-		for (const [key, at] of emittedBreakouts) {
-			if (now - at > MAX_WATCH_AGE_MS) emittedBreakouts.delete(key);
-		}
+		for (const [key, at] of emitted) if (now - at > 30 * 60 * 1000) emitted.delete(key);
 		return ready;
 	}
-
-	function getStatus() {
-		const counts = { firstPump: 0, pullback: 0, watching: states.size, candleInterval: "1m", candleSource: "GeckoTerminal public OHLCV" };
-		for (const state of states.values()) {
-			if (state.phase === "FIRST_PUMP") counts.firstPump++;
-			if (state.phase === "PULLBACK") counts.pullback++;
-		}
-		return counts;
+	function release(tokenAddress, breakoutAt) {
+		const timestamp = Math.floor(Date.parse(breakoutAt) / 1000);
+		if (tokenAddress && Number.isFinite(timestamp)) emitted.delete(`${tokenAddress}:${timestamp}`);
 	}
-
-	function getTrackedTokens() {
-		return [...states.keys()];
-	}
-
-	return { observe, getStatus, getTrackedTokens };
+	return { observe, release, getStatus: () => ({ qualified: 0, scanning: 0, candleInterval: "1m", candleSource: "GeckoTerminal public OHLCV" }) };
 }
 
-module.exports = {
-	createPullbackStrategy,
-	detectPattern,
-	constants: {
-		MIN_FIRST_PUMP_PERCENT,
-		MAX_FIRST_PUMP_PERCENT,
-		MIN_PULLBACK_PERCENT,
-		MAX_PULLBACK_PERCENT,
-		RECLAIM_BUFFER_PERCENT,
-		MIN_VOLUME_5M_USD,
-		MIN_VOLUME_LIQUIDITY_RATIO,
-		MIN_BUY_RATIO,
-		MIN_TRANSACTIONS_5M,
-		MIN_BREAKOUT_VOLUME_MULTIPLE,
-		MAX_ENTRY_EXTENSION_PERCENT,
-		MAX_WATCH_AGE_MS,
-		MAX_CANDLE_AGE_MS
-	}
-};
+module.exports = { createPullbackStrategy, detectPattern, constants: {
+	MIN_CANDLES, BREAKOUT_LOOKBACK, MIN_BREAKOUT_BUFFER_PERCENT, MIN_CLOSE_LOCATION,
+	MIN_BREAKOUT_VOLUME_MULTIPLE, MAX_CANDLE_AGE_MS, MAX_ENTRY_EXTENSION_PERCENT,
+	MIN_LIQUIDITY_USD, MIN_VOLUME_5M_USD, MIN_VOLUME_LIQUIDITY_RATIO, MIN_TRANSACTIONS_5M, MIN_BUY_RATIO
+} };

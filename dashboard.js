@@ -44,7 +44,7 @@ const page = `<!doctype html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PubX Fast Momentum Test</title>
+<title>1m Candle Breakout V1 Paper Test</title>
 
 <style>
 *{box-sizing:border-box}
@@ -246,9 +246,9 @@ th,td{
 
 <div class="header">
   <div>
-    <h1>PubX Fast Momentum Test</h1>
+    <h1>1m Candle Breakout V1</h1>
     <div class="subtitle">
-      Fast momentum • Quick exits • Paper Trading
+      Closed candle breakout • Locked liquidity • Paper Trading
     </div>
   </div>
 
@@ -259,12 +259,12 @@ th,td{
 
 <div class="controls">
   <a class="panel-link" href="#v31Panel">V3.1 RECORDS</a>
-  <a class="panel-link" href="#pullbackPanel">PUBX MOMENTUM TEST</a>
+  <a class="panel-link" href="#pullbackPanel">CANDLE BREAKOUT V1</a>
   <a class="panel-link swarm" href="#swarmPanel">SWARM</a>
 </div>
 
 <p id="notice" role="status">
-  PubX paper trading starts automatically. V3.1 and Swarm remain stopped on this test branch.
+  The isolated candle breakout paper test starts automatically. V3.1 records and strategy remain untouched.
 </p>
 
 <div id="v31Panel"></div>
@@ -317,9 +317,9 @@ th,td{
 </div>
 
 <div class="card section" id="pullbackPanel">
-<h2>PubX Fast Momentum — Paper Test</h2>
-<p class="muted">Separate $100 paper account with 3 slots. PubX checks DexScreener and fresh Solana pools, ranking by 5m turnover, buy pressure, and active price momentum. It scans every 20 seconds and has no $100k 24h-volume gate; instead, it requires at least $30k liquidity and checks 5m volume against liquidity.</p>
-<p class="muted">Entry test: 5m volume must reach at least $5k or 4% of liquidity, with 20+ transactions, 58%+ buys, and 0.75–22% 5m momentum. Exits: 8% hard stop, 50% sale at +10%, 5% trail for the runner, flow-fade exit, and 8-minute stale-trade exit. Open positions are checked every 2 seconds. Transaction counts are a flow proxy; this feed does not identify unique buyer wallets.</p>
+<h2>1m Candle Breakout V1 — Paper Test</h2>
+<p class="muted">Separate $100 paper account with 3 slots. The test rotates through DexScreener and fresh Solana pools, then checks closed GeckoTerminal 1-minute candles. An entry needs a close at least 0.1% above the previous 3-candle high, at least 1.1× recent candle volume, and a close in the top 45% of the candle range. It uses a $20k liquidity floor, 8+ five-minute transactions, 52%+ buys, and $1.5k or 1.5% of liquidity in five-minute volume. Price must be within 2.5% of the breakout close. LP lock must be confirmed at 90% or more by RugCheck; unavailable lock data blocks the paper entry. Candle checks rotate 2 pools per 45-second scan.</p>
+<p class="muted">Exits: 9% hard stop, sell half at +12%, trail the runner by 7% after it reaches +12%, with a +3% protection floor and a 12-minute stale-trade exit. Open positions are checked every 2 seconds. This is a paper experiment; it does not establish that the setup is profitable.</p>
 <div class="grid">
   <div class="metric"><div class="metric-label">Status</div><div class="metric-value" id="pullbackStatus">—</div></div>
   <div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value" id="pullbackStarting">$100.00</div></div>
@@ -330,11 +330,12 @@ th,td{
   <div class="metric"><div class="metric-label">Completed Positions</div><div class="metric-value" id="pullbackCount">0</div></div>
   <div class="metric"><div class="metric-label">Win Rate</div><div class="metric-value" id="pullbackWinRate">0.00%</div></div>
   <div class="metric"><div class="metric-label">Open Slots</div><div class="metric-value" id="pullbackSlots">0 / 3</div></div>
-  <div class="metric"><div class="metric-label">Qualified / Scanned</div><div class="metric-value" id="pullbackWatching">0 / 0</div></div>
-  <div class="metric"><div class="metric-label">Momentum Feed</div><div class="metric-value" id="pullbackCandleFeed">Waiting for candle data</div></div>
+  <div class="metric"><div class="metric-label">LP-Approved / Candle-Scanned</div><div class="metric-value" id="pullbackWatching">0 / 0</div></div>
+  <div class="metric"><div class="metric-label">LP Lock Rejections</div><div class="metric-value" id="pullbackLockRejected">0</div></div>
+  <div class="metric"><div class="metric-label">Entry Feed</div><div class="metric-value" id="pullbackCandleFeed">Waiting for candle data</div></div>
 </div>
-<div class="section"><h3>Experimental Open Positions</h3><div id="pullbackLive" class="empty">Waiting for the first pump / pullback pattern...</div></div>
-<div class="section"><h3>Experimental Completed Transactions</h3><p class="muted">Each trade shows dollars invested, dollars sold, realized P/L in dollars, and return percentage.</p><div style="overflow-x:auto"><table>
+<div class="section"><h3>Open Candle Breakout Positions</h3><div id="pullbackLive" class="empty">Waiting for a closed 1m breakout and LP-lock confirmation...</div></div>
+<div class="section"><h3>Candle Breakout Completed Transactions</h3><p class="muted">Each trade shows dollars invested, dollars sold, realized P/L in dollars, and return percentage.</p><div style="overflow-x:auto"><table>
 <thead><tr><th>Coin</th><th>Invested ($)</th><th>Total Sold ($)</th><th>Profit / Loss ($)</th><th>Return (%)</th><th>Entry Price</th><th>Average Exit Price</th><th>Entry Evidence</th><th>Exit Reason</th><th>Chart</th></tr></thead>
 <tbody id="pullbackHistory"><tr><td colspan="10">No experimental trades yet.</td></tr></tbody>
 </table></div></div>
