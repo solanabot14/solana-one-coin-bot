@@ -97,3 +97,64 @@ test("never exceeds two concurrent entries", async t => {
 
   assert.equal(state.positions.length, 2);
 });
+
+
+test("activates a +4% protective floor after a +10% peak gain", async t => {
+  const position = {
+    id: "existing-lock-position",
+    tokenAddress: "lock-token",
+    symbol: "LOCK",
+    entryPrice: 100,
+    highestPrice: 100,
+    firstTakeProfitDone: false,
+    secondTakeProfitDone: false
+  };
+  const state = { startingBalance: 100, cashBalance: 90, positions: [position], history: [] };
+  const sellCalls = [];
+  let currentPrice = 109;
+
+  const trader = {
+    buy() { throw new Error("Unexpected buy in exit test."); },
+    sell(price, percent, options) {
+      sellCalls.push({ price, percent, options });
+      state.positions = [];
+      return { success: true, trade: { type: "SELL", reason: options.reason } };
+    },
+    getPortfolio() { return structuredClone(state); },
+    updateHigh(key, price) {
+      const current = state.positions.find(item => item.id === key);
+      if (current) current.highestPrice = Math.max(current.highestPrice, price);
+      return true;
+    },
+    positionKey(item) { return item.id; }
+  };
+  const timers = fakeTimers();
+  const bot = createBot({
+    trader,
+    timers,
+    discoverCandidates: async () => [],
+    getTokenData: async () => ({ priceUsd: currentPrice, priceChange5m: 0, buys5m: 0, sells5m: 0 }),
+    notifier: { notifyTrade: async () => {}, notifyCritical: async () => {} }
+  });
+  t.after(() => bot.stopBot());
+
+  bot.startBot();
+  await settle();
+
+  const monitor = [...timers.callbacks.values()].find(item => item.ms === 2000)?.fn;
+  assert.equal(typeof monitor, "function");
+
+  currentPrice = 103;
+  await monitor();
+  assert.equal(sellCalls.length, 0, "a sub-10% peak should not arm the lock");
+
+  currentPrice = 110;
+  await monitor();
+  assert.equal(sellCalls.length, 0, "reaching +10% arms the lock but does not sell by itself");
+
+  currentPrice = 104;
+  await monitor();
+  assert.equal(sellCalls.length, 1);
+  assert.equal(sellCalls[0].options.reason, "PROFIT LOCK");
+  assert.equal(sellCalls[0].price, 104);
+});
