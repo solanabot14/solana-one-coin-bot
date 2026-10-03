@@ -8,7 +8,6 @@ const { getPortfolio } = require("./paperTrader");
 const { getTokenData, getTokensData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
 const swarm = require("./janMvpBot");
-const pullbackBot = require("./pullbackBot");
 
 function getConfig(env = process.env) {
   const railway = !!env.RAILWAY_ENVIRONMENT_ID;
@@ -21,10 +20,8 @@ function getConfig(env = process.env) {
   if ((dashboardUser && !dashboardPassword) || (!dashboardUser && dashboardPassword)) {
     throw new Error("Set both DASHBOARD_USER and DASHBOARD_PASSWORD.");
   }
-  if (!localOnly && (!dashboardUser || !dashboardPassword)) {
-    throw new Error("Public dashboard access requires DASHBOARD_USER and DASHBOARD_PASSWORD.");
-  }
-  return { host, port, localOnly, dashboardUser, dashboardPassword };
+  return { host, port, localOnly, dashboardUser, dashboardPassword,
+    readOnly: !dashboardUser && !dashboardPassword };
 }
 
 function authorized(req, config) {
@@ -259,13 +256,12 @@ th,td{
 
 <div class="controls">
   <a class="panel-link" href="#v31Panel">V3.1 BOT</a>
-  <a class="panel-link" href="#pullbackPanel">PULLBACK TEST</a>
-  <a class="panel-link" href="#pubxPanel">PUBX TRADES</a>
+  <a class="panel-link" href="#candleBreakoutPanel">CANDLE BREAKOUT V1</a>
   <a class="panel-link swarm" href="#swarmPanel">SWARM</a>
 </div>
 
 <p id="notice" role="status">
-  V3.1, Swarm, and the pullback paper experiment start automatically with the service.
+  V3.1 and Swarm run on this service. The Candle Breakout V1 panel below mirrors the separate paper test.
 </p>
 
 <div id="v31Panel"></div>
@@ -317,48 +313,29 @@ th,td{
 
 </div>
 
-<div class="card section" id="pullbackPanel">
-<h2>Experimental Strategy — First Pump, Pullback, Reclaim</h2>
-<p class="muted">Separate $100 paper account, 3 slots, same V3.1 exit rules and compounding. Pullback discovery combines the existing DexScreener candidates with GeckoTerminal's public new-pool feed, then confirms new pools against DexScreener data. New pools skip only the $100k 24h discovery-volume floor; the $30k liquidity floor, entry activity checks, and closed-candle pattern still apply. Up to 4 pools are checked per scan.</p>
-<p class="muted">Entry test: a closed candle confirms a 1.5–8% first pump, then a 2–12% pullback, then a close 0.2% above the recovery micro-high with at least 1.5x the prior five-candle average volume. The current DexScreener quote must remain within 2% of the breakout close. Existing 5m momentum, buy ratio, transaction count, and dollar-volume filters still apply. Open positions are monitored every 5 seconds.</p>
+<div class="card section" id="candleBreakoutPanel">
+<h2>1m Candle Breakout V1 — Live Paper Test</h2>
+<p class="muted">This panel mirrors the separate Candle Breakout V1 paper account. The test enters on a closed 1-minute candle at least 0.1% above the previous 3-candle high, with 1.1× candle volume and a close in the top 45% of the range. It uses $20k minimum liquidity, at least 8 transactions and 52% buys, and checks no more than 2.5% above the breakout close. Entries require at least 90% LP lock confirmation. It rotates 5 pools each 45-second scan.</p>
+<p class="muted">Exit plan: 9% hard stop, sell half at +12%, then trail the runner by 7% with a +3% protection floor; also exits on flow fade or after 12 minutes without enough progress. Paper trading only.</p>
+<p><a class="small-link" href="https://pubx-fast-momentum-production.up.railway.app/" target="_blank" rel="noopener noreferrer">Open the standalone Candle Breakout V1 dashboard</a></p>
 <div class="grid">
-  <div class="metric"><div class="metric-label">Status</div><div class="metric-value" id="pullbackStatus">—</div></div>
-  <div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value" id="pullbackStarting">$100.00</div></div>
-  <div class="metric"><div class="metric-label">Cash</div><div class="metric-value" id="pullbackCash">$100.00</div></div>
-  <div class="metric"><div class="metric-label">Equity</div><div class="metric-value" id="pullbackEquity">$100.00</div></div>
-  <div class="metric"><div class="metric-label">Total P/L ($)</div><div class="metric-value" id="pullbackPnl">$0.00</div></div>
-  <div class="metric"><div class="metric-label">Total Return (%)</div><div class="metric-value" id="pullbackPnlPct">0.00%</div></div>
-  <div class="metric"><div class="metric-label">Completed Positions</div><div class="metric-value" id="pullbackCount">0</div></div>
-  <div class="metric"><div class="metric-label">Win Rate</div><div class="metric-value" id="pullbackWinRate">0.00%</div></div>
-  <div class="metric"><div class="metric-label">Open Slots</div><div class="metric-value" id="pullbackSlots">0 / 3</div></div>
-  <div class="metric"><div class="metric-label">Watching Pumps / Pullbacks</div><div class="metric-value" id="pullbackWatching">0 / 0</div></div>
-  <div class="metric"><div class="metric-label">Entry Candle Data</div><div class="metric-value" id="pullbackCandleFeed">Waiting for candle data</div></div>
+  <div class="metric"><div class="metric-label">Test Status</div><div class="metric-value" id="candleStatus">Connecting…</div></div>
+  <div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value" id="candleStarting">$100.00</div></div>
+  <div class="metric"><div class="metric-label">Cash</div><div class="metric-value" id="candleCash">—</div></div>
+  <div class="metric"><div class="metric-label">Equity</div><div class="metric-value" id="candleEquity">—</div></div>
+  <div class="metric"><div class="metric-label">Total P/L</div><div class="metric-value" id="candlePnl">—</div></div>
+  <div class="metric"><div class="metric-label">Total Return</div><div class="metric-value" id="candleReturn">—</div></div>
+  <div class="metric"><div class="metric-label">Completed Positions</div><div class="metric-value" id="candleCount">—</div></div>
+  <div class="metric"><div class="metric-label">Win Rate</div><div class="metric-value" id="candleWinRate">—</div></div>
+  <div class="metric"><div class="metric-label">Open Slots</div><div class="metric-value" id="candleSlots">—</div></div>
+  <div class="metric"><div class="metric-label">LP-Approved / Candle-Scanned</div><div class="metric-value" id="candleScanned">—</div></div>
+  <div class="metric"><div class="metric-label">LP Lock Rejections</div><div class="metric-value" id="candleRejected">—</div></div>
+  <div class="metric"><div class="metric-label">Candle Feed</div><div class="metric-value" id="candleFeed">Connecting…</div></div>
 </div>
-<div class="section"><h3>Experimental Open Positions</h3><div id="pullbackLive" class="empty">Waiting for the first pump / pullback pattern...</div></div>
-<div class="section"><h3>Experimental Completed Transactions</h3><p class="muted">Each trade shows dollars invested, dollars sold, realized P/L in dollars, and return percentage.</p><div style="overflow-x:auto"><table>
-<thead><tr><th>Coin</th><th>Invested ($)</th><th>Total Sold ($)</th><th>Profit / Loss ($)</th><th>Return (%)</th><th>Entry Price</th><th>Average Exit Price</th><th>Entry Evidence</th><th>Exit Reason</th><th>Chart</th></tr></thead>
-<tbody id="pullbackHistory"><tr><td colspan="10">No experimental trades yet.</td></tr></tbody>
-</table></div></div>
-</div>
-
-<div class="card section" id="pubxPanel">
-<h2>PubX Fast Momentum — Read-Only Mirror</h2>
-<p class="muted">PubX paper account shown here for convenience. This panel cannot start, stop, or change either bot.</p>
-<div class="grid">
-  <div class="metric"><div class="metric-label">PubX Feed</div><div class="metric-value" id="pubxStatus">Connecting…</div></div>
-  <div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value" id="pubxStarting">$100.00</div></div>
-  <div class="metric"><div class="metric-label">Cash</div><div class="metric-value" id="pubxCash">—</div></div>
-  <div class="metric"><div class="metric-label">Equity</div><div class="metric-value" id="pubxEquity">—</div></div>
-  <div class="metric"><div class="metric-label">Total P/L</div><div class="metric-value" id="pubxPnl">—</div></div>
-  <div class="metric"><div class="metric-label">Total Return</div><div class="metric-value" id="pubxReturn">—</div></div>
-  <div class="metric"><div class="metric-label">Completed Positions</div><div class="metric-value" id="pubxCount">—</div></div>
-  <div class="metric"><div class="metric-label">Win Rate</div><div class="metric-value" id="pubxWinRate">—</div></div>
-  <div class="metric"><div class="metric-label">Open Slots</div><div class="metric-value" id="pubxSlots">—</div></div>
-</div>
-<div class="section"><h3>PubX Open Positions</h3><div id="pubxOpen" class="empty">Waiting for PubX data…</div></div>
-<div class="section"><h3>PubX Completed Transactions</h3><div style="overflow-x:auto"><table>
+<div class="section"><h3>Live Test Positions</h3><div id="candleOpen" class="empty">Waiting for a candle breakout…</div></div>
+<div class="section"><h3>Completed Test Transactions</h3><div style="overflow-x:auto"><table>
 <thead><tr><th>Coin</th><th>Invested</th><th>Sold</th><th>Realized P/L</th><th>Return</th><th>Entry Price</th><th>Exit Price</th><th>Exit Reason</th><th>Chart</th></tr></thead>
-<tbody id="pubxHistory"><tr><td colspan="9">Waiting for PubX data…</td></tr></tbody>
+<tbody id="candleHistory"><tr><td colspan="9">Waiting for live test data…</td></tr></tbody>
 </table></div></div>
 </div>
 
@@ -536,27 +513,22 @@ th,td{
 </body>
 </html>`;
 
-const PUBX_DASHBOARD_API = "https://pubx-fast-momentum-production.up.railway.app/api/data";
+const CANDLE_BREAKOUT_DASHBOARD_API = "https://pubx-fast-momentum-production.up.railway.app/api/data";
 
-async function fetchPubxDashboard() {
-  const username = String(process.env.PUBX_DASHBOARD_USER || "").trim();
-  const password = String(process.env.PUBX_DASHBOARD_PASSWORD || "").trim();
-  if (!username || !password) return { data: null, error: "PubX feed credentials are not configured." };
+async function fetchCandleBreakoutDashboard() {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
-    const auth = Buffer.from(username + ":" + password).toString("base64");
-    const response = await fetch(PUBX_DASHBOARD_API, {
-      headers: { Authorization: "Basic " + auth },
+    const response = await fetch(CANDLE_BREAKOUT_DASHBOARD_API, {
       signal: controller.signal
     });
-    if (!response.ok) return { data: null, error: "PubX feed unavailable (" + response.status + ")." };
+    if (!response.ok) return { data: null, status: null, error: "Candle Breakout feed unavailable (" + response.status + ")." };
     const body = await response.json();
-    if (!body || !body.pullback) return { data: null, error: "PubX account data was not returned." };
-    return { data: body.pullback, error: null };
+    if (!body || !body.pullback) return { data: null, status: null, error: "Candle Breakout account data was not returned." };
+    return { data: body.pullback, status: body.pullbackStatus || null, error: null };
   } catch (error) {
-    console.error("PubX dashboard mirror unavailable:", error.message);
-    return { data: null, error: "PubX data is temporarily unavailable." };
+    console.error("Candle Breakout dashboard feed unavailable:", error.message);
+    return { data: null, status: null, error: "Candle Breakout data is temporarily unavailable." };
   } finally {
     clearTimeout(timeout);
   }
@@ -564,8 +536,7 @@ async function fetchPubxDashboard() {
 
 function createDashboardServer({ config = getConfig(), controls = bot,
   portfolio = getPortfolio, marketData = getTokenData,
-  batchMarketData = marketData === getTokenData ? getTokensData : null,
-  experiment = pullbackBot, experimentPortfolio = pullbackBot.getPortfolio } = {}) {
+  batchMarketData = marketData === getTokenData ? getTokensData : null } = {}) {
   const client = fs.readFileSync(path.join(__dirname, "dashboard-client.js"));
   return http.createServer(async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
@@ -586,6 +557,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       }
       if (route === "/api/start" || route === "/api/stop") {
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
         if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
         if (route === "/api/start") controls.startBot(); else controls.stopBot();
         return json(res, { running: controls.getBotStatus() });
@@ -595,10 +567,8 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       if (route === "/api/swarm") return json(res, { running: swarm.getStatus(), error: swarm.getLastError(), ...swarm.getDashboardState() });
       if (route === "/api/data") {
         const baseAccount = portfolio();
-        const experimentAccount = experimentPortfolio();
         const addresses = [...new Set([
-          ...(baseAccount.positions || (baseAccount.position ? [baseAccount.position] : [])).map(p => p.tokenAddress),
-          ...(experimentAccount.positions || (experimentAccount.position ? [experimentAccount.position] : [])).map(p => p.tokenAddress)
+          ...(baseAccount.positions || (baseAccount.position ? [baseAccount.position] : [])).map(p => p.tokenAddress)
         ].filter(Boolean))];
         const sharedQuotes = batchMarketData && addresses.length
           ? await batchMarketData(addresses)
@@ -606,21 +576,15 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const sharedMarketData = sharedQuotes
           ? async address => sharedQuotes.get(address) || null
           : marketData;
-        const [v31, pullback, pubx] = await Promise.all([
+        const [v31, candleBreakout] = await Promise.all([
           buildDashboardData(baseAccount, sharedMarketData),
-          buildDashboardData(experimentAccount, sharedMarketData),
-          fetchPubxDashboard()
+          fetchCandleBreakoutDashboard()
         ]);
         return json(res, {
           v31,
-          pullback,
-          pubx: pubx.data,
-          pubxError: pubx.error,
-          pullbackStatus: {
-            running: experiment.getStatus(),
-            error: experiment.getLastError(),
-            ...experiment.getStrategyStatus()
-          }
+          candleBreakout: candleBreakout.data,
+          candleBreakoutStatus: candleBreakout.status,
+          candleBreakoutError: candleBreakout.error
         });
       }
       if (route === "/dashboard-client.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(client); }
@@ -641,11 +605,9 @@ if (require.main === module) {
   const server = createDashboardServer({ config });
   bot.startBot();
   swarm.start();
-  pullbackBot.start();
   server.listen(config.port, config.host, () => console.log("Dashboard listening on " + config.host + ":" + config.port));
   const shutdown = () => {
     swarm.stop();
-    pullbackBot.stop();
     bot.stopBot();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 12000).unref();
@@ -653,4 +615,4 @@ if (require.main === module) {
   process.once("SIGTERM", shutdown);
   process.once("SIGINT", shutdown);
 }
-module.exports = { createDashboardServer, getConfig };
+module.exports = { createDashboardServer, getConfig, fetchCandleBreakoutDashboard };

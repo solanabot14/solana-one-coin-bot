@@ -91,82 +91,48 @@ function renderHistory(d, targetId = "history") {
 	}).join("") || `<tr><td colspan="25">No completed positions yet.</td></tr>`;
 }
 
-function renderPullbackData(d, state = {}) {
-	if (!d) return;
-	const s = d.stats || {};
-	$("pullbackStatus").textContent = state.running ? "RUNNING — PAPER ONLY" : "STOPPED";
-	$("pullbackStarting").textContent = money(d.startingBalance);
-	$("pullbackCash").textContent = money(d.cashBalance);
-	$("pullbackEquity").textContent = money(d.equity);
-	$("pullbackPnl").textContent = money(d.totalPnl);
-	$("pullbackPnl").className = "metric-value " + cls(d.totalPnl);
-	$("pullbackPnlPct").textContent = pct(d.totalPnlPercent);
-	$("pullbackPnlPct").className = "metric-value " + cls(d.totalPnlPercent);
-	$("pullbackCount").textContent = number(s.completedTrades || 0);
-	$("pullbackWinRate").textContent = pct(s.winRate || 0);
-	$("pullbackSlots").textContent = (d.openSlots || 0) + " / 3";
-	$("pullbackWatching").textContent = number(state.firstPump || 0) + " / " + number(state.pullback || 0);
-	$("pullbackCandleFeed").textContent = state.candleSource && state.candleInterval
-		? state.candleSource + " · " + state.candleInterval + " closed candles"
-		: "Waiting for candle data";
-	renderLiveTrade(d, "pullbackLive", "pullbackSlots", 3);
-	const trades = Array.isArray(d.completedTrades) ? d.completedTrades : [];
-	$("pullbackHistory").innerHTML = trades.map(t => {
-		const reason = Array.isArray(t.exitReasons) ? t.exitReasons.join(" / ") : "—";
-		const evidence = Array.isArray(t.entryReasons)
-			? t.entryReasons.filter(item => String(item).startsWith("PULLBACK EXPERIMENT:")).join(" • ")
-			: "—";
-		const chartAddress = t.pairAddress || t.tokenAddress || "";
-		return `<tr><td><strong>${escapeHtml(t.symbol)}</strong></td>
-			<td>${money(t.amountInvested)}</td><td>${money(t.saleValue)}</td>
-			<td class="${cls(t.pnl)}"><strong>${money(t.pnl)}</strong></td>
-			<td class="${cls(t.pnlPercent)}">${pct(t.pnlPercent)}</td>
-			<td>${price(t.entryPrice)}</td><td>${price(t.exitPrice)}</td>
-			<td>${escapeHtml(evidence)}</td><td>${escapeHtml(reason)}</td>
-			<td>${chartAddress ? `<a class="small-link" target="_blank" rel="noopener noreferrer" href="https://dexscreener.com/solana/${encodeURIComponent(chartAddress)}">DexScreener</a>` : "—"}</td></tr>`;
-	}).join("") || `<tr><td colspan="10">No experimental trades yet.</td></tr>`;
-}
-
-function renderPubxData(d, error) {
-	if (!$("pubxStatus")) return;
+function renderCandleBreakoutData(d, state = {}, error = null) {
 	if (error) {
-		$("pubxStatus").textContent = "DATA UNAVAILABLE";
-		$("pubxStatus").className = "metric-value red";
-		$("pubxOpen").textContent = "PubX feed unavailable. V3.1 dashboard and trading are unaffected.";
-		$("pubxHistory").innerHTML = '<tr><td colspan="9">' + escapeHtml(error) + "</td></tr>";
+		$("candleStatus").textContent = "FEED UNAVAILABLE";
+		$("candleStatus").className = "metric-value red";
+		$("candleOpen").textContent = error;
+		$("candleHistory").innerHTML = '<tr><td colspan="9">' + escapeHtml(error) + "</td></tr>";
 		return;
 	}
-	if (!d) {
-		$("pubxStatus").textContent = "CONNECTING";
-		return;
-	}
+	if (!d) { $("candleStatus").textContent = "CONNECTING"; return; }
 	const stats = d.stats || {};
-	$("pubxStatus").textContent = "CONNECTED · PAPER ONLY";
-	$("pubxStatus").className = "metric-value green";
-	$("pubxStarting").textContent = money(d.startingBalance);
-	$("pubxCash").textContent = money(d.cashBalance);
-	$("pubxEquity").textContent = money(d.equity);
-	$("pubxPnl").textContent = money(d.totalPnl);
-	$("pubxPnl").className = "metric-value " + cls(d.totalPnl);
-	$("pubxReturn").textContent = pct(d.totalPnlPercent);
-	$("pubxReturn").className = "metric-value " + cls(d.totalPnlPercent);
-	$("pubxCount").textContent = number(stats.completedTrades || 0);
-	$("pubxWinRate").textContent = pct(stats.winRate || 0);
+	$("candleStatus").textContent = state.running ? "RUNNING · PAPER ONLY" : "STOPPED · PAPER ONLY";
+	$("candleStatus").className = "metric-value " + (state.running ? "green" : "");
+	$("candleStarting").textContent = money(d.startingBalance);
+	$("candleCash").textContent = money(d.cashBalance);
+	$("candleEquity").textContent = money(d.equity);
+	$("candlePnl").textContent = money(d.totalPnl);
+	$("candlePnl").className = "metric-value " + cls(d.totalPnl);
+	$("candleReturn").textContent = pct(d.totalPnlPercent);
+	$("candleReturn").className = "metric-value " + cls(d.totalPnlPercent);
+	$("candleCount").textContent = number(stats.completedTrades || 0);
+	$("candleWinRate").textContent = pct(stats.winRate || 0);
 	const slots = Array.isArray(d.livePositions) ? d.livePositions : [];
-	$("pubxSlots").textContent = (d.openSlots || slots.length) + " / " + (d.maxSlots || 3);
-	$("pubxOpen").innerHTML = slots.map((slot, index) => {
+	$("candleSlots").textContent = (d.openSlots || slots.length) + " / " + (d.maxSlots || 3);
+	$("candleScanned").textContent = number(state.lockConfirmed || 0) + " / " + number(state.candleCandidates || 0);
+	$("candleRejected").textContent = number(state.lockRejected || 0);
+	$("candleFeed").textContent = state.candleSource && state.candleInterval
+		? state.candleSource + " · " + state.candleInterval + " · LP lock ≥" + number(state.minimumLockedPercent || 90) + "%"
+		: "Waiting for closed candle data";
+	if (!slots.length) $("candleOpen").textContent = "No open positions.";
+	else $("candleOpen").innerHTML = slots.map((slot, index) => {
 		const position = slot.position || {}, live = slot.live || {};
 		const chart = dexLink(position, live);
-		return '<div class="metric" style="margin-bottom:12px"><div class="live-title"><span class="coin-name">Slot ' + (index + 1) + ': ' + escapeHtml(position.symbol) + '</span><span class="badge">PUBX</span>' +
+		return '<div class="metric" style="margin-bottom:12px"><div class="live-title"><span class="coin-name">Slot ' + (index + 1) + ': ' + escapeHtml(position.symbol) + '</span><span class="badge">CANDLE BREAKOUT V1</span>' +
 			(chart ? '<a class="small-link" href="' + chart + '" target="_blank" rel="noopener noreferrer">DexScreener</a>' : '') +
 			'</div><div class="grid"><div class="metric"><div class="metric-label">Invested</div><div class="metric-value">' + money(position.amountInvested) +
 			'</div></div><div class="metric"><div class="metric-label">Entry</div><div class="metric-value">' + price(position.entryPrice) +
 			'</div></div><div class="metric"><div class="metric-label">Current</div><div class="metric-value">' + price(live.currentPrice) +
 			'</div></div><div class="metric"><div class="metric-label">Live P/L</div><div class="metric-value ' + cls(live.pnl) + '">' + money(live.pnl) + ' (' + pct(live.pnlPercent) +
 			')</div></div></div></div>';
-	}).join("") || "No open PubX positions.";
+	}).join("");
 	const trades = Array.isArray(d.completedTrades) ? d.completedTrades : [];
-	$("pubxHistory").innerHTML = trades.map(t => {
+	$("candleHistory").innerHTML = trades.map(t => {
 		const reasons = Array.isArray(t.exitReasons) ? t.exitReasons.join(" / ") : (t.reason || "—");
 		const chart = dexLink(t, null);
 		return '<tr><td><strong>' + escapeHtml(t.symbol) + '</strong></td><td>' + money(t.amountInvested) +
@@ -174,7 +140,7 @@ function renderPubxData(d, error) {
 			'</td><td class="' + cls(t.pnlPercent) + '">' + pct(t.pnlPercent) + '</td><td>' + price(t.entryPrice) +
 			'</td><td>' + price(t.exitPrice) + '</td><td>' + escapeHtml(reasons) + '</td><td>' +
 			(chart ? '<a class="small-link" href="' + chart + '" target="_blank" rel="noopener noreferrer">Chart</a>' : "—") + '</td></tr>';
-	}).join("") || '<tr><td colspan="9">No completed PubX transactions recorded yet.</td></tr>';
+	}).join("") || '<tr><td colspan="9">No completed Candle Breakout transactions yet.</td></tr>';
 }
 
 function renderData(d) {
@@ -188,8 +154,7 @@ function renderData(d) {
 	$("pnlPct").className = "value " + cls(d.totalPnlPercent);
 	$("net").className = "metric-value " + cls(s.netPnl);
 	renderLiveTrade(d); renderScoreStats(d); renderExitReasons(d); renderHistory(d);
-	renderPullbackData(response.pullback, response.pullbackStatus);
-	renderPubxData(response.pubx, response.pubxError);
+	renderCandleBreakoutData(response.candleBreakout, response.candleBreakoutStatus, response.candleBreakoutError);
 }
 
 async function refreshStatus() {
@@ -216,3 +181,4 @@ async function pollStatus() { await refreshStatus(); setTimeout(pollStatus, 2000
 async function pollData() { await refreshData(); await refreshSwarm(); setTimeout(pollData, 5000); }
 pollStatus();
 pollData();
+
