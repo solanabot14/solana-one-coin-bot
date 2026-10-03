@@ -2,80 +2,67 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createBot } = require("./bot");
 const { createPaperTrader } = require("./paperTrader");
-const { createPullbackStrategy } = require("./pullbackStrategy");
-const geckoTerminal = require("./geckoTerminal");
+const { createPubxMomentumStrategy } = require("./pubxMomentumStrategy");
+const { createPubxExitPolicy } = require("./pubxExitPolicy");
 const pullbackDiscovery = require("./pullbackDiscovery");
 
-const EXPERIMENT_VERSION = "PULLBACK-RECLAIM-OHLCV-V2";
-const MAX_CANDLE_WATCHLIST = 4;
+const EXPERIMENT_VERSION = "PUBX-FAST-MOMENTUM-V1";
+const MAX_CANDIDATES_PER_SCAN = 60;
+const POSITION_MONITOR_MS = 2000;
+const SCANNER_INTERVAL_MS = 20000;
 
 function experimentDataFile(env = process.env) {
-	if (env.RAILWAY_ENVIRONMENT_ID && !env.RAILWAY_VOLUME_MOUNT_PATH) {
-		throw new Error("Attach a Railway volume before starting the pullback paper trader.");
-	}
-	const directory = env.RAILWAY_VOLUME_MOUNT_PATH || env.DATA_DIR || __dirname;
-	return path.join(path.resolve(directory), "pullbackExperimentTradingData.json");
+  if (env.RAILWAY_ENVIRONMENT_ID && !env.RAILWAY_VOLUME_MOUNT_PATH) {
+    throw new Error("Attach a Railway volume before starting the PubX paper trader.");
+  }
+  const directory = env.RAILWAY_VOLUME_MOUNT_PATH || env.DATA_DIR || __dirname;
+  return path.join(path.resolve(directory), "pubxFastMomentumTradingData.json");
 }
 
 function createPullbackBot({ trader, timers = globalThis, getTokenData,
-	discover = pullbackDiscovery.discoverCandidates, notifier = null,
-	getPoolCandles = geckoTerminal.getPoolCandles,
-	positionMonitorMs = 5000, scannerIntervalMs = 120000 } = {}) {
-	const strategy = createPullbackStrategy();
-	const notifyNone = notifier || {
-		notifyTrade: async () => {},
-		notifyCritical: async () => {}
-	};
-	const experimentScanner = async options => {
-		const candidates = await discover(options || {});
-		const tracked = new Set(strategy.getTrackedTokens());
-		const ranked = candidates.filter(coin => coin?.tokenAddress && coin?.pairAddress)
-			.sort((a, b) => {
-				const trackedRank = Number(tracked.has(b.tokenAddress)) - Number(tracked.has(a.tokenAddress));
-				if (trackedRank) return trackedRank;
-				const strongBuyRank = Number(b.signal === "STRONG BUY") - Number(a.signal === "STRONG BUY");
-				if (strongBuyRank) return strongBuyRank;
-				const scoreRank = (Number(b.score) || 0) - (Number(a.score) || 0);
-				if (scoreRank) return scoreRank;
-				return (Number(b.volume5m) || 0) - (Number(a.volume5m) || 0);
-			})
-			.slice(0, MAX_CANDLE_WATCHLIST);
-		const candleCandidates = await Promise.all(ranked.map(async coin => {
-			try {
-				const ohlcv1m = await getPoolCandles(coin.pairAddress, coin.tokenAddress, options || {});
-				return { ...coin, ohlcv1m };
-			} catch (error) {
-				console.warn(`PULLBACK CANDLE DATA UNAVAILABLE | ${coin.symbol} | ${error.message}`);
-				return { ...coin, ohlcv1m: [] };
-			}
-		}));
-		return strategy.observe(candleCandidates);
-	};
-	const bot = createBot({
-		trader: trader || createPaperTrader(experimentDataFile(), fs, { strategyVersion: EXPERIMENT_VERSION }),
-		getTokenData,
-		discoverCandidates: experimentScanner,
-		timers,
-		notifier: notifyNone,
-		positionMonitorMs,
-		scannerIntervalMs,
-		botLabel: EXPERIMENT_VERSION
-	});
-	return { ...bot, getStrategyStatus: strategy.getStatus };
+  discover = pullbackDiscovery.discoverCandidates, notifier = null,
+  positionMonitorMs = POSITION_MONITOR_MS, scannerIntervalMs = SCANNER_INTERVAL_MS } = {}) {
+  const strategy = createPubxMomentumStrategy();
+  const notifyNone = notifier || {
+    notifyTrade: async () => {},
+    notifyCritical: async () => {}
+  };
+  const experimentScanner = async options => {
+    const candidates = await discover(options || {});
+    const ranked = (Array.isArray(candidates) ? candidates : [])
+      .filter(coin => coin?.tokenAddress && coin?.pairAddress)
+      .sort((a, b) => (Number(b.volume5m) || 0) - (Number(a.volume5m) || 0))
+      .slice(0, MAX_CANDIDATES_PER_SCAN);
+    return strategy.observe(ranked);
+  };
+  const bot = createBot({
+    trader: trader || createPaperTrader(experimentDataFile(), fs, { strategyVersion: EXPERIMENT_VERSION }),
+    getTokenData,
+    discoverCandidates: experimentScanner,
+    timers,
+    notifier: notifyNone,
+    positionMonitorMs,
+    scannerIntervalMs,
+    botLabel: EXPERIMENT_VERSION,
+    exitPolicy: createPubxExitPolicy()
+  });
+  return { ...bot, getStrategyStatus: strategy.getStatus };
 }
 
 const trader = createPaperTrader(experimentDataFile(), fs, { strategyVersion: EXPERIMENT_VERSION });
 const bot = createPullbackBot({ trader });
 
 module.exports = {
-	EXPERIMENT_VERSION,
-	MAX_CANDLE_WATCHLIST,
-	experimentDataFile,
-	createPullbackBot,
-	start: bot.startBot,
-	stop: bot.stopBot,
-	getStatus: bot.getBotStatus,
-	getLastError: bot.getLastError,
-	getPortfolio: trader.getPortfolio,
-	getStrategyStatus: bot.getStrategyStatus
+  EXPERIMENT_VERSION,
+  MAX_CANDIDATES_PER_SCAN,
+  POSITION_MONITOR_MS,
+  SCANNER_INTERVAL_MS,
+  experimentDataFile,
+  createPullbackBot,
+  start: bot.startBot,
+  stop: bot.stopBot,
+  getStatus: bot.getBotStatus,
+  getLastError: bot.getLastError,
+  getPortfolio: trader.getPortfolio,
+  getStrategyStatus: bot.getStrategyStatus
 };
