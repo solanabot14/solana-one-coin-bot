@@ -257,7 +257,7 @@ th,td{
 
 <div class="controls">
   <a class="panel-link" href="#v31Panel">V3.1 RECORDS</a>
-  <a class="panel-link" href="#pullbackPanel">FAST MOMENTUM V1.4 LOSS-CONTROL</a>
+  <a class="panel-link" href="#pullbackPanel">FAST MOMENTUM STEP-3 V1.5</a>
   <a class="panel-link swarm" href="#swarmPanel">SWARM</a>
 </div>
 
@@ -315,7 +315,7 @@ th,td{
 </div>
 
 <div class="card section" id="pullbackPanel">
-<h2>Fast Momentum V1.4 — Loss-Control Momentum Test</h2>
+<h2>Fast Momentum Step-3 V1.5 — Early Pump Paper Test</h2>
 <p class="muted">Fast Momentum Step-3 scans DexScreener profiles, community takeovers, and boosts every 30 seconds without waiting for candle closes. It enters after three live price checks show two consecutive rises of 0.25%–6% each. Entry keeps liquidity ≥$20,000, at least 4 five-minute transactions, ≥55% buys, volume ≥$1,000 or 1% of liquidity, 5m change from -1% to +18%, and 1h change from -15% to +75%. RugCheck must confirm LP lock ≥90%; unavailable lock data blocks entry.</p>
 <p class="muted">Exits: paper hard-stop target -6%; exit on confirmed flow fade near -2.5%; sell half at +8%, then trail the remainder by 5% with a +2% protection floor. Close stalled positions after 8 minutes and force exit after 15 minutes to free the slot for a new coin. Prices are DexScreener marks, not executable sell quotes, so sudden gaps can exceed a stop. Paper test only.</p>
 <div class="grid">
