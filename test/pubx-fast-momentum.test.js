@@ -26,15 +26,15 @@ test("ranks candidates by live turnover and rejects weak or fading setups", () =
   const now = Date.now();
   const strategy = createPubxMomentumStrategy();
   const entries = strategy.observe([
-    candidate(),
+    candidate({ tokenAddress: "growing", volume5m: 3000 }),
     candidate({ tokenAddress: "low-volume", volume5m: 3000 }),
     candidate({ tokenAddress: "sell-pressure", buys5m: 20, sells5m: 25 }),
     candidate({ tokenAddress: "too-late", priceChange5m: 25 }),
+    candidate({ tokenAddress: "growing", volume5m: 12000 }),
     candidate({ tokenAddress: "stronger", volume5m: 22000, buys5m: 55, sells5m: 15 })
   ], now);
-  assert.deepEqual(entries.map(entry => entry.tokenAddress), ["stronger"]);
-  const next = strategy.observe([candidate({ volume5m: 12000 })], now + 20000);
-  assert.equal(next[0].experimentEntry.volumeGrowingSinceLastScan, true);
+  assert.deepEqual(entries.map(entry => entry.tokenAddress), ["stronger", "growing"]);
+  assert.equal(entries[1].experimentEntry.volumeGrowingSinceLastScan, true);
 });
 
 test("requires at least $30k liquidity, meaningful 5m turnover, and 20 transactions", () => {
