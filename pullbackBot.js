@@ -27,9 +27,16 @@ function createPullbackBot({ trader, timers = globalThis, getTokenData,
   discover = candidateDiscovery.discoverCandidates, notifier = null,
   positionMonitorMs = POSITION_MONITOR_MS, scannerIntervalMs = SCANNER_INTERVAL_MS } = {}) {
   const strategy = createPubxMomentumStrategy();
+  const telegram = require("./telegram");
   const notifyNone = notifier || {
-    notifyTrade: async () => {},
-    notifyCritical: async () => {}
+    notifyTrade: (event, trade) => telegram.sendTelegramMessage(
+      telegram.formatTradeNotification(event, trade)
+        .replace("ONE COIN BOT | ", "PUBX FAST MOMENTUM | ")
+    ),
+    notifyCritical: message => telegram.sendTelegramMessage(
+      telegram.formatCriticalNotification(message)
+        .replace("ONE COIN BOT | ", "PUBX FAST MOMENTUM | ")
+    )
   };
   const experimentScanner = async options => {
     const candidates = await discover(options || {});
