@@ -259,12 +259,12 @@ th,td{
 
 <div class="controls">
   <a class="panel-link" href="#v31Panel">V3.1 BOT</a>
-  <a class="panel-link" href="#pullbackPanel">PULLBACK TEST</a>
+  <a class="panel-link" href="#pullbackPanel">PUBX MOMENTUM TEST</a>
   <a class="panel-link swarm" href="#swarmPanel">SWARM</a>
 </div>
 
 <p id="notice" role="status">
-  V3.1, Swarm, and the pullback paper experiment start automatically with the service.
+  V3.1, Swarm, and the PubX momentum paper experiment start automatically with the service.
 </p>
 
 <div id="v31Panel"></div>
@@ -317,9 +317,9 @@ th,td{
 </div>
 
 <div class="card section" id="pullbackPanel">
-<h2>Experimental Strategy — First Pump, Pullback, Reclaim</h2>
-<p class="muted">Separate $100 paper account, 3 slots, same V3.1 exit rules and compounding. Pullback discovery combines the existing DexScreener candidates with GeckoTerminal's public new-pool feed, then confirms new pools against DexScreener data. New pools skip only the $100k 24h discovery-volume floor; the $30k liquidity floor, entry activity checks, and closed-candle pattern still apply. Up to 4 pools are checked per scan.</p>
-<p class="muted">Entry test: a closed candle confirms a 1.5–8% first pump, then a 2–12% pullback, then a close 0.2% above the recovery micro-high with at least 1.5x the prior five-candle average volume. The current DexScreener quote must remain within 2% of the breakout close. Existing 5m momentum, buy ratio, transaction count, and dollar-volume filters still apply. Open positions are monitored every 5 seconds.</p>
+<h2>PubX Fast Momentum — Paper Test</h2>
+<p class="muted">Separate $100 paper account with 3 slots. PubX checks DexScreener and fresh Solana pools, ranking by 5m turnover, buy pressure, and active price momentum. It scans every 20 seconds and does not wait for a pullback pattern. The test requires at least $30k liquidity and checks 5m volume against liquidity.</p>
+<p class="muted">Entry test: 5m volume must reach at least $5k or 4% of liquidity, with 20+ transactions, 58%+ buys, and 0.75–22% 5m momentum. Exits: 8% hard stop, 50% sale at +10%, 5% trail for the runner, flow-fade exit, and 8-minute stale-trade exit. Open positions are checked every 2 seconds. Transaction counts are a flow proxy; this feed does not identify unique buyer wallets.</p>
 <div class="grid">
   <div class="metric"><div class="metric-label">Status</div><div class="metric-value" id="pullbackStatus">—</div></div>
   <div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value" id="pullbackStarting">$100.00</div></div>
