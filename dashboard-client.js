@@ -123,7 +123,7 @@ function renderCandleBreakoutData(d, state = {}, error = null) {
 	else $("candleOpen").innerHTML = slots.map((slot, index) => {
 		const position = slot.position || {}, live = slot.live || {};
 		const chart = dexLink(position, live);
-		return '<div class="metric" style="margin-bottom:12px"><div class="live-title"><span class="coin-name">Slot ' + (index + 1) + ': ' + escapeHtml(position.symbol) + '</span><span class="badge">CANDLE BREAKOUT V1</span>' +
+		return '<div class="metric" style="margin-bottom:12px"><div class="live-title"><span class="coin-name">Slot ' + (index + 1) + ': ' + escapeHtml(position.symbol) + '</span><span class="badge">CANDLE BREAKOUT V1.1</span>' +
 			(chart ? '<a class="small-link" href="' + chart + '" target="_blank" rel="noopener noreferrer">DexScreener</a>' : '') +
 			'</div><div class="grid"><div class="metric"><div class="metric-label">Invested</div><div class="metric-value">' + money(position.amountInvested) +
 			'</div></div><div class="metric"><div class="metric-label">Entry</div><div class="metric-value">' + price(position.entryPrice) +

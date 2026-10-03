@@ -125,7 +125,7 @@ test("the experiment paper account persists separately and reports dollar plus p
 	assert.ok(Math.abs(summary.totalPnlPercent - expectedPnl) < 1e-10);
 });
 
-test("dashboard renders separate dollar and percent P/L for baseline and experiment", () => {
+test("dashboard renders baseline and Candle Breakout V1.1 dollar and percent P/L", () => {
 	const nodes = new Map();
 	const context = { document: { getElementById(id) {
 		if (!nodes.has(id)) nodes.set(id, { addEventListener() {} });
@@ -139,11 +139,12 @@ test("dashboard renders separate dollar and percent P/L for baseline and experim
 	const account = (totalPnl, totalPnlPercent) => ({ startingBalance: 100, cashBalance: 100,
 		equity: 100 + totalPnl, totalPnl, totalPnlPercent, positions: [], livePositions: [],
 		openSlots: 0, completedTrades: [], scoreStats: [], exitReasonCounts: {}, stats });
-	context.renderData({ v31: account(4.25, 4.25), pullback: account(-1.5, -1.5),
-		pullbackStatus: { running: true, firstPump: 2, pullback: 1, candleSource: "GeckoTerminal public OHLCV", candleInterval: "1m" } });
+	context.renderData({ v31: account(4.25, 4.25), candleBreakout: account(-1.5, -1.5),
+		candleBreakoutStatus: { running: true, lockConfirmed: 2, candleCandidates: 2, minimumLockedPercent: 90,
+			candleSource: "GeckoTerminal public OHLCV", candleInterval: "1m" } });
 	assert.equal(nodes.get("pnl").textContent, "$4.25");
 	assert.equal(nodes.get("pnlPct").textContent, "4.25%");
-	assert.equal(nodes.get("pullbackPnl").textContent, "$-1.50");
-	assert.equal(nodes.get("pullbackPnlPct").textContent, "-1.50%");
-	assert.equal(nodes.get("pullbackCandleFeed").textContent, "GeckoTerminal public OHLCV · 1m closed candles");
+	assert.equal(nodes.get("candlePnl").textContent, "$-1.50");
+	assert.equal(nodes.get("candleReturn").textContent, "-1.50%");
+	assert.equal(nodes.get("candleFeed").textContent, "GeckoTerminal public OHLCV · 1m · LP lock ≥90%");
 });
