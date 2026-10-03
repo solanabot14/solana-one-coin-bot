@@ -44,7 +44,7 @@ const page = `<!doctype html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>V3.1 3-Slot Bot</title>
+<title>PubX Fast Momentum Test</title>
 
 <style>
 *{box-sizing:border-box}
@@ -246,9 +246,9 @@ th,td{
 
 <div class="header">
   <div>
-    <h1>V3.1 Three Slot Bot</h1>
+    <h1>PubX Fast Momentum Test</h1>
     <div class="subtitle">
-      Strategy V3.1 • 3 Slots • 10% Compound • Paper Trading
+      Fast momentum • Quick exits • Paper Trading
     </div>
   </div>
 
@@ -258,13 +258,13 @@ th,td{
 </div>
 
 <div class="controls">
-  <a class="panel-link" href="#v31Panel">V3.1 BOT</a>
+  <a class="panel-link" href="#v31Panel">V3.1 RECORDS</a>
   <a class="panel-link" href="#pullbackPanel">PUBX MOMENTUM TEST</a>
   <a class="panel-link swarm" href="#swarmPanel">SWARM</a>
 </div>
 
 <p id="notice" role="status">
-  V3.1, Swarm, and the PubX momentum paper experiment start automatically with the service.
+  PubX paper trading starts automatically. V3.1 and Swarm remain stopped on this test branch.
 </p>
 
 <div id="v31Panel"></div>
@@ -514,7 +514,10 @@ th,td{
 </body>
 </html>`;
 
-function createDashboardServer({ config = getConfig(), controls = bot,
+const pubxControls = { startBot: pullbackBot.start, stopBot: pullbackBot.stop,
+  getBotStatus: pullbackBot.getStatus, getLastError: pullbackBot.getLastError };
+
+function createDashboardServer({ config = getConfig(), controls = pubxControls,
   portfolio = getPortfolio, marketData = getTokenData,
   batchMarketData = marketData === getTokenData ? getTokensData : null,
   experiment = pullbackBot, experimentPortfolio = pullbackBot.getPortfolio } = {}) {
@@ -588,14 +591,10 @@ if (require.main === module) {
   const config = getConfig();
   getPortfolio();
   const server = createDashboardServer({ config });
-  bot.startBot();
-  swarm.start();
   pullbackBot.start();
   server.listen(config.port, config.host, () => console.log("Dashboard listening on " + config.host + ":" + config.port));
   const shutdown = () => {
-    swarm.stop();
     pullbackBot.stop();
-    bot.stopBot();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 12000).unref();
   };
