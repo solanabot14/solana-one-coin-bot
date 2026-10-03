@@ -145,5 +145,5 @@ test("dashboard renders separate dollar and percent P/L for baseline and experim
 	assert.equal(nodes.get("pnlPct").textContent, "4.25%");
 	assert.equal(nodes.get("pullbackPnl").textContent, "$-1.50");
 	assert.equal(nodes.get("pullbackPnlPct").textContent, "-1.50%");
-	assert.equal(nodes.get("pullbackCandleFeed").textContent, "GeckoTerminal public OHLCV · 1m closed candles");
+	assert.equal(nodes.get("pullbackCandleFeed").textContent, "GeckoTerminal public OHLCV · 1m refresh");
 });
