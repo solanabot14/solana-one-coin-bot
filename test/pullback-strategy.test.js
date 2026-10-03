@@ -54,6 +54,17 @@ test("step-3 accepts the softened 4-transaction threshold while keeping activity
   assert.ok(entry, "locked-liquidity candidate with two small positive steps should qualify");
 });
 
+test("accepts a candidate at the inclusive 52% buy-ratio threshold", () => {
+  const strategy = createPullbackStrategy();
+  const t = Date.now();
+  const base = { buys5m: 13, sells5m: 12 };
+  strategy.observe([coin({ ...base, priceUsd: 1.000 })], t);
+  strategy.observe([coin({ ...base, priceUsd: 1.010 })], t + 30000);
+  const entries = strategy.observe([coin({ ...base, priceUsd: 1.020 })], t + 60000);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].experimentEntry.buyRatio, 0.52);
+});
+
 test("rejects weak liquidity/activity/buy pressure/volume and overheated or sharp single-step pumps", () => {
   const now = Date.now();
   const strategy = createPullbackStrategy();
@@ -68,7 +79,7 @@ test("rejects weak liquidity/activity/buy pressure/volume and overheated or shar
   assert.deepEqual(strategy.getStatus().rejectedByFilter, {
     LIQUIDITY_BELOW_20000: 1,
     FEWER_THAN_4_TRANSACTIONS: 1,
-    BUY_RATIO_BELOW_55_PERCENT: 1,
+    BUY_RATIO_BELOW_52_PERCENT: 1,
     FIVE_MINUTE_VOLUME_TOO_LOW: 1,
     FIVE_MINUTE_MOMENTUM_OUT_OF_RANGE: 1
   });
