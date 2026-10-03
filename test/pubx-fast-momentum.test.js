@@ -25,8 +25,8 @@ test("qualifies active high-volume buy pressure even when baseline strategy says
 test("ranks candidates by live turnover and rejects weak or fading setups", () => {
   const now = Date.now();
   const strategy = createPubxMomentumStrategy();
+  strategy.observe([candidate({ tokenAddress: "growing", volume5m: 3000 })], now - 20000);
   const entries = strategy.observe([
-    candidate({ tokenAddress: "growing", volume5m: 3000 }),
     candidate({ tokenAddress: "low-volume", volume5m: 3000 }),
     candidate({ tokenAddress: "sell-pressure", buys5m: 20, sells5m: 25 }),
     candidate({ tokenAddress: "too-late", priceChange5m: 25 }),
