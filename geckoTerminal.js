@@ -6,10 +6,30 @@ const CANDLE_CACHE_MS = 60 * 1000;
 const NEW_POOLS_CACHE_MS = 60 * 1000;
 // Keep a margin under the public API's approximate 10 requests/minute limit.
 const REQUEST_SPACING_MS = 7500;
+const MAX_REQUEST_SPACING_MS = 15000;
+const RATE_LIMIT_BACKOFF_MS = 60 * 1000;
+const MAX_RATE_LIMIT_BACKOFF_MS = 5 * 60 * 1000;
 const FAILURE_CACHE_MS = 30 * 1000;
 
 function wait(ms) {
 	return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRateLimitError(error) {
+	return Number(error?.response?.status) === 429;
+}
+
+function retryAfterMs(error, nowMs) {
+	const headers = error?.response?.headers;
+	const raw = typeof headers?.get === "function"
+		? headers.get("retry-after")
+		: headers?.["retry-after"] ?? headers?.["Retry-After"];
+	if (raw == null || raw === "") return 0;
+
+	const seconds = Number(raw);
+	if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+	const dateMs = Date.parse(String(raw));
+	return Number.isFinite(dateMs) ? Math.max(0, dateMs - nowMs) : 0;
 }
 
 function normalizeCandles(payload, nowMs = Date.now()) {
@@ -37,21 +57,53 @@ function createGeckoTerminalClient({
 	clock = Date.now,
 	sleep = wait,
 	cacheMs = CANDLE_CACHE_MS,
-	requestSpacingMs = REQUEST_SPACING_MS
+	requestSpacingMs = REQUEST_SPACING_MS,
+	maxRequestSpacingMs = MAX_REQUEST_SPACING_MS,
+	rateLimitBackoffMs = RATE_LIMIT_BACKOFF_MS,
+	maxRateLimitBackoffMs = MAX_RATE_LIMIT_BACKOFF_MS
 } = {}) {
 	const cache = new Map();
 	let requestQueue = Promise.resolve();
 	let lastRequestAt = 0;
+	let currentRequestSpacingMs = requestSpacingMs;
+	let rateLimitedUntil = 0;
+	let consecutiveRateLimits = 0;
 	let newPoolsCache = null;
 	let newPoolsRequest = null;
 
 	function queueRequest(run) {
 		const request = requestQueue.then(async () => {
-			const delayMs = Math.max(0, requestSpacingMs - (clock() - lastRequestAt));
+			const spacingDelayMs = Math.max(0, currentRequestSpacingMs - (clock() - lastRequestAt));
+			const rateLimitDelayMs = Math.max(0, rateLimitedUntil - clock());
+			const delayMs = Math.max(spacingDelayMs, rateLimitDelayMs);
 			if (delayMs > 0) await sleep(delayMs);
 			if (run.signal?.aborted) throw new Error("GeckoTerminal request aborted.");
 			lastRequestAt = clock();
-			return run.execute();
+			try {
+				const result = await run.execute();
+				consecutiveRateLimits = 0;
+				return result;
+			} catch (error) {
+				if (isRateLimitError(error)) {
+					consecutiveRateLimits += 1;
+					const exponentialBackoffMs = Math.min(
+						maxRateLimitBackoffMs,
+						rateLimitBackoffMs * (2 ** (consecutiveRateLimits - 1))
+					);
+					const serverRetryMs = retryAfterMs(error, clock());
+					const cooldownMs = Math.min(
+						maxRateLimitBackoffMs,
+						Math.max(exponentialBackoffMs, serverRetryMs)
+					);
+					rateLimitedUntil = Math.max(rateLimitedUntil, clock() + cooldownMs);
+					currentRequestSpacingMs = Math.min(
+						maxRequestSpacingMs,
+						Math.ceil(currentRequestSpacingMs * 1.5)
+					);
+					console.warn(`GECKOTERMINAL RATE LIMIT | pausing queued requests for ${Math.ceil(cooldownMs / 1000)}s; spacing now ${currentRequestSpacingMs}ms`);
+				}
+				throw error;
+			}
 		});
 		requestQueue = request.catch(() => {});
 		return request;
@@ -104,9 +156,9 @@ function createGeckoTerminalClient({
 		try {
 			return structuredClone(await request);
 		} catch (error) {
-			// Briefly cache failures too, so a provider/rate-limit error cannot
-			// trigger repeated requests or stop the separate paper experiment.
-			cache.set(cacheKey, { at: clock(), ttl: FAILURE_CACHE_MS, candles: [] });
+			// Cache rate-limit failures for the full shared cooldown to avoid retry storms.
+			const failureTtl = Math.max(FAILURE_CACHE_MS, rateLimitedUntil - clock());
+			cache.set(cacheKey, { at: clock(), ttl: failureTtl, candles: [] });
 			throw error;
 		}
 	}
@@ -120,6 +172,7 @@ module.exports = {
 	API_BASE,
 	CANDLE_INTERVAL_SECONDS,
 	createGeckoTerminalClient,
+	isRateLimitError,
 	normalizeCandles,
 	getPoolCandles: client.getPoolCandles,
 	getNewSolanaPools: client.getNewSolanaPools
