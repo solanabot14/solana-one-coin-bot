@@ -13,7 +13,7 @@ test("keeps candidates under $100k 24h volume when recent-flow data is available
       liquidityUsd: 40000, volume5m: 6500, volume24h: 18000,
       priceChange5m: 4, buys5m: 35, sells5m: 15 }],
     ["thin-token", { symbol: "THIN", pairAddress: "thin-pool", priceUsd: 1,
-      liquidityUsd: 29999, volume5m: 12000, volume24h: 9000,
+      liquidityUsd: 19999, volume5m: 12000, volume24h: 9000,
       priceChange5m: 5, buys5m: 40, sells5m: 10 }]
   ]);
   const discovery = createPubxDiscovery({
@@ -25,7 +25,7 @@ test("keeps candidates under $100k 24h volume when recent-flow data is available
   });
   const candidates = await discovery.discoverCandidatesFresh();
   assert.equal(calls.length, 4);
-  assert.equal(MIN_LIQUIDITY_USD, 30000);
+  assert.equal(MIN_LIQUIDITY_USD, 20000);
   assert.deepEqual(candidates.map(coin => coin.tokenAddress), ["fast-token"]);
   assert.equal(candidates[0].volume24h, 18000);
   assert.match(candidates[0].reasons[0], /no \$100k minimum/);
