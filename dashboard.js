@@ -42,7 +42,7 @@ const page = `<!doctype html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Fast Momentum V1.3 Aggressive Paper Test</title>
+<title>Fast Momentum V1.4 Loss-Control Paper Test</title>
 
 <style>
 *{box-sizing:border-box}
@@ -244,7 +244,7 @@ th,td{
 
 <div class="header">
   <div>
-    <h1>Fast Momentum V1.3 Aggressive</h1>
+    <h1>Fast Momentum V1.4 Loss-Control</h1>
     <div class="subtitle">
       Fast market scan • Locked liquidity • Paper Trading
     </div>
@@ -257,7 +257,7 @@ th,td{
 
 <div class="controls">
   <a class="panel-link" href="#v31Panel">V3.1 RECORDS</a>
-  <a class="panel-link" href="#pullbackPanel">FAST MOMENTUM V1.3</a>
+  <a class="panel-link" href="#pullbackPanel">FAST MOMENTUM V1.4 LOSS-CONTROL</a>
   <a class="panel-link swarm" href="#swarmPanel">SWARM</a>
 </div>
 
@@ -315,9 +315,9 @@ th,td{
 </div>
 
 <div class="card section" id="pullbackPanel">
-<h2>Fast Momentum V1.3 — Aggressive Entry Paper Test</h2>
-<p class="muted">Fast Momentum V1.3 Aggressive Entry scans DexScreener latest profiles, community takeovers, and boosts with a separate $100 paper account and 3 slots. It scans market data every 60 seconds without waiting for candles. Entry requires liquidity ≥$20,000, at least 6 five-minute transactions, 50% buys, and five-minute volume ≥$1,000 or 1% of liquidity. The 5m price change may range from -1% to +15%, and the 1h change from -15% to +80%. RugCheck must confirm LP lock ≥90%; unavailable lock data blocks entry. The dashboard shows each scan's rejection reasons.</p>
-<p class="muted">Exits: 9% hard stop, sell half at +12%, trail the runner by 7% after it reaches +12%, with a +3% protection floor and a 12-minute stale-trade exit. Open positions are checked every 2 seconds. This is a paper experiment; it does not establish that the setup is profitable.</p>
+<h2>Fast Momentum V1.4 — Loss-Control Momentum Test</h2>
+<p class="muted">Fast Momentum V1.4 scans DexScreener profiles, community takeovers, and boosts every 60 seconds without waiting for candles. The isolated paper account starts at $100 with 3 slots. Entry requires liquidity ≥$20,000, at least 6 five-minute transactions, 50% buys, and five-minute volume ≥$1,000 or 1% of liquidity. Anti-chase limits: 5m change -1% to +12%; 1h change -15% to +75%. RugCheck must confirm LP lock ≥90%; unavailable lock data blocks entry.</p>
+<p class="muted">Exits: test-only hard-stop trigger at -6%; sell half at +12%, trail the runner by 7% after it reaches +12%, with a +3% protection floor and a 12-minute stale-trade exit. Prices are DexScreener marks checked every 2 seconds, not executable sell quotes, so a sudden gap can exceed the stop. Paper test only.</p>
 <div class="grid">
   <div class="metric"><div class="metric-label">Status</div><div class="metric-value" id="pullbackStatus">—</div></div>
   <div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value" id="pullbackStarting">$100.00</div></div>

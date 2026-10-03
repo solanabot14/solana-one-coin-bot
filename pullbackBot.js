@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createBot } = require("./bot");
 const { createPaperTrader } = require("./paperTrader");
-const { createCandleBreakoutExitPolicy } = require("./candleBreakoutExitPolicy");
+const { createFastMomentumExitPolicy } = require("./pubxTestExitPolicy");
 const { getLockStatus } = require("./lpLockChecker");
 const pubxDiscovery = require("./pubxDiscovery");
 const candidateDiscovery = pubxDiscovery.discoverCandidates;
@@ -73,7 +73,7 @@ function createPullbackBot({ trader, timers = globalThis, getTokenData,
     positionMonitorMs,
     scannerIntervalMs,
     botLabel: EXPERIMENT_VERSION,
-    exitPolicy: createCandleBreakoutExitPolicy()
+    exitPolicy: createFastMomentumExitPolicy()
   });
   return { ...bot, getStrategyStatus: () => ({ ...strategy.getStatus(), ...scanStats }) };
 }

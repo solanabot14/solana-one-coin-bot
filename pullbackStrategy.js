@@ -4,9 +4,9 @@ const MIN_VOLUME_LIQUIDITY_RATIO = 0.01;
 const MIN_TRANSACTIONS_5M = 6;
 const MIN_BUY_RATIO = 0.50;
 const MIN_CHANGE_5M = -1;
-const MAX_CHANGE_5M = 15;
+const MAX_CHANGE_5M = 12;
 const MIN_CHANGE_1H = -15;
-const MAX_CHANGE_1H = 80;
+const MAX_CHANGE_1H = 75;
 
 function createPullbackStrategy() {
 	let rejectedByFilter = {};
@@ -37,12 +37,14 @@ function createPullbackStrategy() {
 			ready.push({ ...coin, signal: "STRONG BUY", reasons: [
 				"FAST MOMENTUM V1: DexScreener profile/boost discovery; no candle wait",
 				`FAST MOMENTUM V1: liquidity $${Math.round(liquidity).toLocaleString()}, ${totalTransactions} five-minute transactions, ${(buyRatio * 100).toFixed(0)}% buys`,
-				`FAST MOMENTUM V1: five-minute volume $${Math.round(volume5m).toLocaleString()}, price change ${change5m.toFixed(2)}% / 5m and ${change1h.toFixed(2)}% / 1h`
+				`FAST MOMENTUM V1: five-minute volume ${Math.round(volume5m).toLocaleString()}, price change ${change5m.toFixed(2)}% / 5m and ${change1h.toFixed(2)}% / 1h`,
+				"FAST MOMENTUM V1: anti-chase limits ≤12% / 5m and ≤75% / 1h"
 			], experimentEntry: {
 				model: "FAST_MOMENTUM_V1_3_AGGRESSIVE",
 				discoverySource: "DexScreener latest profiles, community takeovers, latest/top boosts",
 				liquidityUsd: liquidity, volume5mUsd: volume5m, transactions5m: totalTransactions,
 				buyRatio, priceChange5m: change5m, priceChange1h: change1h,
+				maxEntryChange5m: MAX_CHANGE_5M, maxEntryChange1h: MAX_CHANGE_1H,
 				observedAt: new Date(now).toISOString()
 			} });
 		}
