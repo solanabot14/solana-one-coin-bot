@@ -42,7 +42,7 @@ const page = `<!doctype html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Fast Momentum V1.4 Loss-Control Paper Test</title>
+<title>Fast Momentum Step-3 V1.5 Paper Test</title>
 
 <style>
 *{box-sizing:border-box}
@@ -244,7 +244,7 @@ th,td{
 
 <div class="header">
   <div>
-    <h1>Fast Momentum V1.4 Loss-Control</h1>
+    <h1>Fast Momentum Step-3 V1.5</h1>
     <div class="subtitle">
       Fast market scan • Locked liquidity • Paper Trading
     </div>
@@ -316,8 +316,8 @@ th,td{
 
 <div class="card section" id="pullbackPanel">
 <h2>Fast Momentum V1.4 — Loss-Control Momentum Test</h2>
-<p class="muted">Fast Momentum V1.4 scans DexScreener profiles, community takeovers, and boosts every 60 seconds without waiting for candles. The isolated paper account starts at $100 with 3 slots. Entry requires liquidity ≥$20,000, at least 6 five-minute transactions, 50% buys, and five-minute volume ≥$1,000 or 1% of liquidity. Anti-chase limits: 5m change -1% to +12%; 1h change -15% to +75%. RugCheck must confirm LP lock ≥90%; unavailable lock data blocks entry.</p>
-<p class="muted">Exits: test-only hard-stop trigger at -6%; sell half at +12%, trail the runner by 7% after it reaches +12%, with a +3% protection floor and a 12-minute stale-trade exit. Prices are DexScreener marks checked every 2 seconds, not executable sell quotes, so a sudden gap can exceed the stop. Paper test only.</p>
+<p class="muted">Fast Momentum Step-3 scans DexScreener profiles, community takeovers, and boosts every 30 seconds without waiting for candle closes. It enters after three live price checks show two consecutive rises of 0.25%–6% each. Entry keeps liquidity ≥$20,000, at least 4 five-minute transactions, ≥55% buys, volume ≥$1,000 or 1% of liquidity, 5m change from -1% to +18%, and 1h change from -15% to +75%. RugCheck must confirm LP lock ≥90%; unavailable lock data blocks entry.</p>
+<p class="muted">Exits: paper hard-stop target -6%; exit on confirmed flow fade near -2.5%; sell half at +8%, then trail the remainder by 5% with a +2% protection floor. Close stalled positions after 8 minutes and force exit after 15 minutes to free the slot for a new coin. Prices are DexScreener marks, not executable sell quotes, so sudden gaps can exceed a stop. Paper test only.</p>
 <div class="grid">
   <div class="metric"><div class="metric-label">Status</div><div class="metric-value" id="pullbackStatus">—</div></div>
   <div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value" id="pullbackStarting">$100.00</div></div>
