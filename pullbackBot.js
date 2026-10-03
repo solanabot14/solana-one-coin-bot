@@ -11,7 +11,7 @@ const candidateDiscovery = pullbackDiscovery.createPullbackDiscovery({
 });
 
 const EXPERIMENT_VERSION = "CANDLE-BREAKOUT-1M-V1";
-const MAX_CANDIDATES_PER_SCAN = 2;
+const MAX_CANDIDATES_PER_SCAN = 5;
 const POSITION_MONITOR_MS = 2000;
 const SCANNER_INTERVAL_MS = 45000;
 
