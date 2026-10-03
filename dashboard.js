@@ -330,8 +330,8 @@ th,td{
   <div class="metric"><div class="metric-label">Completed Positions</div><div class="metric-value" id="pullbackCount">0</div></div>
   <div class="metric"><div class="metric-label">Win Rate</div><div class="metric-value" id="pullbackWinRate">0.00%</div></div>
   <div class="metric"><div class="metric-label">Open Slots</div><div class="metric-value" id="pullbackSlots">0 / 3</div></div>
-  <div class="metric"><div class="metric-label">Watching Pumps / Pullbacks</div><div class="metric-value" id="pullbackWatching">0 / 0</div></div>
-  <div class="metric"><div class="metric-label">Entry Candle Data</div><div class="metric-value" id="pullbackCandleFeed">Waiting for candle data</div></div>
+  <div class="metric"><div class="metric-label">Qualified / Scanned</div><div class="metric-value" id="pullbackWatching">0 / 0</div></div>
+  <div class="metric"><div class="metric-label">Momentum Feed</div><div class="metric-value" id="pullbackCandleFeed">Waiting for candle data</div></div>
 </div>
 <div class="section"><h3>Experimental Open Positions</h3><div id="pullbackLive" class="empty">Waiting for the first pump / pullback pattern...</div></div>
 <div class="section"><h3>Experimental Completed Transactions</h3><p class="muted">Each trade shows dollars invested, dollars sold, realized P/L in dollars, and return percentage.</p><div style="overflow-x:auto"><table>
