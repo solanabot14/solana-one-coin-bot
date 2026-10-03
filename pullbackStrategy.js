@@ -1,15 +1,15 @@
 const MIN_CANDLES = 6;
-const BREAKOUT_LOOKBACK = 3;
+const BREAKOUT_LOOKBACK = 2;
 const MIN_BREAKOUT_BUFFER_PERCENT = 0;
-const MIN_CLOSE_LOCATION = 0.45;
-const MIN_BREAKOUT_VOLUME_MULTIPLE = 1.0;
+const MIN_CLOSE_LOCATION = 0.35;
+const MIN_BREAKOUT_VOLUME_MULTIPLE = 0.75;
 const MAX_CANDLE_AGE_MS = 3 * 60 * 1000;
 const MAX_ENTRY_EXTENSION_PERCENT = 2.5;
 const MIN_LIQUIDITY_USD = 20000;
-const MIN_VOLUME_5M_USD = 1500;
-const MIN_VOLUME_LIQUIDITY_RATIO = 0.015;
-const MIN_TRANSACTIONS_5M = 8;
-const MIN_BUY_RATIO = 0.52;
+const MIN_VOLUME_5M_USD = 1000;
+const MIN_VOLUME_LIQUIDITY_RATIO = 0.01;
+const MIN_TRANSACTIONS_5M = 6;
+const MIN_BUY_RATIO = 0.50;
 
 function detectPattern(inputCandles, now = Date.now()) {
 	const candles = (Array.isArray(inputCandles) ? inputCandles : [])
@@ -73,11 +73,11 @@ function createPullbackStrategy() {
 				quoteExtensionPercent < -0.5 || quoteExtensionPercent > MAX_ENTRY_EXTENSION_PERCENT) continue;
 			const candleTime = new Date(pattern.breakoutTimestamp * 1000).toISOString();
 			ready.push({ ...coin, signal: "STRONG BUY", reasons: [
-				"CANDLE BREAKOUT V1: closed 1m candle cleared the prior 3-candle high",
+				"CANDLE BREAKOUT V1: closed 1m candle cleared the prior 2-candle high",
 				`CANDLE BREAKOUT V1: ${pattern.breakoutPercent.toFixed(2)}% breakout, ${pattern.breakoutVolumeMultiple.toFixed(2)}x candle volume, close in top ${(pattern.closeLocation * 100).toFixed(0)}% of range`,
 				`CANDLE BREAKOUT V1: quote ${quoteExtensionPercent.toFixed(2)}% from breakout close; 5m activity ${total} tx, ${(buyRatio * 100).toFixed(0)}% buys`
 			], experimentEntry: {
-				model: "CANDLE_BREAKOUT_1M_V1_1_EXPANDED", candleSource: "GeckoTerminal public OHLCV", candleInterval: "1m",
+				model: "CANDLE_BREAKOUT_1M_V1_2_AGGRESSIVE", candleSource: "GeckoTerminal public OHLCV", candleInterval: "1m",
 				poolAddress: coin.pairAddress || null, breakoutAt: candleTime, breakoutClose: pattern.breakoutClose,
 				priorHigh: pattern.priorHigh, breakoutPercent: pattern.breakoutPercent, closeLocation: pattern.closeLocation,
 				breakoutVolumeMultiple: pattern.breakoutVolumeMultiple, quotePriceAtEntryCheck: price,
