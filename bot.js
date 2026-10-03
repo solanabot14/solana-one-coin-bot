@@ -13,6 +13,8 @@ const TAKE_PROFIT_1_SELL_PERCENT = 25;
 const TAKE_PROFIT_2_PERCENT = 30;
 const TAKE_PROFIT_2_SELL_PERCENT = 35;
 const TRAILING_STOP_PERCENT = 8;
+const PROFIT_LOCK_TRIGGER_PERCENT = 10;
+const PROFIT_LOCK_FLOOR_PERCENT = 4;
 const MOMENTUM_EXIT_MIN_LOSS = -2;
 const MOMENTUM_EXIT_5M = -3;
 const MOMENTUM_EXIT_STRONG_LOSS = -5;
@@ -175,6 +177,14 @@ function createBot({
 
       if (profitPercent <= HARD_STOP_PERCENT) {
         exit("HARD STOP");
+        continue;
+      }
+
+      const highestProfitPercent = ((Number(position.highestPrice) - entryPrice) / entryPrice) * 100;
+      const profitLockActive = highestProfitPercent >= PROFIT_LOCK_TRIGGER_PERCENT &&
+        !position.secondTakeProfitDone;
+      if (profitLockActive && profitPercent <= PROFIT_LOCK_FLOOR_PERCENT) {
+        exit("PROFIT LOCK");
         continue;
       }
 
