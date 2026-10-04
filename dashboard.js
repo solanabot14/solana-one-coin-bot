@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const bot = require("./bot");
-const { getPortfolio, sell, positionKey } = require("./paperTrader");
+const { getPortfolio } = require("./paperTrader");
 const { getTokenData, getTokensData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
 const swarm = require("./janMvpBot");
@@ -151,52 +151,19 @@ function json(res, value, status = 200) {
   res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(value));
 }
 if (require.main === module) {
-  (async () => {
-    const config = getConfig();
-    getPortfolio();
-
-    if (process.env.V31_CLOSE_POSITION_ON_START === "1") {
-      const account = getPortfolio();
-      const positions = Array.isArray(account.positions)
-        ? account.positions
-        : (account.position ? [account.position] : []);
-      const position = positions[0] || null;
-
-      if (position) {
-        const quote = await getTokenData(position.tokenAddress);
-        const currentPrice = Number(quote && quote.priceUsd);
-        if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
-          throw new Error("Could not obtain a current price for the requested paper close.");
-        }
-        const result = sell(currentPrice, 100, {
-          expectedPosition: positionKey(position),
-          reason: "MANUAL PAPER CLOSE"
-        });
-        if (!result.success) throw new Error("Paper close failed: " + result.message);
-        console.log("ONE-TIME V3.1 PAPER CLOSE | " + position.symbol +
-          " | price=$" + currentPrice +
-          " | sale=$" + result.trade.saleValue +
-          " | P/L=$" + result.trade.pnl);
-      } else {
-        console.log("ONE-TIME V3.1 PAPER CLOSE | No open V3.1 position found.");
-      }
-    }
-
-    const server = createDashboardServer({ config });
-    bot.startBot();
-    swarm.start();
-    server.listen(config.port, config.host, () => console.log("Dashboard listening on " + config.host + ":" + config.port));
-    const shutdown = () => {
-      swarm.stop();
-      bot.stopBot();
-      server.close(() => process.exit(0));
-      setTimeout(() => process.exit(0), 12000).unref();
-    };
-    process.once("SIGTERM", shutdown);
-    process.once("SIGINT", shutdown);
-  })().catch(error => {
-    console.error("Startup failed:", error.message);
-    process.exitCode = 1;
-  });
+  const config = getConfig();
+  getPortfolio();
+  const server = createDashboardServer({ config });
+  bot.startBot();
+  swarm.start();
+  server.listen(config.port, config.host, () => console.log("Dashboard listening on " + config.host + ":" + config.port));
+  const shutdown = () => {
+    swarm.stop();
+    bot.stopBot();
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 12000).unref();
+  };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
 }
 module.exports = { createDashboardServer, getConfig, fetchCandleBreakoutDashboard };
