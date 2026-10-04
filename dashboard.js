@@ -41,7 +41,7 @@ const page = `<!doctype html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>V3.1 Original — 2 Slots</title>
+<title>B3.1 Profitability Lab — Paper Only</title>
 
 <style>
 *{box-sizing:border-box}
@@ -243,9 +243,9 @@ th,td{
 
 <div class="header">
   <div>
-    <h1>V3.1 Original — 2 Slots</h1>
+    <h1>B3.1 Profitability Lab — Paper Only</h1>
     <div class="subtitle">
-      V3.1 original entry and exit rules • $10 per slot • Two simultaneous slots • Paper Trading
+      Fast momentum lab • two paper slots • estimated execution costs included
     </div>
   </div>
 
@@ -255,7 +255,7 @@ th,td{
 </div>
 
 <div class="controls">
-  <a class="panel-link" href="#v31Panel">V3.1 BOT</a>
+  <a class="panel-link" href="#v31Panel">PROFITABILITY LAB</a>
   <a class="panel-link" href="#candleBreakoutPanel">CANDLE BREAKOUT V1.1</a>
   <a class="panel-link swarm" href="#swarmPanel">SWARM</a>
 </div>
@@ -341,7 +341,7 @@ th,td{
 
 <div class="card section">
 
-<h2>V3.1 Performance</h2>
+<h2>Profitability Lab Performance</h2>
 
 <div class="grid">
 
@@ -422,7 +422,7 @@ th,td{
 <tbody id="scoreStats">
 <tr>
 <td colspan="8">
-  No V3.1 trades yet.
+  No lab trades yet.
 </td>
 </tr>
 </tbody>
