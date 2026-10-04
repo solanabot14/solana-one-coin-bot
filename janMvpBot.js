@@ -3,6 +3,7 @@ const telegram = require("./telegram");
 const scanner = require("./scanner");
 const { createJanMvpTrader } = require("./janMvpTrader");
 const paperTrader = require("./paperTrader");
+const { getLockStatus } = require("./lpLockChecker");
 
 const POSITION_MONITOR_MS = 5000;
 const OG_FOLLOW_INTERVAL_MS = 2000;
@@ -13,7 +14,9 @@ const TOKEN_COOLDOWN_MS = 60 * 60 * 1000;
 
 const HARD_STOP_PERCENT = -10;
 const TAKE_PROFIT_1_PERCENT = 15;
-const TAKE_PROFIT_1_SELL_PERCENT = 15;
+const TAKE_PROFIT_1_SELL_PERCENT = 25;
+const PROFIT_LOCK_TRIGGER_PERCENT = 10;
+const PROFIT_LOCK_FLOOR_PERCENT = 4;
 const TAKE_PROFIT_2_PERCENT = 30;
 const TAKE_PROFIT_2_SELL_PERCENT = 35;
 const TRAILING_STOP_PERCENT = 8;
@@ -29,6 +32,7 @@ function createJanMvpBot({
   getTokenData = market.getTokenData,
   getOgPortfolio = paperTrader.getPortfolio,
   discoverCandidates = scanner.discoverCandidates,
+  checkLiquidityLock = getLockStatus,
   timers = globalThis,
   notifier = telegram
 } = {}) {
@@ -171,7 +175,14 @@ function createJanMvpBot({
       let coin = null;
       while (candidateIndex < usable.length) {
         const candidate = usable[candidateIndex++];
-        if (!occupied.has(candidate.tokenAddress)) { coin = candidate; break; }
+        if (occupied.has(candidate.tokenAddress)) continue;
+        const lock = await checkLiquidityLock(candidate.tokenAddress);
+        if (!lock?.allowed || Number(lock.lockedPercent) < 90) {
+          console.log("SWARM LP LOCK GATE | " + candidate.symbol + " | skipped | " + (lock?.reason || "LOCK_STATUS_UNAVAILABLE"));
+          continue;
+        }
+        coin = candidate;
+        break;
       }
       if (!coin) break;
       const result = trader.buy(slot.id, coin, { source: "SWARM_V31_DISCOVERY" });
@@ -230,6 +241,12 @@ function createJanMvpBot({
     const momentumExitA = profitPercent <= MOMENTUM_EXIT_MIN_LOSS && momentum5m <= MOMENTUM_EXIT_5M && sellPressure;
     const momentumExitB = profitPercent <= MOMENTUM_EXIT_STRONG_LOSS && momentum5m <= MOMENTUM_EXIT_STRONG_5M;
     if (momentumExitA || momentumExitB) { await exit("MOMENTUM EXIT"); return; }
+
+    const profitLockActive = highestProfitPercent >= PROFIT_LOCK_TRIGGER_PERCENT &&
+      !p.secondTakeProfitDone;
+    if (profitLockActive && profitPercent <= PROFIT_LOCK_FLOOR_PERCENT) {
+      await exit("PROFIT LOCK"); return;
+    }
 
     if (profitPercent >= TAKE_PROFIT_1_PERCENT && !p.firstTakeProfitDone) {
       return void trader.sell(slot.id, currentPrice, TAKE_PROFIT_1_SELL_PERCENT, {
