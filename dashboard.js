@@ -230,9 +230,42 @@ th,td{
   text-align:left
 }
 
+.quick-overview-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.quick-bot-card{min-width:0;padding:16px}
+.quick-bot-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.quick-bot-head h3{margin:0}
+.quick-bot-card h4{margin:14px 0 6px}
+.quick-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:12px}
+.quick-stat{background:#0b1018;border-radius:8px;padding:9px;min-width:0}
+.quick-stat-label{color:#8792a5;font-size:10px;text-transform:uppercase;margin-bottom:4px}
+.quick-stat-value{font-size:18px;font-weight:bold;overflow-wrap:anywhere}
+.quick-position-list{display:flex;flex-direction:column;gap:0}
+.quick-position-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 0;border-top:1px solid #283141;min-width:0}
+.quick-position-row>div:first-child{min-width:0;overflow-wrap:anywhere}
+.quick-position-result{text-align:right;font-weight:bold;white-space:nowrap}
+.lab-open-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:12px}
+.lab-open-card{min-width:0}
+.lab-position-header{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:12px}
+.lab-position-header .coin-name{font-size:19px;overflow-wrap:anywhere}
+.lab-position-pnl{font-size:23px;font-weight:bold;margin:8px 0 14px}
+.lab-position-details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.lab-position-details .metric{min-width:0;padding:10px}
+.lab-position-details .metric-value{font-size:16px;overflow-wrap:anywhere}
+
 @media(max-width:600px){
   body{padding:14px}
   .value{font-size:21px}
+  .quick-overview-grid{gap:8px}
+  .quick-bot-card{padding:11px}
+  .quick-bot-head h3{font-size:16px}
+  .quick-bot-head .badge{font-size:9px;padding:4px 6px}
+  .quick-stat{padding:7px}
+  .quick-stat-label{font-size:9px}
+  .quick-stat-value{font-size:15px}
+  .quick-position-row{align-items:flex-start;font-size:12px}
+  .quick-position-result{font-size:12px}
+  .lab-open-grid{grid-template-columns:1fr}
+  .lab-position-header .coin-name{font-size:18px}
 }
 </style>
 </head>
@@ -255,6 +288,7 @@ th,td{
 </div>
 
 <div class="controls">
+  <a class="panel-link" href="#quickView">QUICK VIEW</a>
   <a class="panel-link" href="#v31Panel">V3.1 BOT</a>
   <a class="panel-link" href="#candleBreakoutPanel">CANDLE BREAKOUT V1.1</a>
   <a class="panel-link" href="#profitabilityLabPanel">B3.1 PROFITABILITY LAB</a>
@@ -264,6 +298,32 @@ th,td{
 <p id="notice" role="status">
   V3.1 strategy and account stay on this service. Paper experiment panels below show separate test accounts in read-only mode.
 </p>
+
+<div class="card section" id="quickView">
+  <h2>Quick View</h2>
+  <div class="quick-overview-grid">
+    <section class="card quick-bot-card">
+      <div class="quick-bot-head"><h3>V3.1</h3><span class="badge" id="quickV31Status">CONNECTING</span></div>
+      <div class="quick-stats">
+        <div class="quick-stat"><div class="quick-stat-label">Equity</div><div class="quick-stat-value" id="quickV31Equity">—</div></div>
+        <div class="quick-stat"><div class="quick-stat-label">P/L</div><div class="quick-stat-value" id="quickV31Pnl">—</div></div>
+        <div class="quick-stat"><div class="quick-stat-label">Return</div><div class="quick-stat-value" id="quickV31Return">—</div></div>
+        <div class="quick-stat"><div class="quick-stat-label">Open Slots</div><div class="quick-stat-value" id="quickV31Slots">—</div></div>
+      </div>
+      <h4>Open Trades</h4><div class="quick-position-list" id="quickV31Positions"><div class="muted">Waiting for positions…</div></div>
+    </section>
+    <section class="card quick-bot-card">
+      <div class="quick-bot-head"><h3>Profitability Lab</h3><span class="badge" id="quickLabStatus">CONNECTING</span></div>
+      <div class="quick-stats">
+        <div class="quick-stat"><div class="quick-stat-label">Equity</div><div class="quick-stat-value" id="quickLabEquity">—</div></div>
+        <div class="quick-stat"><div class="quick-stat-label">P/L</div><div class="quick-stat-value" id="quickLabPnl">—</div></div>
+        <div class="quick-stat"><div class="quick-stat-label">Return</div><div class="quick-stat-value" id="quickLabReturn">—</div></div>
+        <div class="quick-stat"><div class="quick-stat-label">Open Slots</div><div class="quick-stat-value" id="quickLabSlots">—</div></div>
+      </div>
+      <h4>Open Trades</h4><div class="quick-position-list" id="quickLabPositions"><div class="muted">Waiting for positions…</div></div>
+    </section>
+  </div>
+</div>
 
 <div id="v31Panel"></div>
 
@@ -355,10 +415,7 @@ th,td{
   <div class="metric"><div class="metric-label">Open Slots</div><div class="metric-value" id="labSlots">—</div></div>
   <div class="metric"><div class="metric-label">Profit Factor</div><div class="metric-value" id="labProfitFactor">—</div></div>
 </div>
-<div class="section"><h3>Open Live Slots <span class="badge" id="labOpenCount">0 / 2</span></h3><p class="muted">Current paper positions with live price, unrealized P/L, and a direct chart link.</p><div style="overflow-x:auto"><table>
-<thead><tr><th>Slot</th><th>Coin / Mint</th><th>Invested</th><th>Entry</th><th>Current</th><th>Live P/L</th><th>ROI</th><th>Age</th><th>Chart</th></tr></thead>
-<tbody id="labOpenPositions"><tr><td colspan="9">Waiting for live lab positions…</td></tr></tbody>
-</table></div></div>
+<div class="section"><h3>Open Live Slots <span class="badge" id="labOpenCount">0 / 2</span></h3><p class="muted">Current paper positions with live price, unrealized P/L, and a direct chart link.</p><div class="lab-open-grid" id="labOpenPositions"><div class="muted">Waiting for live lab positions…</div></div></div>
 <div class="section"><h3>Recent Lab Transactions</h3><div style="overflow-x:auto"><table>
 <thead><tr><th>Coin</th><th>Invested</th><th>Sold</th><th>Realized P/L</th><th>Return</th><th>Exit Reason</th></tr></thead>
 <tbody id="labHistory"><tr><td colspan="6">Waiting for lab data…</td></tr></tbody>
