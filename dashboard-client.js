@@ -297,18 +297,46 @@ async function refreshSwarm() {
 		const slots = Array.isArray(d.slots) ? d.slots : [];
 		const openSlots = slots.filter(slot => slot.position);
 		const totalPnl = Number(d.totalPnl) || 0;
-		const startingCapital = Number(d.initialCapital) || (Number(d.totalCapital) - totalPnl);
+		const startingCapital = Number(d.startingCapital) || (Number(d.totalCapital) - totalPnl);
 		$("swarmStatus").textContent = d.running ? "RUNNING · PAPER" : "STOPPED · PAPER";
 		$("quickSwarmStatus").textContent = d.running ? "RUNNING · PAPER" : "STOPPED · PAPER";
 		$("quickSwarmStatus").className = "badge" + (d.running ? " online" : "");
 		$("swarmEquity").textContent = money(d.totalCapital);
+		$("swarmStarting").textContent = money(startingCapital);
 		$("swarmPnl").textContent = money(totalPnl);
 		$("swarmPnl").className = "metric-value " + cls(totalPnl);
-		$("swarmOpen").textContent = openSlots.length + " / " + (d.slotCount || slots.length || 5);
-		$("swarmSlots").innerHTML = slots.slice(0, 5).map(s => "<tr><td>" + escapeHtml(s.id) + "</td><td>" + money(s.cashBalance) + "</td><td>" + escapeHtml(s.position?.symbol || "—") + "</td><td>" + money(s.position?.amountInvested || 0) + "</td><td>" + number(s.completedTrades) + "</td><td>" + number(s.winners) + "</td><td>" + number(s.losers) + "</td></tr>").join("") || "<tr><td colspan=\"7\">No slots.</td></tr>";
+		$("swarmOpen").textContent = slots.length + " active · " + openSlots.length + " trading";
+		$("swarmReinvested").textContent = money(d.reinvestedProfit);
+		$("swarmReproduction").textContent = money(slots.reduce((sum, s) => sum + Number(s.reproductionBalance || 0), 0));
+		$("swarmPocketed").textContent = money(d.pocketedProfit);
+		$("swarmChildren").textContent = number(d.childrenCreated);
+		$("swarmSlots").innerHTML = slots.slice().sort((a,b) => Number(Boolean(b.position)) - Number(Boolean(a.position)) || Number(a.id) - Number(b.id)).map(s => {
+			const p = s.position || {};
+			const live = s.live || {};
+			const chart = p.tokenAddress ? dexLink(p, live) : null;
+			const parent = s.parentId ? "Parent " + s.parentId : "Genesis root";
+			const next = s.nextChild ? "Child " + (Number(s.nextChildIndex || 0) + 1) + ": " + money(s.nextChild.cost) + " (" + s.nextChild.multiplier + "X)" : "Pyramid complete";
+			const state = s.position ? "TRADING" : (s.growthStatus === "PYRAMID_COMPLETE" ? "PYRAMID COMPLETE" : "GROWING TOWARD NEXT CHILD");
+			return '<article class="swarm-card"><h3>' + escapeHtml(s.swarmId || ("Swarm " + s.id)) + ' · ' + escapeHtml(state) + '</h3>' +
+				'<div class="swarm-card-meta">' + escapeHtml(parent) + ' · Genesis ' + escapeHtml(s.genesisId || "—") + ' · Generation ' + number(s.generation) +
+				(s.formationRow ? ' · Pyramid row ' + number(s.formationRow) + ', position ' + number(s.formationPosition) : '') + '</div>' +
+				'<div class="swarm-card-stats"><div class="swarm-card-stat"><div class="swarm-card-label">Operating capital</div><div class="swarm-card-value">' + money(s.capital) + '</div></div>' +
+				'<div class="swarm-card-stat"><div class="swarm-card-label">Reproduction reserve</div><div class="swarm-card-value">' + money(s.reproductionBalance) + '</div></div>' +
+				'<div class="swarm-card-stat"><div class="swarm-card-label">Next child</div><div class="swarm-card-value">' + escapeHtml(next) + '</div></div>' +
+				'<div class="swarm-card-stat"><div class="swarm-card-label">Eligibility</div><div class="swarm-card-value">' + (s.reproductionEligible ? 'Eligible · retains ≥75%' : (s.growthStatus === "PYRAMID_COMPLETE" ? 'Complete' : 'Keep growing')) + '</div></div>' +
+				'<div class="swarm-card-stat"><div class="swarm-card-label">Pocketed · realized P/L</div><div class="swarm-card-value">' + money(s.pocketedProfit) + ' · ' + money(s.realizedProfit) + '</div></div>' +
+				'<div class="swarm-card-stat"><div class="swarm-card-label">Children · trades</div><div class="swarm-card-value">' + number((s.children || []).length) + ' · ' + number(s.completedTrades) + '</div></div></div>' +
+				'<div class="swarm-card-meta" style="margin:10px 0 0">' + (p.tokenAddress ?
+					'<strong>' + escapeHtml(p.symbol || "Coin") + '</strong> · ' + money(p.amountInvested) + ' invested · ' +
+					(live.currentPrice != null ? price(live.currentPrice) + ' current · ' + money(live.pnl) + ' (' + pct(live.pnlPercent) + ')' : 'live price unavailable') +
+					(chart ? ' · <a class="small-link" href="' + chart + '" target="_blank" rel="noopener noreferrer">Chart</a>' : '') :
+					'No open position') + '</div></article>';
+		}).join("") || '<div class="muted">No active swarms.</div>';
 		$("quickSwarmCapital").textContent = money(d.totalCapital);
 		$("quickSwarmPnl").textContent = money(totalPnl);
 		$("quickSwarmPnl").className = "quick-stat-value " + cls(totalPnl);
+		$("quickSwarmReinvested").textContent = money(d.reinvestedProfit);
+		$("quickSwarmChildren").textContent = number(d.childrenCreated);
 		const returnPercent = startingCapital > 0 ? totalPnl / startingCapital * 100 : null;
 		$("quickSwarmReturn").textContent = pct(returnPercent);
 		$("quickSwarmReturn").className = "quick-stat-value " + cls(returnPercent);
@@ -322,6 +350,8 @@ async function refreshSwarm() {
 		$("quickSwarmPnl").textContent = "—";
 		$("quickSwarmReturn").textContent = "—";
 		$("quickSwarmSlots").textContent = "—";
+		$("quickSwarmReinvested").textContent = "—";
+		$("quickSwarmChildren").textContent = "—";
 		$("quickSwarmPositions").innerHTML = '<div class="muted">Swarm data unavailable.</div>';
 	}
 }
@@ -329,4 +359,3 @@ async function pollStatus() { await refreshStatus(); setTimeout(pollStatus, 2000
 async function pollData() { await refreshData(); await refreshSwarm(); setTimeout(pollData, 5000); }
 pollStatus();
 pollData();
-

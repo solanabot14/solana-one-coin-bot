@@ -2,50 +2,77 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 
-function parseTargets(value) {
-  const targets = String(value || "10,50,100,150").split(",").map(Number)
-    .filter(n => Number.isFinite(n) && n > 0).sort((a,b) => a-b);
-  return [...new Set(targets.length ? targets : [10,50,100,150])];
-}
-
 function getConfig(env = process.env) {
+  const genesisCount = Math.max(1, Math.min(100, Number.parseInt(env.SWARM_GENESIS_COUNT || "5", 10) || 5));
+  const startingCapital = Math.max(0.01, Number(env.SWARM_STARTING_CAPITAL || "10") || 10);
   return {
-    slotCount: Math.max(1, Math.min(20, Number.parseInt(env.JAN_MVP_SLOT_COUNT || "5", 10) || 5)),
-    startingSlotValue: Math.max(0.01, Number(env.JAN_MVP_SLOT_START || 2) || 2),
-    splitThreshold: Math.max(0.01, Number(env.SWARM_SPLIT_THRESHOLD || 10) || 10),
-    postSplitTarget: Math.max(0.01, Number(env.SWARM_POST_SPLIT_TARGET || 100) || 100),
-    childSlotValue: Math.max(0.01, Number(env.SWARM_CHILD_SLOT_VALUE || 2) || 2),
-    targets: parseTargets(env.JAN_MVP_TARGETS)
+    slotCount: genesisCount,
+    startingCapital,
+    startingSlotValue: startingCapital / genesisCount,
+    retentionPercent: 75,
+    reinvestPercent: 50,
+    pocketPercent: 25,
+    reproductionPercent: 25,
+    pyramidRows: 5
   };
 }
 
 function defaultDataFile(env = process.env) {
   const dir = env.RAILWAY_VOLUME_MOUNT_PATH || env.DATA_DIR || __dirname;
-  return path.join(path.resolve(dir), "janMvpData.json");
+  return path.join(path.resolve(dir), "swarmMethodologyData.json");
 }
 
+const PYRAMID_MULTIPLIERS = Object.freeze(
+  Array.from({ length: 5 }, (_, row) =>
+    Array.from({ length: row + 1 }, (_, i) => i + 1)
+      .concat(Array.from({ length: row }, (_, i) => row - i))
+  ).flat()
+);
+const roundCapital = amount => Math.round((Number(amount) + Number.EPSILON) * 1e8) / 1e8;
+
 function initialState(config = getConfig()) {
+  const createdAt = new Date().toISOString();
   return {
-    version: 1,
-    mode: "JAN_MVP_LIVE_PAPER",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    targets: [config.splitThreshold, config.postSplitTarget],
-    initialCapital: config.slotCount * config.startingSlotValue,
+    version: 2,
+    mode: "SWARM_PYRAMID_PAPER",
+    methodology: "PASCAL-25-50-25",
+    createdAt,
+    updatedAt: createdAt,
+    genesisCapital: config.startingCapital,
+    genesisCount: config.slotCount,
+    initialCapital: config.startingCapital,
+    realizedProfit: 0,
+    pocketedProfit: 0,
+    reinvestedProfit: 0,
+    reproductionAllocated: 0,
+    childrenCreated: 0,
+    nextSlotId: config.slotCount + 1,
     slots: Array.from({ length: config.slotCount }, (_, i) => ({
       id: i + 1,
+      swarmId: "G" + (i + 1),
+      parentId: null,
+      genesisId: "G" + (i + 1),
+      generation: 0,
+      localX: config.startingSlotValue,
+      formationRow: null,
+      formationPosition: null,
+      formationMultiplier: null,
+      children: [],
+      nextChildIndex: 0,
+      reproductionEligible: false,
       startingValue: config.startingSlotValue,
       cashBalance: config.startingSlotValue,
+      reproductionBalance: 0,
+      reinvestedProfit: 0,
+      pocketedProfit: 0,
+      realizedProfit: 0,
       position: null,
-      milestonesReached: [],
-      splitDone: false,
-      parentSlotId: null,
-      generation: 0,
       completedTrades: 0,
       winners: 0,
       losers: 0
     })),
-    executions: []
+    executions: [],
+    genealogy: []
   };
 }
 
@@ -54,11 +81,13 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
   let state = null;
 
   function validate(data) {
-    if (!data || !Array.isArray(data.slots) || !Array.isArray(data.executions) || !Array.isArray(data.targets)) {
-      throw new Error("Invalid Jan MVP account.");
+    if (!data || !Array.isArray(data.slots) || !Array.isArray(data.executions) || !Array.isArray(data.genealogy)) {
+      throw new Error("Invalid Swarm methodology account.");
     }
     for (const slot of data.slots) {
-      if (!Number.isFinite(Number(slot.cashBalance)) || Number(slot.cashBalance) < 0) throw new Error("Invalid Jan MVP slot balance.");
+      for (const key of ["cashBalance", "reproductionBalance", "localX"]) {
+        if (!Number.isFinite(Number(slot[key])) || Number(slot[key]) < 0) throw new Error("Invalid Swarm " + key + ".");
+      }
     }
     return data;
   }
@@ -68,17 +97,6 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
     if (io.existsSync(dataFile)) state = validate(JSON.parse(io.readFileSync(dataFile, "utf8")));
     else state = initialState(config);
 
-    state.targets = [config.splitThreshold, config.postSplitTarget];
-    if (!Number.isFinite(Number(state.initialCapital)) || Number(state.initialCapital) <= 0) {
-      const rootSlots = state.slots.filter(slot => slot.parentSlotId == null);
-      state.initialCapital = rootSlots.reduce((sum, slot) => sum + Number(slot.startingValue || 0), 0) ||
-        config.slotCount * config.startingSlotValue;
-    }
-    for (const slot of state.slots) {
-      if (typeof slot.splitDone !== "boolean") slot.splitDone = false;
-      if (slot.parentSlotId === undefined) slot.parentSlotId = null;
-      if (!Number.isFinite(Number(slot.generation))) slot.generation = 0;
-    }
     return state;
   }
 
@@ -97,6 +115,109 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
 
   function slotById(data, slotId) {
     return data.slots.find(s => s.id === Number(slotId));
+  }
+
+  function childMetadata(childIndex) {
+    let index = childIndex;
+    for (let row = 0; row < 5; row++) {
+      const width = row * 2 + 1;
+      if (index < width) return { row: row + 1, position: index + 1, multiplier: PYRAMID_MULTIPLIERS[childIndex] };
+      index -= width;
+    }
+    return null;
+  }
+
+  function allocateProfit(data, slot, pnl) {
+    if (!(pnl > 0)) {
+      slot.realizedProfit += pnl;
+      data.realizedProfit += pnl;
+      return;
+    }
+    const reinvest = roundCapital(pnl * config.reinvestPercent / 100);
+    const pocket = roundCapital(pnl * config.pocketPercent / 100);
+    const reproduction = roundCapital(pnl * config.reproductionPercent / 100);
+    slot.cashBalance = roundCapital(slot.cashBalance - pocket - reproduction);
+    slot.reproductionBalance = roundCapital(slot.reproductionBalance + reproduction);
+    slot.reinvestedProfit = roundCapital(slot.reinvestedProfit + reinvest);
+    slot.pocketedProfit = roundCapital(slot.pocketedProfit + pocket);
+    slot.realizedProfit = roundCapital(slot.realizedProfit + pnl);
+    data.realizedProfit = roundCapital(data.realizedProfit + pnl);
+    data.reinvestedProfit = roundCapital(data.reinvestedProfit + reinvest);
+    data.pocketedProfit = roundCapital(data.pocketedProfit + pocket);
+    data.reproductionAllocated = roundCapital(data.reproductionAllocated + reproduction);
+  }
+
+  function reproduce(data, parent) {
+    const created = [];
+    while (parent.nextChildIndex < PYRAMID_MULTIPLIERS.length) {
+      const formation = childMetadata(parent.nextChildIndex);
+      const childCost = roundCapital(Number(parent.localX) * formation.multiplier);
+      const invested = parent.position ? Number(parent.position.amountInvested) : 0;
+      const preSpawnCapital = Number(parent.cashBalance) + Number(parent.reproductionBalance) + invested;
+      const hasFunding = Number(parent.reproductionBalance) + 1e-9 >= childCost;
+      const protectedAfterSpawn = preSpawnCapital - childCost >= preSpawnCapital * config.retentionPercent / 100 - 1e-9;
+      parent.reproductionEligible = hasFunding && protectedAfterSpawn;
+      parent.nextChild = {
+        ...formation,
+        cost: childCost,
+        reproductionBalance: Number(parent.reproductionBalance),
+        parentCapital: preSpawnCapital,
+        eligible: parent.reproductionEligible
+      };
+      if (!parent.reproductionEligible) break;
+
+      const id = Number(data.nextSlotId++);
+      const swarmId = parent.swarmId + "." + (parent.nextChildIndex + 1);
+      const child = {
+        id,
+        swarmId,
+        parentId: parent.swarmId,
+        parentSlotId: parent.id,
+        genesisId: parent.genesisId,
+        generation: Number(parent.generation) + 1,
+        localX: childCost,
+        formationRow: formation.row,
+        formationPosition: formation.position,
+        formationMultiplier: formation.multiplier,
+        children: [],
+        nextChildIndex: 0,
+        reproductionEligible: false,
+        startingValue: childCost,
+        cashBalance: childCost,
+        reproductionBalance: 0,
+        reinvestedProfit: 0,
+        pocketedProfit: 0,
+        realizedProfit: 0,
+        position: null,
+        completedTrades: 0,
+        winners: 0,
+        losers: 0
+      };
+      parent.reproductionBalance = Math.max(0, roundCapital(parent.reproductionBalance - childCost));
+      parent.children.push(swarmId);
+      parent.nextChildIndex++;
+      parent.reproductionEligible = false;
+      data.slots.push(child);
+      data.childrenCreated++;
+      data.genealogy.push({
+        type: "CHILD_CREATED",
+        parentId: parent.swarmId,
+        genesisId: parent.genesisId,
+        childId: swarmId,
+        slotId: id,
+        generation: child.generation,
+        localX: child.localX,
+        formationRow: formation.row,
+        formationPosition: formation.position,
+        formationMultiplier: formation.multiplier,
+        fundedAmount: childCost,
+        parentCapitalBefore: preSpawnCapital,
+        parentCapitalAfter: preSpawnCapital - childCost,
+        time: new Date().toISOString()
+      });
+      created.push(child);
+    }
+    return created;
   }
 
   function positionKey(position) {
@@ -131,6 +252,7 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
       quantity: amount / price,
       amountInvested: amount,
       originalAmountInvested: amount,
+      realizedPnl: 0,
       firstTakeProfitDone: false,
       secondTakeProfitDone: false,
       highestPrice: price,
@@ -201,6 +323,8 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
     const pnl = saleValue - costBasisSold;
 
     slot.cashBalance += saleValue;
+    pos.realizedPnl = Number(pos.realizedPnl || 0) + pnl;
+    allocateProfit(next, slot, pnl);
     pos.quantity -= quantitySold;
     pos.amountInvested -= costBasisSold;
     if (options.takeProfit) pos[options.takeProfit] = true;
@@ -210,18 +334,19 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
       tokenAddress:pos.tokenAddress,
       price:currentPrice, percentSold:percentToSell, saleValue, pnl,
       pnlPercent: costBasisSold > 0 ? pnl / costBasisSold * 100 : 0,
+      profitAllocation: pnl > 0 ? {
+        reinvested: pnl * config.reinvestPercent / 100,
+        pocketed: pnl * config.pocketPercent / 100,
+        reproduction: pnl * config.reproductionPercent / 100
+      } : { reinvested: 0, pocketed: 0, reproduction: 0 },
       reason:options.reason || "MANUAL", time:new Date().toISOString()
     };
 
     let closedTrade = null;
-    let newlyReached = [];
     if (percentToSell === 100) {
       const entryAmount = Number(pos.originalAmountInvested || 0);
-      const finalCash = slot.cashBalance;
-      const returnPercent = entryAmount > 0 ? (finalCash - entryAmount) / entryAmount * 100 : 0;
-      const beforeMilestones = new Set(slot.milestonesReached || []);
-      newlyReached = next.targets.filter(target => finalCash >= target && !beforeMilestones.has(target));
-      slot.milestonesReached = [...beforeMilestones, ...newlyReached].sort((a,b)=>a-b);
+      const finalCash = slot.cashBalance + slot.reproductionBalance;
+      const returnPercent = entryAmount > 0 ? Number(pos.realizedPnl || 0) / entryAmount * 100 : 0;
       slot.completedTrades++;
       if (returnPercent > 0) slot.winners++;
       else if (returnPercent < 0) slot.losers++;
@@ -248,58 +373,17 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
         entryPreDiscoveryPump: pos.entryPreDiscoveryPump ? structuredClone(pos.entryPreDiscoveryPump) : null,
         entryMarketDataIntegrity: pos.entryMarketDataIntegrity ? structuredClone(pos.entryMarketDataIntegrity) : null,
         entrySmartMoney: pos.entrySmartMoney ? structuredClone(pos.entrySmartMoney) : null,
-        milestonesReached: [...newlyReached]
+        realizedPnl: Number(pos.realizedPnl || 0),
+        pocketedProfit: Number(slot.pocketedProfit || 0),
+        reproductionBalance: Number(slot.reproductionBalance || 0)
       };
       execution.closedTrade = closedTrade;
       slot.position = null;
-
-      if (
-        !slot.splitDone &&
-        finalCash >= config.splitThreshold &&
-        finalCash >= config.childSlotValue * 2
-      ) {
-        const nextId = () =>
-          next.slots.reduce((max, item) => Math.max(max, Number(item.id) || 0), 0) + 1;
-
-        const childIds = [];
-        for (let i = 0; i < 2; i++) {
-          const childId = nextId();
-          childIds.push(childId);
-          next.slots.push({
-            id: childId,
-            startingValue: config.childSlotValue,
-            cashBalance: config.childSlotValue,
-            position: null,
-            milestonesReached: [],
-            splitDone: true,
-            parentSlotId: slot.id,
-            generation: Number(slot.generation || 0) + 1,
-            completedTrades: 0,
-            winners: 0,
-            losers: 0
-          });
-        }
-
-        slot.cashBalance -= config.childSlotValue * 2;
-        slot.splitDone = true;
-
-        next.executions.push({
-          type:"SPLIT",
-          slotId:slot.id,
-          childSlotIds:childIds,
-          amount:config.childSlotValue * 2,
-          remainingBalance:slot.cashBalance,
-          time:new Date().toISOString()
-        });
-
-        closedTrade.split = {
-          childSlotIds: childIds,
-          childSlotValue: config.childSlotValue,
-          remainingBalance: slot.cashBalance
-        };
-      }
     }
 
+    const children = reproduce(next, slot);
+    if (closedTrade && children.length) closedTrade.childrenCreated = children.map(child => child.swarmId);
+    if (children.length) execution.childrenCreated = children.map(child => child.swarmId);
     next.executions.push(execution);
     if (next.executions.length > 2000) next.executions = next.executions.slice(-2000);
     save(next);
@@ -332,39 +416,50 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
       console.log("TRADE_AUDIT " + JSON.stringify(audit));
     }
 
-    return { success:true, execution:structuredClone(execution), closedTrade, newlyReached };
+    return { success:true, execution:structuredClone(execution), closedTrade, childrenCreated:children.map(child => child.swarmId) };
   }
 
   function dashboardState() {
     const data = structuredClone(load());
-    let totalEquity = 0;
-    for (const slot of data.slots) totalEquity += Number(slot.cashBalance || 0) + Number(slot.position?.amountInvested || 0);
-    const startingCapital = Number(data.initialCapital) || config.slotCount * config.startingSlotValue;
+    const activeCapital = data.slots.reduce((sum, slot) =>
+      sum + Number(slot.cashBalance || 0) + Number(slot.reproductionBalance || 0) +
+        Number(slot.position?.amountInvested || 0), 0);
+    const pocketedProfit = Number(data.pocketedProfit || 0);
+    const totalEquity = activeCapital + pocketedProfit;
+    const startingCapital = Number(data.genesisCapital || data.initialCapital) || config.startingCapital;
     return {
       mode:data.mode,
-      targets:[config.splitThreshold, config.postSplitTarget],
+      methodology:data.methodology,
+      genesisCount:data.genesisCount,
+      genesisCapital:data.genesisCapital,
+      pyramidMultipliers:[...PYRAMID_MULTIPLIERS],
+      reproductionRetentionPercent:config.retentionPercent,
+      profitAllocation:{ reinvest:config.reinvestPercent, pocket:config.pocketPercent, reproduction:config.reproductionPercent },
+      totalSwarms:data.slots.length,
+      childrenCreated:data.childrenCreated,
       slotCount:data.slots.length,
       startingCapital,
       totalCapital:totalEquity,
+      activeCapital,
+      pocketedProfit,
+      reinvestedProfit:Number(data.reinvestedProfit || 0),
+      reproductionAllocated:Number(data.reproductionAllocated || 0),
+      realizedProfit:Number(data.realizedProfit || 0),
       totalPnl:totalEquity-startingCapital,
       tradesReplayed:data.slots.reduce((sum,s)=>sum+Number(s.completedTrades||0),0),
+      genealogy:data.genealogy.slice(-200).reverse(),
       executions:[...data.executions].slice(-100).reverse(),
       slots:data.slots.map(slot => {
-        const nextTarget = slot.splitDone ? config.postSplitTarget : config.splitThreshold;
-        const previousTarget = slot.splitDone ? config.splitThreshold : 0;
-        const balanceForProgress = Number(slot.cashBalance || 0) + Number(slot.position?.amountInvested || 0);
-        const base = Math.max(0.01, nextTarget - previousTarget);
-        const progress = Math.max(0, Math.min(100, (balanceForProgress - previousTarget) / base * 100));
-        return { ...slot, currentTarget:nextTarget, previousTarget, progressPercent:progress };
-      }),
-      targetProgress:[config.splitThreshold, config.postSplitTarget].map(target => ({
-        target,
-        reachedBy:data.slots.filter(s => {
-          const equity = Number(s.cashBalance || 0) + Number(s.position?.amountInvested || 0);
-          return target === config.splitThreshold ? s.splitDone || equity >= target : equity >= target;
-        }).length,
-        totalSlots:data.slots.length
-      }))
+        const formation = childMetadata(Number(slot.nextChildIndex || 0));
+        const nextChildCost = formation ? Number(slot.localX) * formation.multiplier : 0;
+        const capital = Number(slot.cashBalance || 0) + Number(slot.reproductionBalance || 0) +
+          Number(slot.position?.amountInvested || 0);
+        const eligible = Boolean(formation &&
+          Number(slot.reproductionBalance || 0) >= nextChildCost &&
+          capital - nextChildCost >= capital * config.retentionPercent / 100);
+        return { ...slot, capital, nextChild:formation ? { ...formation, cost:nextChildCost } : null,
+          reproductionEligible:eligible, growthStatus:formation ? "GROWING_TOWARD_NEXT_CHILD" : "PYRAMID_COMPLETE" };
+      })
     };
   }
 
