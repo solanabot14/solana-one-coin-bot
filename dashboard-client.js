@@ -183,6 +183,49 @@ function renderLabData(d, error = null) {
 	}).join("") || '<tr><td colspan="6">No completed lab transactions yet.</td></tr>';
 }
 
+function renderQuickPosition(position, live, index) {
+	position = position || {};
+	live = live || {};
+	const chart = dexLink(position, live);
+	return '<div class="quick-position-row"><div><strong>' + escapeHtml(position.symbol || "Unknown coin") +
+		'</strong><div class="muted">' + (live.currentPrice != null ? price(live.currentPrice) : "Price unavailable") +
+		' · ' + pct(live.pnlPercent) + '</div></div><div class="quick-position-result ' + cls(live.pnl) + '">' +
+		money(live.pnl) + (chart ? '<br><a class="small-link" href="' + chart + '" target="_blank" rel="noopener noreferrer">Chart</a>' : "") +
+		'</div></div>';
+}
+
+function renderQuickOverview(v31, lab, labError = null) {
+	$("quickV31Equity").textContent = v31.equity == null ? "Unavailable" : money(v31.equity);
+	$("quickV31Pnl").textContent = v31.totalPnl == null ? "Unavailable" : money(v31.totalPnl);
+	$("quickV31Pnl").className = "quick-stat-value " + cls(v31.totalPnl);
+	$("quickV31Return").textContent = pct(v31.totalPnlPercent);
+	$("quickV31Return").className = "quick-stat-value " + cls(v31.totalPnlPercent);
+	const v31Positions = Array.isArray(v31.livePositions) ? v31.livePositions : [];
+	$("quickV31Slots").textContent = (v31.openSlots || 0) + " / " + (v31.maxSlots || 2);
+	$("quickV31Positions").innerHTML = v31Positions.map((slot, i) =>
+		renderQuickPosition(slot.position, slot.live, i)).join("") || '<div class="muted">No open positions.</div>';
+
+	if (labError || !lab) {
+		$("quickLabStatus").textContent = labError ? "FEED UNAVAILABLE" : "CONNECTING";
+		$("quickLabEquity").textContent = "—";
+		$("quickLabPnl").textContent = "—";
+		$("quickLabReturn").textContent = "—";
+		$("quickLabSlots").textContent = "—";
+		$("quickLabPositions").innerHTML = '<div class="muted">' + escapeHtml(labError || "Waiting for lab data…") + "</div>";
+		return;
+	}
+	$("quickLabStatus").textContent = lab.running ? "RUNNING · PAPER" : "STOPPED · PAPER";
+	$("quickLabEquity").textContent = lab.equity == null ? "Unavailable" : money(lab.equity);
+	$("quickLabPnl").textContent = lab.totalPnl == null ? "Unavailable" : money(lab.totalPnl);
+	$("quickLabPnl").className = "quick-stat-value " + cls(lab.totalPnl);
+	$("quickLabReturn").textContent = pct(lab.totalPnlPercent);
+	$("quickLabReturn").className = "quick-stat-value " + cls(lab.totalPnlPercent);
+	$("quickLabSlots").textContent = (lab.openSlots || 0) + " / " + (lab.maxSlots || 2);
+	const labPositions = Array.isArray(lab.openPositions) ? lab.openPositions : [];
+	$("quickLabPositions").innerHTML = labPositions.map((position, i) =>
+		renderQuickPosition(position, position, i)).join("") || '<div class="muted">No open positions.</div>';
+}
+
 function renderData(d) {
 	const response = d;
 	d = response.v31 || response;
@@ -196,6 +239,7 @@ function renderData(d) {
 	renderLiveTrade(d); renderScoreStats(d); renderExitReasons(d); renderHistory(d);
 	renderCandleBreakoutData(response.candleBreakout, response.candleBreakoutStatus, response.candleBreakoutError);
 	renderLabData(response.profitabilityLab, response.profitabilityLabError);
+	renderQuickOverview(d, response.profitabilityLab, response.profitabilityLabError);
 }
 
 async function refreshStatus() {
@@ -203,6 +247,8 @@ async function refreshStatus() {
 		const d = await request("/api/status");
 		$("status").textContent = d.running ? "BOT ONLINE" : "BOT OFFLINE";
 		$("status").className = "status" + (d.running ? " online" : "");
+		$("quickV31Status").textContent = d.running ? "RUNNING" : "STOPPED";
+		$("quickV31Status").className = "badge" + (d.running ? " online" : "");
 		if (d.error) $("notice").textContent = "Trading paused after an error. Check server logs before restarting.";
 	} catch (error) { $("status").textContent = "CONNECTION UNAVAILABLE"; $("status").className = "status"; }
 }
