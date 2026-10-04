@@ -621,6 +621,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         return json(res, {
           name: "B3.1 Profitability Lab",
           paperOnly: true,
+          telegramConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID),
           running: controls.getBotStatus(),
           startingBalance: dashboard.startingBalance,
           cashBalance: dashboard.cashBalance,
