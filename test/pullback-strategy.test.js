@@ -137,4 +137,8 @@ test("dashboard serves the routed analytics terminal and core workspaces", () =>
 	assert.match(client, /function renderHome\(/);
 	assert.match(client, /function renderBot\(/);
 	assert.match(client, /function renderSwarm\(/);
+	assert.match(client, /function liveTradingPanel\(/);
+	assert.match(client, /function dexScreenerAddress\(/);
+	assert.match(client, /OPEN DEXSCREENER/);
+	assert.match(client, /LIVE TRADING NOW/);
 });

@@ -116,6 +116,23 @@
     var m=metrics(s.trades);
     return '<tr class="click-row" data-open-system="'+s.id+'"><td><div class="system-name"><span class="system-mark">'+systemIcon(s.id)+'</span>'+esc(s.label)+' <span class="badge">PAPER</span></div></td><td>'+int(m.trades)+'</td><td>'+int(m.wins)+'</td><td>'+int(m.losses)+'</td><td>'+metric(m.winRate,function(x){return x.toFixed(1)+'%';})+'</td><td>'+money(m.grossProfit)+'</td><td>−'+money(m.grossLoss)+'</td><td class="'+signClass(m.netPnl)+'">'+money(m.netPnl)+'</td><td>'+pct(m.returnPercent)+'</td><td>'+money(m.averageTrade)+'</td><td>'+money(m.averageWin)+'</td><td>'+money(m.averageLoss)+'</td><td>'+metric(m.profitFactor,function(x){return x===Infinity?'∞':x.toFixed(2);})+'</td><td>'+money(m.best)+'</td><td>'+money(m.worst)+'</td><td>'+duration(m.averageHoldMs)+'</td><td>'+money(m.capitalDeployed)+'</td><td><span class="status-line '+(s.running?'':'offline')+'"><i></i>'+(s.running?'RUNNING':'STOPPED')+'</span></td></tr>';
   }
+  function dexScreenerAddress(position, live) {
+    return position.pairAddress || live.pairAddress || position.tokenAddress || live.tokenAddress || position.mint || live.mint || position.tokenMint || live.tokenMint || '';
+  }
+  function livePositionRow(source, item, swarmId) {
+    var position=item.position||item, live=item.live||item, address=dexScreenerAddress(position,live);
+    var token=position.symbol||position.name||position.tokenSymbol||live.symbol||'-';
+    var link=address?'<a class="dex-link" href="https://dexscreener.com/solana/'+encodeURIComponent(address)+'" target="_blank" rel="noopener noreferrer">OPEN DEXSCREENER ↗</a>':'<span class="dex-unavailable">LINK UNAVAILABLE</span>';
+    var pnl=live.pnl!==undefined?live.pnl:position.pnl;
+    var currentPrice=live.currentPrice??live.priceUsd??position.currentPrice??position.priceUsd;
+    return '<tr><td class="text-left">'+esc(source)+'</td><td class="text-left">'+esc(swarmId||position.genesisId||'-')+'</td><td class="text-left"><strong>'+esc(token)+'</strong><div class="live-token-address">'+(address?esc(address):'No token/pair address recorded')+'</div></td><td>'+money(position.amountInvested||position.invested||position.currentValue)+'</td><td>'+tradePrice(position.entryPrice??position.buyPrice)+'</td><td>'+tradePrice(currentPrice)+'</td><td class="'+signClass(pnl)+'">'+money(pnl)+'</td><td>'+pct(live.pnlPercent??position.pnlPercent)+'</td><td>'+duration(live.holdTimeMs??position.holdTimeMs)+'</td><td>'+link+'</td></tr>';
+  }
+  function liveTradingPanel() {
+    var rows=[];
+    systems.forEach(function(system){(system.positions||[]).forEach(function(position){rows.push(livePositionRow(system.label,position,''));});});
+    swarmSlots().forEach(function(slot){if(slot.position)rows.push(livePositionRow('Swarm',slot,slot.genesisId||slot.swarmId||''));});
+    return '<div class="table-panel live-trading-panel"><div class="table-head"><div><h2>LIVE TRADING NOW</h2><span class="sub">Open paper positions by bot · refreshed with dashboard data</span></div><span class="badge">LIVE POSITIONS</span></div>'+table(['BOT','GENESIS / SWARM','COIN','INVESTED','ENTRY PRICE','CURRENT PRICE','UNREALIZED P&L','RETURN','HOLD TIME','DEXSCREENER'],rows,'No open positions in the latest bot feeds')+'</div>';
+  }
   function comparisonSystems() { var sw=state.swarm||{};return systems.concat([{id:'swarm',name:'Swarm',label:'Swarm · V3.1',mode:'PAPER',account:{startingBalance:n(sw.startingCapital)},trades:swarmTrades(),positions:swarmSlots().filter(function(x){return !!x.position;}).map(function(x){return {position:x.position,live:x.live,pnl:x.live&&x.live.pnl};}),equity:n(sw.totalCapital),totalPnl:n(sw.totalPnl),totalPnlPercent:n(sw.totalPnlPercent),running:!!sw.running,historyLimited:true}]); }
   function table(headers, rows, emptyText) {
     return '<div class="table-scroll"><table><thead><tr>'+headers.map(function(h){return '<th>'+h+'</th>';}).join('')+'</tr></thead><tbody>'+(rows.length?rows.join(''):'<tr><td colspan="'+headers.length+'"><div class="empty"><strong>'+esc(emptyText||'No records available')+'</strong>NOT ENOUGH DATA</div></td></tr>')+'</tbody></table></div>';
@@ -176,7 +193,7 @@
       kpi('WORST TRADE',money(m.worst),'Selected period',signClass(m.worst))
     ].join('');
     $('view').innerHTML=pageHead('Command Center','A live, read-only view of connected paper trading systems.',rangeBar(state.range,['1D','7D','30D','90D','ALL'],'range'))+
-      '<div class="kpi-grid">'+kpis+'</div>'+statusNotice()+
+      liveTradingPanel()+'<div class="kpi-grid">'+kpis+'</div>'+statusNotice()+
       '<div class="grid-2"><div class="panel"><div class="panel-head"><div><div class="panel-title">ACCOUNT PERFORMANCE</div><div class="panel-subtitle">Transaction-derived cumulative realized P&L · historical equity snapshots unavailable</div></div><div class="right segmented">'+['EQUITY','REALIZED P&L','DAILY P&L','CUMULATIVE P&L'].map(function(x){return '<button data-chart="'+x+'" class="'+(state.chartMetric===x?'active':'')+'">'+x+'</button>';}).join('')+'</div></div><div class="overlay-pills">'+overlayButtons()+'</div><div class="chart-wrap">'+svgMultiLine(chartSeries(),state.chartMetric)+'</div><div class="footer-note">Connected sources are shown as one observed view. A historical equity curve is not stored, so this chart uses realized P&L events.</div></div><div class="panel"><div class="panel-head"><div><div class="panel-title">DAILY P&L</div><div class="panel-subtitle">Realized sale P&L, by Puerto Rico date</div></div><div class="right">'+rangeBar(state.range==='ALL'?'7D':state.range,['7D','30D','90D','ALL'],'range')+'</div></div>'+dailyBar(allTrades,dayLimit)+'</div></div>'+ 
       '<div class="table-panel"><div class="table-head"><h2>PERFORMANCE BY SYSTEM</h2><span class="sub">Click a row to open its workspace</span></div>'+table(['BOT / STRATEGY','TRADES','WINS','LOSSES','WIN RATE','GROSS PROFIT','GROSS LOSS','NET P&L','RETURN','AVG TRADE','AVG WIN','AVG LOSS','PROFIT FACTOR','BEST TRADE','WORST TRADE','AVG HOLD','CAPITAL DEPLOYED','STATUS'],systemRows,'No system records available')+'</div>'+
       '<div class="grid-2 equal"><div class="panel"><div class="panel-head"><div><div class="panel-title">WIN / LOSS CONTRIBUTION</div><div class="panel-subtitle">Count and dollar contribution are shown separately</div></div></div>'+splitContribution(rangeTrades)+'</div><div class="panel"><div class="panel-head"><div><div class="panel-title">EXIT REASONS</div><div class="panel-subtitle">Historical exits, aggregated from saved transactions</div></div><a class="button small" href="/analytics" data-route="/analytics">OPEN ANALYTICS</a></div>'+smallGroupTable(exitGroups(rangeTrades),'EXIT')+'</div></div>';
@@ -210,9 +227,11 @@
   }
   function cumulative(trades) { var es=events(trades), total=0;return es.map(function(e){total+=e.pnl;return {label:dateTime(e.time),value:total};}); }
   function renderPositions(system) {
-    var rows=system.positions.map(function(x){var p=x.position||x;var live=x.live||x;return '<tr><td class="text-left">'+esc(p.symbol||p.name||'-')+'</td><td>'+money(p.amountInvested||p.currentValue)+'</td><td>'+money(p.entryPrice)+'</td><td>'+money(live.currentPrice)+'</td><td class="'+signClass(live.pnl)+'">'+money(live.pnl)+'</td><td>'+pct(live.pnlPercent)+'</td><td>'+duration(live.holdTimeMs)+'</td></tr>';});
-    return '<div class="table-panel"><div class="table-head"><h2>OPEN POSITIONS</h2><span class="sub">Current marks from existing market data</span></div>'+table(['TOKEN','INVESTED','ENTRY PRICE','CURRENT PRICE','UNREALIZED P&L','RETURN','HOLD TIME'],rows,'No open positions')+'</div>';
+    var rows=system.positions.map(function(x){return livePositionRow(system.label,x,'');});
+    return '<div class="table-panel live-trading-panel"><div class="table-head"><div><h2>LIVE TRADING NOW · '+esc(system.label)+'</h2><span class="sub">Coins currently held by this bot</span></div><span class="badge">PAPER</span></div>'+table(['BOT','GENESIS / SWARM','COIN','INVESTED','ENTRY PRICE','CURRENT PRICE','UNREALIZED P&L','RETURN','HOLD TIME','DEXSCREENER'],rows,'This bot has no open position right now')+'</div>';
   }
+  function tradePrice(value) { var price=n(value);return price===null||price<=0?'NOT ENOUGH DATA':'$'+price.toFixed(8); }
+
   function groupTable(groups,headers) {
     return table(headers,groups.map(function(g){var cells=[g.label,int(g.metrics?g.metrics.trades:g.trades)];if(headers.length===3)cells.push(money(g.metrics?g.metrics.netPnl:g.pnl));return '<tr>'+cells.map(function(c,i){return '<td class="'+(i===0?'text-left':'')+'">'+c+'</td>';}).join('')+'</tr>';}),'No records');
   }
