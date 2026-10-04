@@ -21,7 +21,7 @@ test("HIGGS-like snapshot qualifies only for the isolated fast-momentum lane", (
 	const result = analyzeToken(higgsSnapshot);
 	assert.equal(result.labSignal, "FAST MOMENTUM WATCH");
 	assert.notEqual(result.signal, "STRONG BUY");
-	assert.ok(result.labReasons.some(reason => reason.includes("half-size")));
+	assert.ok(result.labReasons.some(reason => reason.includes("$10 minimum")));
 });
 
 test("lab rejects 5m moves above the anti-chase ceiling", () => {
@@ -39,7 +39,7 @@ test("lab rejects weak activity and net sell pressure", () => {
 	assert.equal(analyzeToken({ ...higgsSnapshot, buys5m: 40, sells5m: 50 }).labSignal, "WAIT");
 });
 
-test("paper trader uses smaller volatile entries and subtracts modeled execution costs", () => {
+test("paper trader applies the $10 minimum and subtracts modeled execution costs", () => {
 	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "b31-lab-"));
 	const trader = createPaperTrader(path.join(directory, "account.json"), fs, {
 		strategyVersion: "B3.1-FastMomentum-Lab-Paper"
@@ -47,7 +47,7 @@ test("paper trader uses smaller volatile entries and subtracts modeled execution
 	const bought = trader.buy({ symbol: "HIGGS", tokenAddress: "higgs-test", priceUsd: 1,
 		experimentEntry: { sizeMultiplier: 0.5, lane: "FAST_MOMENTUM_REBOUND_PAPER" } });
 	assert.equal(bought.success, true);
-	assert.equal(bought.trade.amountInvested, 5);
+	assert.equal(bought.trade.amountInvested, 10);
 	const position = trader.getPortfolio().position;
 	const sold = trader.sell(1, 100, { expectedPosition: trader.positionKey(position), reason: "TEST" });
 	assert.equal(sold.success, true);
@@ -55,4 +55,39 @@ test("paper trader uses smaller volatile entries and subtracts modeled execution
 	assert.ok(sold.trade.totalEstimatedExecutionCostUsd > 0);
 	assert.ok(sold.trade.pnl < 0);
 	fs.rmSync(directory, { recursive: true, force: true });
+});
+
+
+test("paper trader compounds at 10% after a realized win", () => {
+	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "lab-compound-"));
+	try {
+		const trader = createPaperTrader(path.join(directory, "account.json"), fs);
+		const first = trader.buy({ symbol: "FIRST", tokenAddress: "first-test", priceUsd: 1 });
+		assert.equal(first.trade.amountInvested, 10);
+		const position = trader.getPortfolio().position;
+		const closed = trader.sell(2, 100, { expectedPosition: trader.positionKey(position), reason: "TEST" });
+		assert.equal(closed.success, true);
+		const balance = trader.getPortfolio().cashBalance;
+		const second = trader.buy({ symbol: "SECOND", tokenAddress: "second-test", priceUsd: 1 });
+		assert.equal(second.success, true);
+		assert.ok(Math.abs(second.trade.amountInvested - balance * 0.10) < 1e-9);
+	} finally {
+		fs.rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+test("paper trader invests available cash when below the $10 minimum", () => {
+	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "lab-cash-cap-"));
+	try {
+		const file = path.join(directory, "account.json");
+		fs.writeFileSync(file, JSON.stringify({
+			startingBalance: 4.5, cashBalance: 4.5, positions: [], history: []
+		}));
+		const trader = createPaperTrader(file, fs);
+		const bought = trader.buy({ symbol: "SMALL", tokenAddress: "small-test", priceUsd: 1 });
+		assert.equal(bought.success, true);
+		assert.equal(bought.trade.amountInvested, 4.5);
+	} finally {
+		fs.rmSync(directory, { recursive: true, force: true });
+	}
 });

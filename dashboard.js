@@ -127,6 +127,16 @@ button{
   gap:12px
 }
 
+.overview-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.overview-card{min-width:0;display:flex;flex-direction:column;gap:8px;padding:13px;border-radius:10px;border:1px solid #283141;background:#0b1018;color:#fff;text-decoration:none}
+.overview-card:focus-visible{outline:2px solid #8fa7ff;outline-offset:2px}
+.overview-card:hover{border-color:#8fa7ff}
+.overview-title{font-size:13px;font-weight:bold;line-height:1.25}
+.overview-state{font-size:10px;text-transform:uppercase;color:#b7c0d0}
+.overview-state.online{color:#4cff9a}
+.overview-value{font-size:20px;font-weight:bold;line-height:1.15;overflow-wrap:anywhere}
+.overview-meta{font-size:11px;color:#8792a5;line-height:1.4}
+
 .card{
   background:#111722;
   border:1px solid #222b3a;
@@ -230,9 +240,12 @@ th,td{
   text-align:left
 }
 
-@media(max-width:600px){
-  body{padding:14px}
+@media(max-width:700px){
+  body{padding:12px}
   .value{font-size:21px}
+  .overview-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .overview-card{padding:10px;gap:6px}
+  .overview-value{font-size:18px}
 }
 </style>
 </head>
@@ -263,6 +276,36 @@ th,td{
 <p id="notice" role="status">
   V3.1 and Swarm run on this service. The Candle Breakout V1.1 Expanded Entry panel below mirrors the separate paper test.
 </p>
+
+<div class="card section" id="overview">
+  <h2>All Paper Tests</h2>
+  <div class="overview-grid">
+    <a class="overview-card" href="https://solana-one-coin-bot-production.up.railway.app/" target="_blank" rel="noopener noreferrer">
+      <span class="overview-title">Original V3.1</span>
+      <span class="overview-state" id="overviewOriginalStatus">CHECKING</span>
+      <span class="overview-value" id="overviewOriginalValue">Open dashboard</span>
+      <span class="overview-meta">Original strategy · separate dashboard</span>
+    </a>
+    <a class="overview-card" href="#candleBreakoutPanel">
+      <span class="overview-title">PubX Fast Momentum</span>
+      <span class="overview-state" id="overviewPubxStatus">CONNECTING</span>
+      <span class="overview-value" id="overviewPubxPnl">—</span>
+      <span class="overview-meta"><span id="overviewPubxOpen">— open</span> · <span id="overviewPubxTrades">— closed</span></span>
+    </a>
+    <a class="overview-card" href="#v31Panel">
+      <span class="overview-title">New Profitability Lab</span>
+      <span class="overview-state" id="overviewLabStatus">CONNECTING</span>
+      <span class="overview-value" id="overviewLabPnl">—</span>
+      <span class="overview-meta"><span id="overviewLabOpen">— open</span> · <span id="overviewLabTrades">— closed</span></span>
+    </a>
+    <a class="overview-card" href="#swarmPanel">
+      <span class="overview-title">Swarm</span>
+      <span class="overview-state" id="overviewSwarmStatus">CONNECTING</span>
+      <span class="overview-value" id="overviewSwarmPnl">—</span>
+      <span class="overview-meta"><span id="overviewSwarmOpen">— open</span> · <span id="overviewSwarmTrades">— closed</span></span>
+    </a>
+  </div>
+</div>
 
 <div id="v31Panel"></div>
 
@@ -514,6 +557,7 @@ th,td{
 </html>`;
 
 const CANDLE_BREAKOUT_DASHBOARD_API = "https://pubx-fast-momentum-production.up.railway.app/api/data";
+const ORIGINAL_V31_HEALTH_API = "https://solana-one-coin-bot-production.up.railway.app/healthz";
 
 async function fetchCandleBreakoutDashboard() {
   const controller = new AbortController();
@@ -529,6 +573,20 @@ async function fetchCandleBreakoutDashboard() {
   } catch (error) {
     console.error("Candle Breakout dashboard feed unavailable:", error.message);
     return { data: null, status: null, error: "Candle Breakout data is temporarily unavailable." };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchOriginalV31Status() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6000);
+  try {
+    const response = await fetch(ORIGINAL_V31_HEALTH_API, { signal: controller.signal });
+    return response.ok;
+  } catch (error) {
+    console.error("Original V3.1 health check unavailable:", error.message);
+    return false;
   } finally {
     clearTimeout(timeout);
   }
@@ -591,6 +649,9 @@ function createDashboardServer({ config = getConfig(), controls = bot,
             holdTimeMs: live?.holdTimeMs ?? null
           }))
         });
+      }
+      if (req.method === "GET" && route === "/api/original-v31-status") {
+        return json(res, { online: await fetchOriginalV31Status() });
       }
       if (!authorized(req, config)) {
         res.setHeader("WWW-Authenticate", 'Basic realm="Trading dashboard", charset="UTF-8"');

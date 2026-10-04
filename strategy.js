@@ -33,7 +33,7 @@ function analyzeToken(data) {
 	if (labMomentumEntry) {
 		labReasons.push("5m momentum, volume and transaction flow passed the lab gate");
 		if (change1h < 0) labReasons.push("Rebound setup: negative 1h trend requires two-scan confirmation");
-		if (change5m > 5 || change24h > 250) labReasons.push("High volatility: use half-size paper position");
+		if (change5m > 5 || change24h > 250) labReasons.push("High volatility: standard 10% compounding size with $10 minimum");
 	}
 
 	// ==========================================

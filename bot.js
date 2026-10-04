@@ -119,7 +119,7 @@ function createBot({
       ];
       coin.experimentEntry = {
         lane: "FAST_MOMENTUM_REBOUND_PAPER",
-        sizeMultiplier: (Number(coin.priceChange5m) > 5 || Number(coin.priceChange24h) > 250) ? 0.5 : 1
+        sizing: "10% compounding; $10 minimum, cash-capped"
       };
       selected.push(coin);
       if (selected.length >= freeSlots) break;

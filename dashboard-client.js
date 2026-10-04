@@ -11,6 +11,20 @@ const number = value => value == null ? "—" : Number(value).toLocaleString();
 const cls = value => value == null ? "" : Number(value) >= 0 ? "green" : "red";
 const escapeHtml = value => String(value ?? "-").replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[char]);
 
+function updateOverview(prefix, {status, pnl = "—", open = "—", closed = "—"} = {}) {
+	const statusEl = $("overview" + prefix + "Status");
+	if (statusEl) {
+		statusEl.textContent = status || "UNAVAILABLE";
+		statusEl.className = "overview-state" + (["RUNNING","ONLINE"].includes(status) ? " online" : "");
+	}
+	const pnlEl = $("overview" + prefix + "Pnl");
+	if (pnlEl) pnlEl.textContent = pnl;
+	const openEl = $("overview" + prefix + "Open");
+	if (openEl) openEl.textContent = open;
+	const closedEl = $("overview" + prefix + "Trades");
+	if (closedEl) closedEl.textContent = closed;
+}
+
 function duration(ms) {
 	if (!Number.isFinite(Number(ms))) return "—";
 	let seconds = Math.max(0, Math.floor(Number(ms) / 1000));
@@ -93,13 +107,18 @@ function renderHistory(d, targetId = "history") {
 
 function renderCandleBreakoutData(d, state = {}, error = null) {
 	if (error) {
+		updateOverview("Pubx", {status:"UNAVAILABLE", pnl:"—", open:"Data unavailable", closed:"—"});
 		$("candleStatus").textContent = "FEED UNAVAILABLE";
 		$("candleStatus").className = "metric-value red";
 		$("candleOpen").textContent = error;
 		$("candleHistory").innerHTML = '<tr><td colspan="9">' + escapeHtml(error) + "</td></tr>";
 		return;
 	}
-	if (!d) { $("candleStatus").textContent = "CONNECTING"; return; }
+	if (!d) {
+		$("candleStatus").textContent = "CONNECTING";
+		updateOverview("Pubx", {status:"CONNECTING"});
+		return;
+	}
 	const stats = d.stats || {};
 	$("candleStatus").textContent = state.running ? "RUNNING · PAPER ONLY" : "STOPPED · PAPER ONLY";
 	$("candleStatus").className = "metric-value " + (state.running ? "green" : "");
@@ -113,6 +132,12 @@ function renderCandleBreakoutData(d, state = {}, error = null) {
 	$("candleCount").textContent = number(stats.completedTrades || 0);
 	$("candleWinRate").textContent = pct(stats.winRate || 0);
 	const slots = Array.isArray(d.livePositions) ? d.livePositions : [];
+	updateOverview("Pubx", {
+		status: state.running ? "RUNNING" : "STOPPED",
+		pnl: money(d.totalPnl),
+		open: (d.openSlots ?? slots.length) + " / " + (d.maxSlots || 3) + " open",
+		closed: number(stats.completedTrades || 0) + " closed"
+	});
 	$("candleSlots").textContent = (d.openSlots || slots.length) + " / " + (d.maxSlots || 3);
 	$("candleScanned").textContent = number(state.lockConfirmed || 0) + " / " + number(state.candleCandidates || 0);
 	$("candleRejected").textContent = number(state.lockRejected || 0);
@@ -147,6 +172,13 @@ function renderData(d) {
 	const response = d;
 	d = response.v31 || response;
 	const s = d.stats;
+	const labPositions = Array.isArray(d.livePositions) ? d.livePositions.length : (d.openSlots || 0);
+	updateOverview("Lab", {
+		status: $("overviewLabStatus")?.textContent === "RUNNING" ? "RUNNING" : "PAPER ONLY",
+		pnl: money(d.totalPnl),
+		open: (d.openSlots ?? labPositions) + " / " + (d.maxSlots || 2) + " open",
+		closed: number(s.completedTrades || 0) + " closed"
+	});
 	const values = {starting:money(d.startingBalance), cash:money(d.cashBalance), equity:d.equity == null ? "Unavailable" : money(d.equity), pnl:d.totalPnl == null ? "Unavailable" : money(d.totalPnl), count:s.completedTrades, winrate:pct(s.winRate), winners:s.winners, losers:s.losers, profit:money(s.grossProfit), loss:"-" + money(s.grossLoss), net:money(s.netPnl), factor:s.profitFactorLabel, avgWinner:pct(s.averageWinnerPercent), avgLoser:pct(s.averageLoserPercent), avgHold:duration(s.averageHoldTimeMs), avgMaxGain:pct(s.averageMaxGainPercent)};
 	for (const [id, value] of Object.entries(values)) $(id).textContent = value;
 	$("pnlPct").textContent = pct(d.totalPnlPercent);
@@ -162,8 +194,26 @@ async function refreshStatus() {
 		const d = await request("/api/status");
 		$("status").textContent = d.running ? "BOT ONLINE" : "BOT OFFLINE";
 		$("status").className = "status" + (d.running ? " online" : "");
+		updateOverview("Lab", {status:d.running ? "RUNNING" : "STOPPED",
+			pnl:$("overviewLabPnl")?.textContent || "—",
+			open:$("overviewLabOpen")?.textContent || "—",
+			closed:$("overviewLabTrades")?.textContent || "—"});
 		if (d.error) $("notice").textContent = "Trading paused after an error. Check server logs before restarting.";
 	} catch (error) { $("status").textContent = "CONNECTION UNAVAILABLE"; $("status").className = "status"; }
+}
+
+async function refreshOriginalStatus() {
+	try {
+		const d = await request("/api/original-v31-status");
+		const status = d.online ? "ONLINE" : "OFFLINE";
+		const el = $("overviewOriginalStatus");
+		el.textContent = status;
+		el.className = "overview-state" + (d.online ? " online" : "");
+	} catch (_) {
+		const el = $("overviewOriginalStatus");
+		el.textContent = "UNAVAILABLE";
+		el.className = "overview-state";
+	}
 }
 
 async function refreshData() {
@@ -175,10 +225,24 @@ async function refreshData() {
 
 
 async function refreshSwarm() {
- try { const d=await request("/api/swarm"); const slots=Array.isArray(d.slots)?d.slots:[]; $("swarmStatus").textContent=d.running?"RUNNING":"STOPPED"; $("swarmEquity").textContent=money(d.totalCapital); $("swarmPnl").textContent=money(d.totalPnl); $("swarmPnl").className="metric-value "+cls(d.totalPnl); $("swarmOpen").textContent=slots.filter(s=>s.position).length+" / 5"; $("swarmSlots").innerHTML=slots.slice(0,5).map(s=>"<tr><td>"+escapeHtml(s.id)+"</td><td>"+money(s.cashBalance)+"</td><td>"+escapeHtml(s.position?.symbol||"—")+"</td><td>"+money(s.position?.amountInvested||0)+"</td><td>"+number(s.completedTrades)+"</td><td>"+number(s.winners)+"</td><td>"+number(s.losers)+"</td></tr>").join("")||"<tr><td colspan=\"7\">No slots.</td></tr>"; } catch (_) {}
+	try {
+		const d = await request("/api/swarm");
+		const slots = Array.isArray(d.slots) ? d.slots : [];
+		const open = slots.filter(s => s.position).length;
+		const closed = slots.reduce((sum, s) => sum + (Number(s.completedTrades) || 0), 0);
+		updateOverview("Swarm", {status:d.running ? "RUNNING" : "STOPPED", pnl:money(d.totalPnl), open:open+" / 5 open", closed:closed+" closed"});
+		$("swarmStatus").textContent = d.running ? "RUNNING" : "STOPPED";
+		$("swarmEquity").textContent = money(d.totalCapital);
+		$("swarmPnl").textContent = money(d.totalPnl);
+		$("swarmPnl").className = "metric-value " + cls(d.totalPnl);
+		$("swarmOpen").textContent = open + " / 5";
+		$("swarmSlots").innerHTML = slots.slice(0,5).map(s => "<tr><td>"+escapeHtml(s.id)+"</td><td>"+money(s.cashBalance)+"</td><td>"+escapeHtml(s.position?.symbol||"—")+"</td><td>"+money(s.position?.amountInvested||0)+"</td><td>"+number(s.completedTrades)+"</td><td>"+number(s.winners)+"</td><td>"+number(s.losers)+"</td></tr>").join("") || "<tr><td colspan=\"7\">No slots.</td></tr>";
+	} catch (_) { updateOverview("Swarm", {status:"UNAVAILABLE"}); }
 }
 async function pollStatus() { await refreshStatus(); setTimeout(pollStatus, 2000); }
+async function pollOriginalStatus() { await refreshOriginalStatus(); setTimeout(pollOriginalStatus, 10000); }
 async function pollData() { await refreshData(); await refreshSwarm(); setTimeout(pollData, 5000); }
 pollStatus();
+pollOriginalStatus();
 pollData();
 
