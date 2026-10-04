@@ -328,7 +328,7 @@ th,td{
     </section>
     <section class="card quick-bot-card">
       <div class="quick-bot-head"><h3>Candle Breakout</h3><span class="badge" id="quickCandleStatus">CONNECTING</span></div>
-      <div class="quick-bot-meta">Separate paper test</div>
+      <div class="quick-bot-meta">10% compounding · $10 minimum · paper only</div>
       <div class="quick-stats">
         <div class="quick-stat"><div class="quick-stat-label">Equity</div><div class="quick-stat-value" id="quickCandleEquity">—</div></div>
         <div class="quick-stat"><div class="quick-stat-label">P/L</div><div class="quick-stat-value" id="quickCandlePnl">—</div></div>
@@ -339,7 +339,7 @@ th,td{
     </section>
     <section class="card quick-bot-card">
       <div class="quick-bot-head"><h3>Swarm</h3><span class="badge" id="quickSwarmStatus">CONNECTING</span></div>
-      <div class="quick-bot-meta">Independent paper slots</div>
+      <div class="quick-bot-meta">5 × $2 slots · splits at $10 / $100</div>
       <div class="quick-stats">
         <div class="quick-stat"><div class="quick-stat-label">Capital</div><div class="quick-stat-value" id="quickSwarmCapital">—</div></div>
         <div class="quick-stat"><div class="quick-stat-label">Realized P/L</div><div class="quick-stat-value" id="quickSwarmPnl">—</div></div>
