@@ -241,6 +241,14 @@ th,td{
 .quick-stat-label{color:#8792a5;font-size:10px;text-transform:uppercase;margin-bottom:4px}
 .quick-stat-value{font-size:18px;font-weight:bold;overflow-wrap:anywhere}
 .quick-position-list{display:flex;flex-direction:column;gap:0}
+.swarm-card-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px;margin-top:16px}
+.swarm-card{border:1px solid #293248;border-radius:12px;padding:14px;background:#0d1320}
+.swarm-card h3{margin:0 0 5px;font-size:16px}
+.swarm-card .swarm-card-meta{color:#8792a5;font-size:12px;margin-bottom:10px}
+.swarm-card .swarm-card-stats{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.swarm-card .swarm-card-stat{background:#141d2d;border-radius:8px;padding:8px}
+.swarm-card .swarm-card-label{font-size:11px;color:#8792a5;margin-bottom:4px}
+.swarm-card .swarm-card-value{font-weight:700;overflow-wrap:anywhere}
 .quick-position-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 0;border-top:1px solid #283141;min-width:0}
 .quick-position-row>div:first-child{min-width:0;overflow-wrap:anywhere}
 .quick-position-result{text-align:right;font-weight:bold;white-space:nowrap}
@@ -339,12 +347,14 @@ th,td{
     </section>
     <section class="card quick-bot-card">
       <div class="quick-bot-head"><h3>Swarm</h3><span class="badge" id="quickSwarmStatus">CONNECTING</span></div>
-      <div class="quick-bot-meta">5 × $2 slots · splits at $10 / $100</div>
+      <div class="quick-bot-meta">25-child pyramid · 50% reinvest · 25% pocket · 25% reproduce</div>
       <div class="quick-stats">
         <div class="quick-stat"><div class="quick-stat-label">Capital</div><div class="quick-stat-value" id="quickSwarmCapital">—</div></div>
         <div class="quick-stat"><div class="quick-stat-label">Realized P/L</div><div class="quick-stat-value" id="quickSwarmPnl">—</div></div>
+        <div class="quick-stat"><div class="quick-stat-label">Reinvested</div><div class="quick-stat-value" id="quickSwarmReinvested">—</div></div>
         <div class="quick-stat"><div class="quick-stat-label">Return</div><div class="quick-stat-value" id="quickSwarmReturn">—</div></div>
         <div class="quick-stat"><div class="quick-stat-label">Open Slots</div><div class="quick-stat-value" id="quickSwarmSlots">—</div></div>
+        <div class="quick-stat"><div class="quick-stat-label">Children</div><div class="quick-stat-value" id="quickSwarmChildren">—</div></div>
       </div>
       <h4>Open Trades</h4><div class="quick-position-list" id="quickSwarmPositions"><div class="muted">Waiting for positions…</div></div>
     </section>
@@ -541,7 +551,7 @@ th,td{
 </div>
 </div>
 
-<div class="card section" id="swarmPanel">\n<h2>Swarm — $10 / 5 Concurrent Slots</h2>\n<p class="muted">Independent paper experiment: five $2 slots can be occupied simultaneously.</p>\n<div class="grid"><div class="metric"><div class="metric-label">Status</div><div class="metric-value" id="swarmStatus">—</div></div><div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value">$10.00</div></div><div class="metric"><div class="metric-label">Equity</div><div class="metric-value" id="swarmEquity">—</div></div><div class="metric"><div class="metric-label">P/L</div><div class="metric-value" id="swarmPnl">—</div></div><div class="metric"><div class="metric-label">Open Slots</div><div class="metric-value" id="swarmOpen">0 / 5</div></div></div>\n<div style="overflow-x:auto;margin-top:16px"><table><thead><tr><th>Slot</th><th>Cash</th><th>Position</th><th>Invested</th><th>Trades</th><th>W</th><th>L</th></tr></thead><tbody id="swarmSlots"><tr><td colspan="7">Waiting...</td></tr></tbody></table></div>\n</div>\n\n<div class="card section">
+<div class="card section" id="swarmPanel">\n<h2>Swarm · Pascal pyramid</h2>\n<p class="muted">Five Genesis swarms funded from $10 by default. Each has 25 ordered child positions; every child restarts the full pyramid with inherited local X. Profits allocate 50% reinvestment, 25% pocket and 25% reproduction; a child also needs the 75% parent-retention gate.</p>\n<div class="grid"><div class="metric"><div class="metric-label">Status</div><div class="metric-value" id="swarmStatus">—</div></div><div class="metric"><div class="metric-label">Genesis capital</div><div class="metric-value" id="swarmStarting">—</div></div><div class="metric"><div class="metric-label">System equity</div><div class="metric-value" id="swarmEquity">—</div></div><div class="metric"><div class="metric-label">P/L</div><div class="metric-value" id="swarmPnl">—</div></div><div class="metric"><div class="metric-label">Open swarms</div><div class="metric-value" id="swarmOpen">0 / 5</div></div><div class="metric"><div class="metric-label">Reinvestment</div><div class="metric-value" id="swarmReinvested">—</div></div><div class="metric"><div class="metric-label">Reproduction reserve</div><div class="metric-value" id="swarmReproduction">—</div></div><div class="metric"><div class="metric-label">Pocketed</div><div class="metric-value" id="swarmPocketed">—</div></div><div class="metric"><div class="metric-label">Children created</div><div class="metric-value" id="swarmChildren">—</div></div></div>\n<div id="swarmSlots" class="swarm-card-list"><div class="muted">Waiting...</div></div>\n</div>\n\n<div class="card section">
 <h2>Entry Analytics</h2>
 <p class="muted">Read-only analysis of completed V3.1 trades. This section does not affect trading.</p>
 <div class="grid">
