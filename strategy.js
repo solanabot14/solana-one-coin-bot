@@ -12,6 +12,7 @@ function analyzeToken(data) {
 
 	const liquidity = Number(data.liquidityUsd) || 0;
 	const volume24h = Number(data.volume24h) || 0;
+	const volume5m = Number(data.volume5m) || 0;
 	const change5m = Number(data.priceChange5m) || 0;
 	const change1h = Number(data.priceChange1h) || 0;
 	const change24h = Number(data.priceChange24h) || 0;
@@ -21,6 +22,19 @@ function analyzeToken(data) {
 	const totalTransactions = buys + sells;
 	const buyRatio =
 		totalTransactions > 0 ? buys / totalTransactions : 0;
+
+	// Separate paper-only fast momentum lane; original signal remains unchanged.
+	const labReasons = [];
+	const labRequiredVolume5m = Math.max(2000, liquidity * 0.05);
+	const labMomentumEntry = liquidity >= 20000 && volume5m >= labRequiredVolume5m &&
+		change5m >= 0.25 && change5m <= 8 && change1h >= -25 && change1h <= 30 &&
+		buyRatio >= 0.50 && totalTransactions >= 20;
+	const labSignal = labMomentumEntry ? "FAST MOMENTUM WATCH" : "WAIT";
+	if (labMomentumEntry) {
+		labReasons.push("5m momentum, volume and transaction flow passed the lab gate");
+		if (change1h < 0) labReasons.push("Rebound setup: negative 1h trend requires two-scan confirmation");
+		if (change5m > 5 || change24h > 250) labReasons.push("High volatility: use half-size paper position");
+	}
 
 	// ==========================================
 	// STRATEGY V3.1
@@ -32,7 +46,7 @@ function analyzeToken(data) {
 		return {
 			score: 0,
 			signal: "AVOID",
-			reasons: ["ANTI-CHASE: 5m move already too high"]
+			reasons: ["ANTI-CHASE: 5m move already too high"], labSignal: "WAIT", labReasons: ["5m move exceeded lab anti-chase limit"]
 		};
 	}
 
@@ -40,7 +54,7 @@ function analyzeToken(data) {
 		return {
 			score: 0,
 			signal: "AVOID",
-			reasons: ["ANTI-CHASE: 1h move already too extended"]
+			reasons: ["ANTI-CHASE: 1h move already too extended"], labSignal: "WAIT", labReasons: ["1h move exceeded lab range"]
 		};
 	}
 
@@ -48,7 +62,7 @@ function analyzeToken(data) {
 		return {
 			score: 0,
 			signal: "AVOID",
-			reasons: ["ANTI-CHASE: 24h move extremely extended"]
+			reasons: ["ANTI-CHASE: 24h move extremely extended"], labSignal, labReasons
 		};
 	}
 
@@ -160,7 +174,9 @@ function analyzeToken(data) {
 	return {
 		score,
 		signal,
-		reasons
+		reasons,
+		labSignal,
+		labReasons
 	};
 }
 

@@ -12,7 +12,7 @@ function defaultDataFile() {
 		process.env.DATA_DIR ||
 		__dirname;
 
-	return path.join(path.resolve(directory), "v31ThreeSlotTradingData.json");
+	return path.join(path.resolve(directory), "b31ProfitLabTradingData.json");
 }
 
 function validateState(data) {
@@ -53,7 +53,7 @@ function validateState(data) {
 	}
 }
 
-function createPaperTrader(dataFile = defaultDataFile(), io = fs, { strategyVersion = "V3.1-Original-2Slots" } = {}) {
+function createPaperTrader(dataFile = defaultDataFile(), io = fs, { strategyVersion = "B3.1-FastMomentum-Lab-Paper" } = {}) {
 	let state = {
 		startingBalance: 100,
 		cashBalance: 100,
@@ -111,13 +111,18 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, { strategyVers
 		if (positions.some(p => p.tokenAddress === coin.tokenAddress)) return fail("Token already has an open position.");
 		if (state.cashBalance <= 0) return fail("No cash available.");
 		const next = structuredClone(state);
-		const amountInvested = Math.min(equity() * 0.10, next.cashBalance);
+		const sizeMultiplier = Math.max(0.25, Math.min(1, Number(coin.experimentEntry?.sizeMultiplier) || 1));
+		const amountInvested = Math.min(equity() * 0.10 * sizeMultiplier, next.cashBalance);
+		const executionCostBps = Math.max(0, Math.min(500, Number(process.env.PAPER_EXECUTION_COST_BPS) || 80));
 		if (!(amountInvested > 0)) return fail("No cash available.");
 		const buys5m = Number(coin.buys5m) || 0, sells5m = Number(coin.sells5m) || 0;
 		const totalTransactions5m = buys5m + sells5m;
 		const buyRatio5m = totalTransactions5m > 0 ? buys5m / totalTransactions5m : 0;
+		const effectiveEntryPrice = price * (1 + executionCostBps / 10000);
 		const position = { id: randomUUID(), symbol: coin.symbol, name: coin.name, tokenAddress: coin.tokenAddress,
-			pairAddress: coin.pairAddress || null, entryPrice: price, quantity: amountInvested / price, amountInvested,
+			pairAddress: coin.pairAddress || null, entryPrice: price, quantity: amountInvested / effectiveEntryPrice, amountInvested,
+			executionCostBps,
+			estimatedEntryCostUsd: amountInvested - (amountInvested / effectiveEntryPrice * price),
 			...(coin.experimentEntry ? { experimentEntry: structuredClone(coin.experimentEntry) } : {}),
 			firstTakeProfitDone:false, secondTakeProfitDone:false, highestPrice:price, entryTime:new Date().toISOString(),
 			strategyVersion, entryScore:Number(coin.score)||0, entrySignal:coin.signal||null,
@@ -195,11 +200,12 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, { strategyVers
 		const costBasisSold =
 			p.amountInvested * percentToSell / 100;
 
-		const saleValue =
-			quantitySold * currentPrice;
-
-		const pnl =
-			saleValue - costBasisSold;
+		const grossSaleValue = quantitySold * currentPrice;
+		const executionCostBps = Math.max(0, Math.min(500, Number(p.executionCostBps) || 80));
+		const saleValue = grossSaleValue * (1 - executionCostBps / 10000);
+		const exitExecutionCostUsd = grossSaleValue - saleValue;
+		const entryExecutionCostUsd = (Number(p.estimatedEntryCostUsd) || 0) * percentToSell / 100;
+		const pnl = saleValue - costBasisSold;
 
 		const trade = {
 			type: "SELL",
@@ -266,6 +272,11 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, { strategyVers
 			amountInvested: costBasisSold,
 
 			saleValue,
+			grossSaleValue,
+			executionCostBps,
+			entryExecutionCostUsd,
+			exitExecutionCostUsd,
+			totalEstimatedExecutionCostUsd: entryExecutionCostUsd + exitExecutionCostUsd,
 			pnl,
 
 			pnlPercent:
@@ -284,6 +295,10 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, { strategyVers
 		next.cashBalance += saleValue;
 		next.positions[index].quantity -= quantitySold;
 		next.positions[index].amountInvested -= costBasisSold;
+		next.positions[index].estimatedEntryCostUsd = Math.max(
+			0,
+			(Number(next.positions[index].estimatedEntryCostUsd) || 0) - entryExecutionCostUsd
+		);
 
 		if (options.takeProfit) {
 			next.positions[index][options.takeProfit] = true;

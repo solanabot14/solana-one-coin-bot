@@ -110,8 +110,8 @@ async function discoverCandidatesFresh({ signal } = {}) {
 
 			// Safety filters
 			if (
-				(data.liquidityUsd || 0) < 50000 ||
-				(data.volume24h || 0) < 100000
+				(data.liquidityUsd || 0) < 20000 ||
+				(data.volume5m || 0) < 2000
 			) {
 				continue;
 			}
@@ -129,7 +129,9 @@ async function discoverCandidatesFresh({ signal } = {}) {
 				...data,
 				score: analysis.score,
 				signal: analysis.signal,
-				reasons: analysis.reasons
+				reasons: analysis.reasons,
+				labSignal: analysis.labSignal,
+				labReasons: analysis.labReasons
 			});
 		}
 

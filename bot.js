@@ -5,14 +5,14 @@ const telegram = require("./telegram");
 const { getLockStatus } = require("./lpLockChecker");
 
 const POSITION_MONITOR_MS = 2000;
-const SCANNER_INTERVAL_MS = 120000;
+const SCANNER_INTERVAL_MS = 30000;
 const TOKEN_COOLDOWN_MS = 60 * 60 * 1000;
-const HARD_STOP_PERCENT = -10;
-const TAKE_PROFIT_1_PERCENT = 15;
-const TAKE_PROFIT_1_SELL_PERCENT = 25;
+const HARD_STOP_PERCENT = -8;
+const TAKE_PROFIT_1_PERCENT = 10;
+const TAKE_PROFIT_1_SELL_PERCENT = 50;
 const TAKE_PROFIT_2_PERCENT = 30;
 const TAKE_PROFIT_2_SELL_PERCENT = 35;
-const TRAILING_STOP_PERCENT = 8;
+const TRAILING_STOP_PERCENT = 5;
 const PROFIT_LOCK_TRIGGER_PERCENT = 10;
 const PROFIT_LOCK_FLOOR_PERCENT = 4;
 const MOMENTUM_EXIT_MIN_LOSS = -2;
@@ -32,7 +32,7 @@ function createBot({
   checkLiquidityLock = getLockStatus,
   positionMonitorMs = POSITION_MONITOR_MS,
   scannerIntervalMs = SCANNER_INTERVAL_MS,
-  botLabel = "V3.1 Original - 2 Slots"
+  botLabel = "B3.1 Profitability Lab - Paper Only"
 } = {}) {
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
   let activeSession = null;
@@ -42,6 +42,7 @@ function createBot({
   let monitorBusy = false;
   let lastError = null;
   const tokenCooldowns = new Map();
+  const labObservations = new Map();
   const isActive = session => activeSession === session && !session.signal.aborted;
   const getPositions = () => {
     const portfolio = getPortfolio();
@@ -49,6 +50,24 @@ function createBot({
       ? portfolio.positions
       : (portfolio.position ? [portfolio.position] : []);
   };
+
+  function confirmLabSignal(coin, now) {
+    if (coin.labSignal !== "FAST MOMENTUM WATCH" || !coin.tokenAddress) {
+      if (coin.tokenAddress) labObservations.delete(coin.tokenAddress);
+      return false;
+    }
+    const current = { at: now, momentum5m: Number(coin.priceChange5m) || 0,
+      volume5m: Number(coin.volume5m) || 0 };
+    const previous = labObservations.get(coin.tokenAddress);
+    if (previous && now - previous.at <= scannerIntervalMs * 2 &&
+        current.momentum5m >= previous.momentum5m - 1 &&
+        current.volume5m >= previous.volume5m * 0.75) {
+      labObservations.delete(coin.tokenAddress);
+      return true;
+    }
+    labObservations.set(coin.tokenAddress, current);
+    return false;
+  }
 
   function startCooldown(tokenAddress, symbol, reason) {
     tokenCooldowns.set(tokenAddress, Date.now());
@@ -58,7 +77,7 @@ function createBot({
   async function runScanner(session) {
     console.log("\nStarting automatic Solana scan...\n");
     if (getPositions().length >= MAX_OPEN_POSITIONS) {
-      console.log("Both V3.1 slots are occupied. Skipping new entry.");
+      console.log("Both lab slots are occupied. Skipping new entry.");
       return;
     }
 
@@ -81,8 +100,8 @@ function createBot({
     });
     const openTokens = new Set(getPositions().map(position => position.tokenAddress));
     const freeSlots = Math.max(0, MAX_OPEN_POSITIONS - getPositions().length);
-    const buyCandidates = availableCandidates.filter(
-      coin => coin.signal === "STRONG BUY" && !openTokens.has(coin.tokenAddress)
+    const buyCandidates = availableCandidates.filter(coin =>
+      !openTokens.has(coin.tokenAddress) && confirmLabSignal(coin, now)
     );
     const selected = [];
 
@@ -93,16 +112,21 @@ function createBot({
         console.log(`LP LOCK GATE | ${coin.symbol} | skipped | ${lock?.reason || "LOCK_STATUS_UNAVAILABLE"}`);
         continue;
       }
+      coin.signal = "FAST MOMENTUM PAPER BUY";
       coin.reasons = [
-        ...(Array.isArray(coin.reasons) ? coin.reasons : []),
+        ...(Array.isArray(coin.labReasons) ? coin.labReasons : []),
         `LP lock ${Number(lock.lockedPercent).toFixed(1)}% confirmed by RugCheck`
       ];
+      coin.experimentEntry = {
+        lane: "FAST_MOMENTUM_REBOUND_PAPER",
+        sizeMultiplier: (Number(coin.priceChange5m) > 5 || Number(coin.priceChange24h) > 250) ? 0.5 : 1
+      };
       selected.push(coin);
       if (selected.length >= freeSlots) break;
     }
 
     if (!selected.length) {
-      console.log("No STRONG BUY candidate with confirmed LP lock >=90% available.");
+      console.log("No FAST MOMENTUM paper candidate with confirmed LP lock >=90%.");
       return;
     }
 
