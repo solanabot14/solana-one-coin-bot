@@ -355,6 +355,10 @@ th,td{
   <div class="metric"><div class="metric-label">Open Slots</div><div class="metric-value" id="labSlots">—</div></div>
   <div class="metric"><div class="metric-label">Profit Factor</div><div class="metric-value" id="labProfitFactor">—</div></div>
 </div>
+<div class="section"><h3>Open Live Slots <span class="badge" id="labOpenCount">0 / 2</span></h3><p class="muted">Current paper positions with live price, unrealized P/L, and a direct chart link.</p><div style="overflow-x:auto"><table>
+<thead><tr><th>Slot</th><th>Coin / Mint</th><th>Invested</th><th>Entry</th><th>Current</th><th>Live P/L</th><th>ROI</th><th>Age</th><th>Chart</th></tr></thead>
+<tbody id="labOpenPositions"><tr><td colspan="9">Waiting for live lab positions…</td></tr></tbody>
+</table></div></div>
 <div class="section"><h3>Recent Lab Transactions</h3><div style="overflow-x:auto"><table>
 <thead><tr><th>Coin</th><th>Invested</th><th>Sold</th><th>Realized P/L</th><th>Return</th><th>Exit Reason</th></tr></thead>
 <tbody id="labHistory"><tr><td colspan="6">Waiting for lab data…</td></tr></tbody>
