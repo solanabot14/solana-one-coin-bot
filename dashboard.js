@@ -230,8 +230,9 @@ th,td{
   text-align:left
 }
 
-.quick-overview-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.quick-overview-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
 .quick-bot-card{min-width:0;padding:16px}
+.quick-bot-meta{color:#a9baff;font-size:11px;margin-top:7px;min-height:14px}
 .quick-bot-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .quick-bot-head h3{margin:0}
 .quick-bot-card h4{margin:14px 0 6px}
@@ -252,6 +253,7 @@ th,td{
 .lab-position-details .metric{min-width:0;padding:10px}
 .lab-position-details .metric-value{font-size:16px;overflow-wrap:anywhere}
 
+@media(max-width:1000px){.quick-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:600px){
   body{padding:14px}
   .value{font-size:21px}
@@ -303,7 +305,8 @@ th,td{
   <h2>Quick View</h2>
   <div class="quick-overview-grid">
     <section class="card quick-bot-card">
-      <div class="quick-bot-head"><h3>V3.1</h3><span class="badge" id="quickV31Status">CONNECTING</span></div>
+      <div class="quick-bot-head"><h3>B3.1</h3><span class="badge" id="quickV31Status">CONNECTING</span></div>
+      <div class="quick-bot-meta">10% compounding · $10 initial trade</div>
       <div class="quick-stats">
         <div class="quick-stat"><div class="quick-stat-label">Equity</div><div class="quick-stat-value" id="quickV31Equity">—</div></div>
         <div class="quick-stat"><div class="quick-stat-label">P/L</div><div class="quick-stat-value" id="quickV31Pnl">—</div></div>
@@ -313,7 +316,8 @@ th,td{
       <h4>Open Trades</h4><div class="quick-position-list" id="quickV31Positions"><div class="muted">Waiting for positions…</div></div>
     </section>
     <section class="card quick-bot-card">
-      <div class="quick-bot-head"><h3>Profitability Lab</h3><span class="badge" id="quickLabStatus">CONNECTING</span></div>
+      <div class="quick-bot-head"><h3>New Lab</h3><span class="badge" id="quickLabStatus">CONNECTING</span></div>
+      <div class="quick-bot-meta">10% compounding · $10 minimum · <span id="quickLabTelegram">Telegram: checking</span></div>
       <div class="quick-stats">
         <div class="quick-stat"><div class="quick-stat-label">Equity</div><div class="quick-stat-value" id="quickLabEquity">—</div></div>
         <div class="quick-stat"><div class="quick-stat-label">P/L</div><div class="quick-stat-value" id="quickLabPnl">—</div></div>
@@ -321,6 +325,28 @@ th,td{
         <div class="quick-stat"><div class="quick-stat-label">Open Slots</div><div class="quick-stat-value" id="quickLabSlots">—</div></div>
       </div>
       <h4>Open Trades</h4><div class="quick-position-list" id="quickLabPositions"><div class="muted">Waiting for positions…</div></div>
+    </section>
+    <section class="card quick-bot-card">
+      <div class="quick-bot-head"><h3>Candle Breakout</h3><span class="badge" id="quickCandleStatus">CONNECTING</span></div>
+      <div class="quick-bot-meta">Separate paper test</div>
+      <div class="quick-stats">
+        <div class="quick-stat"><div class="quick-stat-label">Equity</div><div class="quick-stat-value" id="quickCandleEquity">—</div></div>
+        <div class="quick-stat"><div class="quick-stat-label">P/L</div><div class="quick-stat-value" id="quickCandlePnl">—</div></div>
+        <div class="quick-stat"><div class="quick-stat-label">Return</div><div class="quick-stat-value" id="quickCandleReturn">—</div></div>
+        <div class="quick-stat"><div class="quick-stat-label">Open Slots</div><div class="quick-stat-value" id="quickCandleSlots">—</div></div>
+      </div>
+      <h4>Open Trades</h4><div class="quick-position-list" id="quickCandlePositions"><div class="muted">Waiting for positions…</div></div>
+    </section>
+    <section class="card quick-bot-card">
+      <div class="quick-bot-head"><h3>Swarm</h3><span class="badge" id="quickSwarmStatus">CONNECTING</span></div>
+      <div class="quick-bot-meta">Independent paper slots</div>
+      <div class="quick-stats">
+        <div class="quick-stat"><div class="quick-stat-label">Capital</div><div class="quick-stat-value" id="quickSwarmCapital">—</div></div>
+        <div class="quick-stat"><div class="quick-stat-label">Realized P/L</div><div class="quick-stat-value" id="quickSwarmPnl">—</div></div>
+        <div class="quick-stat"><div class="quick-stat-label">Return</div><div class="quick-stat-value" id="quickSwarmReturn">—</div></div>
+        <div class="quick-stat"><div class="quick-stat-label">Open Slots</div><div class="quick-stat-value" id="quickSwarmSlots">—</div></div>
+      </div>
+      <h4>Open Trades</h4><div class="quick-position-list" id="quickSwarmPositions"><div class="muted">Waiting for positions…</div></div>
     </section>
   </div>
 </div>
