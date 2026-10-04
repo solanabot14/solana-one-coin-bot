@@ -547,6 +547,38 @@ function createDashboardServer({ config = getConfig(), controls = bot,
     try {
       const route = new URL(req.url, "http://localhost").pathname;
       if (req.method === "GET" && route === "/healthz") return json(res, { ok: true });
+      if (req.method === "GET" && route === "/api/lab-summary") {
+        const account = portfolio();
+        const dashboard = await buildDashboardData(account, marketData);
+        const stats = dashboard.stats || {};
+        const recentTrades = (dashboard.completedTrades || []).slice(0, 15).map(trade => ({
+          symbol: trade.symbol || "-",
+          amountInvested: trade.amountInvested,
+          saleValue: trade.saleValue,
+          pnl: trade.pnl,
+          pnlPercent: trade.pnlPercent,
+          exitReasons: trade.exitReasons || [],
+          exitTime: trade.exitTime || null
+        }));
+        return json(res, {
+          name: "B3.1 Profitability Lab",
+          paperOnly: true,
+          running: controls.getBotStatus(),
+          startingBalance: dashboard.startingBalance,
+          cashBalance: dashboard.cashBalance,
+          equity: dashboard.equity,
+          totalPnl: dashboard.totalPnl,
+          totalPnlPercent: dashboard.totalPnlPercent,
+          openSlots: dashboard.openSlots,
+          maxSlots: dashboard.maxSlots,
+          completedTrades: stats.completedTrades || 0,
+          winners: stats.winners || 0,
+          losers: stats.losers || 0,
+          winRate: stats.winRate || 0,
+          profitFactor: stats.profitFactorLabel || "—",
+          recentTrades
+        });
+      }
       if (!authorized(req, config)) {
         res.setHeader("WWW-Authenticate", 'Basic realm="Trading dashboard", charset="UTF-8"');
         return json(res, { error: "Authentication required" }, 401);
