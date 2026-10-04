@@ -46,6 +46,7 @@ function createJanMvpBot({
   let lastError = null;
   let candidateCache = [];
   let candidateCacheAt = 0;
+  const livePositionSnapshots = new Map();
   const isActive = session => activeSession === session && !session.signal.aborted;
 
   async function notifyMilestones(closedTrade, milestones) {
@@ -216,6 +217,16 @@ function createJanMvpBot({
     if (!p || trader.positionKey(p) !== expectedPosition) return;
 
     const entryPrice = Number(p.entryPrice);
+    const livePnl = Number(p.quantity || 0) * currentPrice - Number(p.amountInvested || 0);
+    livePositionSnapshots.set(slotSnapshot.id, {
+      currentPrice,
+      currentValue: Number(p.quantity || 0) * currentPrice,
+      pnl: livePnl,
+      pnlPercent: Number(p.amountInvested) > 0 ? livePnl / Number(p.amountInvested) * 100 : null,
+      maxGainPercent: entryPrice > 0 ? (Number(p.highestPrice || entryPrice) - entryPrice) / entryPrice * 100 : null,
+      holdTimeMs: Math.max(0, Date.now() - new Date(p.entryTime).getTime()),
+      pairAddress: p.pairAddress || fresh.pairAddress || null
+    });
     const profitPercent = (currentPrice - entryPrice) / entryPrice * 100;
     const highestProfitPercent = (Number(p.highestPrice) - entryPrice) / entryPrice * 100;
     const dropFromHigh = (Number(p.highestPrice) - currentPrice) / Number(p.highestPrice) * 100;
@@ -332,7 +343,19 @@ function createJanMvpBot({
     start, stop,
     getStatus: () => activeSession !== null,
     getLastError: () => lastError,
-    getDashboardState: () => trader.getDashboardState(),
+    getDashboardState: () => {
+      const dashboard = trader.getDashboardState();
+      return {
+        ...dashboard,
+        slots: dashboard.slots.map(slot => {
+          if (!slot.position) {
+            livePositionSnapshots.delete(slot.id);
+            return slot;
+          }
+          return { ...slot, live: livePositionSnapshots.get(slot.id) || null };
+        })
+      };
+    },
     getState: () => trader.getState()
   };
 }
