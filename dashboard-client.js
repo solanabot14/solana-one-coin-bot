@@ -190,18 +190,19 @@ function renderLabData(d, error = null) {
 	}).join("") || '<tr><td colspan="6">No completed lab transactions yet.</td></tr>';
 }
 
-function renderQuickPosition(position, live, index) {
+function renderQuickPosition(position, live, index, slotLabel = null) {
 	position = position || {};
 	live = live || {};
 	const chart = dexLink(position, live);
-	return '<div class="quick-position-row"><div><strong>Slot ' + (index + 1) + ': ' + escapeHtml(position.symbol || "Unknown coin") +
+	const label = slotLabel || ("Slot " + (index + 1));
+	return '<div class="quick-position-row"><div><strong>' + escapeHtml(label) + ': ' + escapeHtml(position.symbol || "Unknown coin") +
 		'</strong><div class="muted">' + (live.currentPrice != null ? price(live.currentPrice) : "Price unavailable") +
 		' · ' + pct(live.pnlPercent) + '</div></div><div class="quick-position-result ' + cls(live.pnl) + '">' +
 		money(live.pnl) + (chart ? '<br><a class="small-link" href="' + chart + '" target="_blank" rel="noopener noreferrer">Chart</a>' : "") +
 		'</div></div>';
 }
 
-function renderQuickOverview(v31, lab, labError = null) {
+function renderQuickOverview(v31, lab, labError = null, candle = null, candleStatus = null, candleError = null) {
 	$("quickV31Equity").textContent = v31.equity == null ? "Unavailable" : money(v31.equity);
 	$("quickV31Pnl").textContent = v31.totalPnl == null ? "Unavailable" : money(v31.totalPnl);
 	$("quickV31Pnl").className = "quick-stat-value " + cls(v31.totalPnl);
@@ -214,25 +215,47 @@ function renderQuickOverview(v31, lab, labError = null) {
 
 	if (labError || !lab) {
 		$("quickLabStatus").textContent = labError ? "FEED UNAVAILABLE" : "CONNECTING";
+		$("quickLabTelegram").textContent = "Telegram: unavailable";
 		$("quickLabEquity").textContent = "—";
 		$("quickLabPnl").textContent = "—";
 		$("quickLabReturn").textContent = "—";
 		$("quickLabSlots").textContent = "—";
 		$("quickLabPositions").innerHTML = '<div class="muted">' + escapeHtml(labError || "Waiting for lab data…") + "</div>";
+	} else {
+		$("quickLabStatus").textContent = lab.running ? "RUNNING · PAPER" : "STOPPED · PAPER";
+		$("quickLabTelegram").textContent = lab.telegramConfigured ? "Telegram: ready" : "Telegram: missing";
+		$("quickLabEquity").textContent = lab.equity == null ? "Unavailable" : money(lab.equity);
+		$("quickLabPnl").textContent = lab.totalPnl == null ? "Unavailable" : money(lab.totalPnl);
+		$("quickLabPnl").className = "quick-stat-value " + cls(lab.totalPnl);
+		$("quickLabReturn").textContent = pct(lab.totalPnlPercent);
+		$("quickLabReturn").className = "quick-stat-value " + cls(lab.totalPnlPercent);
+		$("quickLabSlots").textContent = (lab.openSlots || 0) + " / " + (lab.maxSlots || 2);
+		const labPositions = Array.isArray(lab.openPositions) ? lab.openPositions : [];
+		$("quickLabPositions").innerHTML = labPositions.map((position, i) =>
+			renderQuickPosition(position, position, i)).join("") || '<div class="muted">No open positions.</div>';
+	}
+
+	if (candleError || !candle) {
+		$("quickCandleStatus").textContent = candleError ? "FEED UNAVAILABLE" : "CONNECTING";
+		$("quickCandleEquity").textContent = "—";
+		$("quickCandlePnl").textContent = "—";
+		$("quickCandleReturn").textContent = "—";
+		$("quickCandleSlots").textContent = "—";
+		$("quickCandlePositions").innerHTML = '<div class="muted">' + escapeHtml(candleError || "Waiting for Candle Breakout data…") + "</div>";
 		return;
 	}
-	$("quickLabStatus").textContent = lab.running ? "RUNNING · PAPER" : "STOPPED · PAPER";
-	$("quickLabEquity").textContent = lab.equity == null ? "Unavailable" : money(lab.equity);
-	$("quickLabPnl").textContent = lab.totalPnl == null ? "Unavailable" : money(lab.totalPnl);
-	$("quickLabPnl").className = "quick-stat-value " + cls(lab.totalPnl);
-	$("quickLabReturn").textContent = pct(lab.totalPnlPercent);
-	$("quickLabReturn").className = "quick-stat-value " + cls(lab.totalPnlPercent);
-	$("quickLabSlots").textContent = (lab.openSlots || 0) + " / " + (lab.maxSlots || 2);
-	const labPositions = Array.isArray(lab.openPositions) ? lab.openPositions : [];
-	$("quickLabPositions").innerHTML = labPositions.map((position, i) =>
-		renderQuickPosition(position, position, i)).join("") || '<div class="muted">No open positions.</div>';
+	$("quickCandleStatus").textContent = candleStatus?.running ? "RUNNING · PAPER" : "STOPPED · PAPER";
+	$("quickCandleStatus").className = "badge" + (candleStatus?.running ? " online" : "");
+	$("quickCandleEquity").textContent = candle.equity == null ? "Unavailable" : money(candle.equity);
+	$("quickCandlePnl").textContent = candle.totalPnl == null ? "Unavailable" : money(candle.totalPnl);
+	$("quickCandlePnl").className = "quick-stat-value " + cls(candle.totalPnl);
+	$("quickCandleReturn").textContent = pct(candle.totalPnlPercent);
+	$("quickCandleReturn").className = "quick-stat-value " + cls(candle.totalPnlPercent);
+	const candlePositions = Array.isArray(candle.livePositions) ? candle.livePositions : [];
+	$("quickCandleSlots").textContent = (candle.openSlots || candlePositions.length) + " / " + (candle.maxSlots || 3);
+	$("quickCandlePositions").innerHTML = candlePositions.map((slot, i) =>
+		renderQuickPosition(slot.position, slot.live, i)).join("") || '<div class="muted">No open positions.</div>';
 }
-
 function renderData(d) {
 	const response = d;
 	d = response.v31 || response;
@@ -246,7 +269,7 @@ function renderData(d) {
 	renderLiveTrade(d); renderScoreStats(d); renderExitReasons(d); renderHistory(d);
 	renderCandleBreakoutData(response.candleBreakout, response.candleBreakoutStatus, response.candleBreakoutError);
 	renderLabData(response.profitabilityLab, response.profitabilityLabError);
-	renderQuickOverview(d, response.profitabilityLab, response.profitabilityLabError);
+	renderQuickOverview(d, response.profitabilityLab, response.profitabilityLabError, response.candleBreakout, response.candleBreakoutStatus, response.candleBreakoutError);
 }
 
 async function refreshStatus() {
@@ -269,7 +292,38 @@ async function refreshData() {
 
 
 async function refreshSwarm() {
- try { const d=await request("/api/swarm"); const slots=Array.isArray(d.slots)?d.slots:[]; $("swarmStatus").textContent=d.running?"RUNNING":"STOPPED"; $("swarmEquity").textContent=money(d.totalCapital); $("swarmPnl").textContent=money(d.totalPnl); $("swarmPnl").className="metric-value "+cls(d.totalPnl); $("swarmOpen").textContent=slots.filter(s=>s.position).length+" / 5"; $("swarmSlots").innerHTML=slots.slice(0,5).map(s=>"<tr><td>"+escapeHtml(s.id)+"</td><td>"+money(s.cashBalance)+"</td><td>"+escapeHtml(s.position?.symbol||"—")+"</td><td>"+money(s.position?.amountInvested||0)+"</td><td>"+number(s.completedTrades)+"</td><td>"+number(s.winners)+"</td><td>"+number(s.losers)+"</td></tr>").join("")||"<tr><td colspan=\"7\">No slots.</td></tr>"; } catch (_) {}
+	try {
+		const d = await request("/api/swarm");
+		const slots = Array.isArray(d.slots) ? d.slots : [];
+		const openSlots = slots.filter(slot => slot.position);
+		const totalPnl = Number(d.totalPnl) || 0;
+		const startingCapital = Number(d.initialCapital) || (Number(d.totalCapital) - totalPnl);
+		$("swarmStatus").textContent = d.running ? "RUNNING · PAPER" : "STOPPED · PAPER";
+		$("quickSwarmStatus").textContent = d.running ? "RUNNING · PAPER" : "STOPPED · PAPER";
+		$("quickSwarmStatus").className = "badge" + (d.running ? " online" : "");
+		$("swarmEquity").textContent = money(d.totalCapital);
+		$("swarmPnl").textContent = money(totalPnl);
+		$("swarmPnl").className = "metric-value " + cls(totalPnl);
+		$("swarmOpen").textContent = openSlots.length + " / " + (d.slotCount || slots.length || 5);
+		$("swarmSlots").innerHTML = slots.slice(0, 5).map(s => "<tr><td>" + escapeHtml(s.id) + "</td><td>" + money(s.cashBalance) + "</td><td>" + escapeHtml(s.position?.symbol || "—") + "</td><td>" + money(s.position?.amountInvested || 0) + "</td><td>" + number(s.completedTrades) + "</td><td>" + number(s.winners) + "</td><td>" + number(s.losers) + "</td></tr>").join("") || "<tr><td colspan=\"7\">No slots.</td></tr>";
+		$("quickSwarmCapital").textContent = money(d.totalCapital);
+		$("quickSwarmPnl").textContent = money(totalPnl);
+		$("quickSwarmPnl").className = "quick-stat-value " + cls(totalPnl);
+		const returnPercent = startingCapital > 0 ? totalPnl / startingCapital * 100 : null;
+		$("quickSwarmReturn").textContent = pct(returnPercent);
+		$("quickSwarmReturn").className = "quick-stat-value " + cls(returnPercent);
+		$("quickSwarmSlots").textContent = openSlots.length + " / " + (d.slotCount || slots.length || 5);
+		$("quickSwarmPositions").innerHTML = openSlots.map(slot =>
+			renderQuickPosition(slot.position, slot.live, Number(slot.id) - 1, "Slot " + slot.id)
+		).join("") || '<div class="muted">No open positions.</div>';
+	} catch (error) {
+		$("quickSwarmStatus").textContent = "FEED UNAVAILABLE";
+		$("quickSwarmCapital").textContent = "—";
+		$("quickSwarmPnl").textContent = "—";
+		$("quickSwarmReturn").textContent = "—";
+		$("quickSwarmSlots").textContent = "—";
+		$("quickSwarmPositions").innerHTML = '<div class="muted">Swarm data unavailable.</div>';
+	}
 }
 async function pollStatus() { await refreshStatus(); setTimeout(pollStatus, 2000); }
 async function pollData() { await refreshData(); await refreshSwarm(); setTimeout(pollData, 5000); }
