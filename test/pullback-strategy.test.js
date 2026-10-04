@@ -6,7 +6,6 @@ const { buildDashboardData } = require("../dashboardData");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const vm = require("node:vm");
 
 function candlesForReclaim(now = Date.now(), breakoutVolume = 240) {
 	const lastStart = Math.floor(now / 60000) * 60 - 60;
@@ -125,26 +124,17 @@ test("the experiment paper account persists separately and reports dollar plus p
 	assert.ok(Math.abs(summary.totalPnlPercent - expectedPnl) < 1e-10);
 });
 
-test("dashboard renders baseline and Candle Breakout V1.1 dollar and percent P/L", () => {
-	const nodes = new Map();
-	const context = { document: { getElementById(id) {
-		if (!nodes.has(id)) nodes.set(id, { addEventListener() {} });
-		return nodes.get(id);
-	} } };
+test("dashboard serves the routed analytics terminal and core workspaces", () => {
+	const terminalFile = path.join(__dirname, "..", "terminal.html");
 	const clientFile = path.join(__dirname, "..", "dashboard-client.js");
-	const source = fs.readFileSync(clientFile, "utf8").replace(/pollStatus\(\);\s*pollData\(\);\s*$/, "");
-	vm.runInNewContext(source, context);
-	const stats = { completedTrades: 0, winners: 0, losers: 0, winRate: 0, grossProfit: 0,
-		grossLoss: 0, netPnl: 0, profitFactorLabel: "—" };
-	const account = (totalPnl, totalPnlPercent) => ({ startingBalance: 100, cashBalance: 100,
-		equity: 100 + totalPnl, totalPnl, totalPnlPercent, positions: [], livePositions: [],
-		openSlots: 0, completedTrades: [], scoreStats: [], exitReasonCounts: {}, stats });
-	context.renderData({ v31: account(4.25, 4.25), candleBreakout: account(-1.5, -1.5),
-		candleBreakoutStatus: { running: true, lockConfirmed: 2, candleCandidates: 2, minimumLockedPercent: 90,
-			candleSource: "GeckoTerminal public OHLCV", candleInterval: "1m" } });
-	assert.equal(nodes.get("pnl").textContent, "$4.25");
-	assert.equal(nodes.get("pnlPct").textContent, "4.25%");
-	assert.equal(nodes.get("candlePnl").textContent, "$-1.50");
-	assert.equal(nodes.get("candleReturn").textContent, "-1.50%");
-	assert.equal(nodes.get("candleFeed").textContent, "GeckoTerminal public OHLCV · 1m · LP lock ≥90%");
+	const html = fs.readFileSync(terminalFile, "utf8");
+	const client = fs.readFileSync(clientFile, "utf8");
+	for (const route of ["/", "/trading/v31", "/trading/candle-breakout", "/trading/b31-lab", "/swarm", "/analytics", "/transactions", "/reports", "/settings"]) {
+		assert.ok(html.includes('data-route="' + route + '"'), "missing navigation route " + route);
+	}
+	assert.match(html, /src="\/dashboard-client\.js"/);
+	assert.match(html, /src="\/analytics-core\.js"/);
+	assert.match(client, /function renderHome\(/);
+	assert.match(client, /function renderBot\(/);
+	assert.match(client, /function renderSwarm\(/);
 });
