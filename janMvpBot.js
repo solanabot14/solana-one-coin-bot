@@ -57,13 +57,23 @@ function createJanMvpBot({
       await notifier.sendTelegramMessage([
         "SWARM | SLOT MILESTONE",
         `Slot: ${closedTrade.slotId}`,
-        `Reached: $${Number(milestone).toFixed(2)}`,
-        `Balance: $${Number(closedTrade.endingBalance).toFixed(2)}`,
-        nextTarget == null ? "Next target: COMPLETE" : `Next target: $${Number(nextTarget).toFixed(2)}`,
+        `Reached: ${Number(milestone).toFixed(2)}`,
+        `Balance: ${Number(closedTrade.endingBalance).toFixed(2)}`,
+        nextTarget == null ? "Next target: COMPLETE" : `Next target: ${Number(nextTarget).toFixed(2)}`,
         `Coin: ${closedTrade.symbol}`,
         `Trade return: ${Number(closedTrade.returnPercent).toFixed(2)}%`
       ].join("\n"));
     }
+  }
+
+  function notifySwarmSell(execution, position) {
+    if (!execution) return;
+    void notifier.notifyTrade(execution.reason || "SELL", {
+      ...execution,
+      entryPrice: position.entryPrice,
+      exitPrice: execution.price,
+      amountInvested: Number(position.amountInvested) * Number(execution.percentSold) / 100
+    });
   }
 
   function ogPositionId(position) {
@@ -130,8 +140,9 @@ function createJanMvpBot({
 
     if (result.success) {
       console.log(
-        `JAN MVP MIRROR BUY | Slot ${slot.id} | ${coin.symbol} | OG entry $${Number(position.entryPrice).toFixed(10)} | Slot $${Number(result.trade.amountInvested).toFixed(2)}`
+        `JAN MVP MIRROR BUY | Slot ${slot.id} | ${coin.symbol} | OG entry ${Number(position.entryPrice).toFixed(10)} | Slot ${Number(result.trade.amountInvested).toFixed(2)}`
       );
+      void notifier.notifyTrade("BUY", result.trade);
     }
   }
 
@@ -189,7 +200,8 @@ function createJanMvpBot({
       const result = trader.buy(slot.id, coin, { source: "SWARM_V31_DISCOVERY" });
       if (result.success) {
         occupied.add(coin.tokenAddress);
-        console.log(`SWARM BUY | Slot ${slot.id} | ${coin.symbol} | $${Number(result.trade.amountInvested).toFixed(2)}`);
+        console.log(`SWARM BUY | Slot ${slot.id} | ${coin.symbol} | ${Number(result.trade.amountInvested).toFixed(2)}`);
+        void notifier.notifyTrade("BUY", result.trade);
       }
     }
   }
@@ -238,6 +250,7 @@ function createJanMvpBot({
 
     const exit = async (reason, percent = 100) => {
       const result = trader.sell(slot.id, currentPrice, percent, { expectedPosition, reason });
+      if (result.success) notifySwarmSell(result.execution, p);
       if (result.success && result.closedTrade) {
         await notifyMilestones(result.closedTrade, result.newlyReached);
         void tick("fill", session);
@@ -260,15 +273,19 @@ function createJanMvpBot({
     }
 
     if (profitPercent >= TAKE_PROFIT_1_PERCENT && !p.firstTakeProfitDone) {
-      return void trader.sell(slot.id, currentPrice, TAKE_PROFIT_1_SELL_PERCENT, {
+      const result = trader.sell(slot.id, currentPrice, TAKE_PROFIT_1_SELL_PERCENT, {
         expectedPosition, takeProfit:"firstTakeProfitDone", reason:"TAKE PROFIT 1"
       });
+      if (result.success) notifySwarmSell(result.execution, p);
+      return;
     }
 
     if (profitPercent >= TAKE_PROFIT_2_PERCENT && p.firstTakeProfitDone && !p.secondTakeProfitDone) {
-      return void trader.sell(slot.id, currentPrice, TAKE_PROFIT_2_SELL_PERCENT, {
+      const result = trader.sell(slot.id, currentPrice, TAKE_PROFIT_2_SELL_PERCENT, {
         expectedPosition, takeProfit:"secondTakeProfitDone", reason:"TAKE PROFIT 2"
       });
+      if (result.success) notifySwarmSell(result.execution, p);
+      return;
     }
 
     if (p.secondTakeProfitDone && dropFromHigh >= TRAILING_STOP_PERCENT) {
