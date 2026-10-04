@@ -143,6 +143,35 @@ function renderCandleBreakoutData(d, state = {}, error = null) {
 	}).join("") || '<tr><td colspan="9">No completed Candle Breakout transactions yet.</td></tr>';
 }
 
+function renderLabData(d, error = null) {
+	if (error || !d) {
+		$("labStatus").textContent = error ? "FEED UNAVAILABLE" : "CONNECTING";
+		$("labStatus").className = "metric-value " + (error ? "red" : "");
+		$("labHistory").innerHTML = '<tr><td colspan="6">' + escapeHtml(error || "Waiting for lab data…") + "</td></tr>";
+		return;
+	}
+	$("labStatus").textContent = d.running ? "RUNNING · PAPER ONLY" : "STOPPED · PAPER ONLY";
+	$("labStatus").className = "metric-value " + (d.running ? "green" : "");
+	$("labStarting").textContent = money(d.startingBalance);
+	$("labCash").textContent = money(d.cashBalance);
+	$("labEquity").textContent = d.equity == null ? "Unavailable" : money(d.equity);
+	$("labPnl").textContent = d.totalPnl == null ? "Unavailable" : money(d.totalPnl);
+	$("labPnl").className = "metric-value " + cls(d.totalPnl);
+	$("labReturn").textContent = pct(d.totalPnlPercent);
+	$("labReturn").className = "metric-value " + cls(d.totalPnlPercent);
+	$("labCount").textContent = number(d.completedTrades || 0);
+	$("labWinRate").textContent = pct(d.winRate || 0);
+	$("labSlots").textContent = (d.openSlots || 0) + " / " + (d.maxSlots || 2);
+	$("labProfitFactor").textContent = d.profitFactor || "—";
+	const trades = Array.isArray(d.recentTrades) ? d.recentTrades : [];
+	$("labHistory").innerHTML = trades.map(t => {
+		const reasons = Array.isArray(t.exitReasons) ? t.exitReasons.join(" / ") : "—";
+		return '<tr><td><strong>' + escapeHtml(t.symbol) + '</strong></td><td>' + money(t.amountInvested) +
+			'</td><td>' + money(t.saleValue) + '</td><td class="' + cls(t.pnl) + '">' + money(t.pnl) +
+			'</td><td class="' + cls(t.pnlPercent) + '">' + pct(t.pnlPercent) + '</td><td>' + escapeHtml(reasons) + '</td></tr>';
+	}).join("") || '<tr><td colspan="6">No completed lab transactions yet.</td></tr>';
+}
+
 function renderData(d) {
 	const response = d;
 	d = response.v31 || response;
@@ -155,6 +184,7 @@ function renderData(d) {
 	$("net").className = "metric-value " + cls(s.netPnl);
 	renderLiveTrade(d); renderScoreStats(d); renderExitReasons(d); renderHistory(d);
 	renderCandleBreakoutData(response.candleBreakout, response.candleBreakoutStatus, response.candleBreakoutError);
+	renderLabData(response.profitabilityLab, response.profitabilityLabError);
 }
 
 async function refreshStatus() {
