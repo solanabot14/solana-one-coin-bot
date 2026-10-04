@@ -169,11 +169,18 @@ function renderLabData(d, error = null) {
 		const address = p.tokenAddress || p.pairAddress || "";
 		const shortAddress = address ? address.slice(0, 5) + "…" + address.slice(-5) : "—";
 		const chart = dexLink(p, p);
-		return '<tr><td>Slot ' + (index + 1) + '</td><td><strong>' + escapeHtml(p.symbol) + '</strong><br><span class="muted" title="' + escapeHtml(address) + '">' + escapeHtml(shortAddress) + '</span></td>' +
-			'<td>' + money(p.amountInvested) + '</td><td>' + price(p.entryPrice) + '</td><td>' + price(p.currentPrice) + '</td>' +
-			'<td class="' + cls(p.pnl) + '">' + money(p.pnl) + '</td><td class="' + cls(p.pnlPercent) + '">' + pct(p.pnlPercent) + '</td>' +
-			'<td>' + duration(p.holdTimeMs) + '</td><td>' + (chart ? '<a class="small-link" href="' + chart + '" target="_blank" rel="noopener noreferrer">View chart</a>' : "—") + '</td></tr>';
-	}).join("") || '<tr><td colspan="9">No open lab positions.</td></tr>';
+		return '<article class="card lab-open-card"><div class="lab-position-header"><div><span class="badge">SLOT ' + (index + 1) + '</span> <span class="coin-name">' + escapeHtml(p.symbol) + '</span>' +
+			'<div class="muted" title="' + escapeHtml(address) + '">Mint: ' + escapeHtml(shortAddress) + '</div></div>' +
+			(chart ? '<a class="small-link" href="' + chart + '" target="_blank" rel="noopener noreferrer">View chart ↗</a>' : '') + '</div>' +
+			'<div class="lab-position-pnl ' + cls(p.pnl) + '">' + (p.currentPrice == null ? 'Live P/L unavailable' : money(p.pnl)) +
+			'<span class="muted" style="font-size:14px"> · ' + pct(p.pnlPercent) + '</span></div>' +
+			'<div class="lab-position-details">' +
+			'<div class="metric"><div class="metric-label">Invested</div><div class="metric-value">' + money(p.amountInvested) + '</div></div>' +
+			'<div class="metric"><div class="metric-label">Entry</div><div class="metric-value">' + price(p.entryPrice) + '</div></div>' +
+			'<div class="metric"><div class="metric-label">Live Price</div><div class="metric-value">' + price(p.currentPrice) + '</div></div>' +
+			'<div class="metric"><div class="metric-label">Max Gain</div><div class="metric-value ' + cls(p.maxGainPercent) + '">' + pct(p.maxGainPercent) + '</div></div>' +
+			'<div class="metric"><div class="metric-label">Time Open</div><div class="metric-value">' + duration(p.holdTimeMs) + '</div></div></div></article>';
+	}).join("") || '<div class="card empty">No open lab positions.</div>';
 	const trades = Array.isArray(d.recentTrades) ? d.recentTrades : [];
 	$("labHistory").innerHTML = trades.map(t => {
 		const reasons = Array.isArray(t.exitReasons) ? t.exitReasons.join(" / ") : "—";
@@ -187,7 +194,7 @@ function renderQuickPosition(position, live, index) {
 	position = position || {};
 	live = live || {};
 	const chart = dexLink(position, live);
-	return '<div class="quick-position-row"><div><strong>' + escapeHtml(position.symbol || "Unknown coin") +
+	return '<div class="quick-position-row"><div><strong>Slot ' + (index + 1) + ': ' + escapeHtml(position.symbol || "Unknown coin") +
 		'</strong><div class="muted">' + (live.currentPrice != null ? price(live.currentPrice) : "Price unavailable") +
 		' · ' + pct(live.pnlPercent) + '</div></div><div class="quick-position-result ' + cls(live.pnl) + '">' +
 		money(live.pnl) + (chart ? '<br><a class="small-link" href="' + chart + '" target="_blank" rel="noopener noreferrer">Chart</a>' : "") +
