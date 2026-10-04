@@ -576,7 +576,20 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           losers: stats.losers || 0,
           winRate: stats.winRate || 0,
           profitFactor: stats.profitFactorLabel || "—",
-          recentTrades
+          recentTrades,
+          openPositions: (dashboard.livePositions || []).map(({ position, live }) => ({
+            symbol: position?.symbol || "-",
+            name: position?.name || "-",
+            tokenAddress: position?.tokenAddress || "",
+            pairAddress: position?.pairAddress || live?.pairAddress || null,
+            amountInvested: position?.amountInvested ?? null,
+            entryPrice: position?.entryPrice ?? null,
+            currentPrice: live?.currentPrice ?? null,
+            pnl: live?.pnl ?? null,
+            pnlPercent: live?.pnlPercent ?? null,
+            maxGainPercent: live?.maxGainPercent ?? null,
+            holdTimeMs: live?.holdTimeMs ?? null
+          }))
         });
       }
       if (!authorized(req, config)) {
