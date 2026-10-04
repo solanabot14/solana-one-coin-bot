@@ -257,11 +257,12 @@ th,td{
 <div class="controls">
   <a class="panel-link" href="#v31Panel">V3.1 BOT</a>
   <a class="panel-link" href="#candleBreakoutPanel">CANDLE BREAKOUT V1.1</a>
+  <a class="panel-link" href="#profitabilityLabPanel">B3.1 PROFITABILITY LAB</a>
   <a class="panel-link swarm" href="#swarmPanel">SWARM</a>
 </div>
 
 <p id="notice" role="status">
-  V3.1 and Swarm run on this service. The Candle Breakout V1.1 Expanded Entry panel below mirrors the separate paper test.
+  V3.1 strategy and account stay on this service. Paper experiment panels below show separate test accounts in read-only mode.
 </p>
 
 <div id="v31Panel"></div>
@@ -336,6 +337,27 @@ th,td{
 <div class="section"><h3>Completed Test Transactions</h3><div style="overflow-x:auto"><table>
 <thead><tr><th>Coin</th><th>Invested</th><th>Sold</th><th>Realized P/L</th><th>Return</th><th>Entry Price</th><th>Exit Price</th><th>Exit Reason</th><th>Chart</th></tr></thead>
 <tbody id="candleHistory"><tr><td colspan="9">Waiting for live test data…</td></tr></tbody>
+</table></div></div>
+</div>
+
+<div class="card section" id="profitabilityLabPanel">
+<h2>B3.1 Profitability Lab — Paper Only</h2>
+<p class="muted">Separate fast-momentum experiment mirrored here for comparison. Read-only; its paper account and strategy are independent from V3.1.</p>
+<div class="grid">
+  <div class="metric"><div class="metric-label">Test Status</div><div class="metric-value" id="labStatus">Connecting…</div></div>
+  <div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value" id="labStarting">—</div></div>
+  <div class="metric"><div class="metric-label">Cash</div><div class="metric-value" id="labCash">—</div></div>
+  <div class="metric"><div class="metric-label">Equity</div><div class="metric-value" id="labEquity">—</div></div>
+  <div class="metric"><div class="metric-label">Total P/L</div><div class="metric-value" id="labPnl">—</div></div>
+  <div class="metric"><div class="metric-label">Total Return</div><div class="metric-value" id="labReturn">—</div></div>
+  <div class="metric"><div class="metric-label">Completed Positions</div><div class="metric-value" id="labCount">—</div></div>
+  <div class="metric"><div class="metric-label">Win Rate</div><div class="metric-value" id="labWinRate">—</div></div>
+  <div class="metric"><div class="metric-label">Open Slots</div><div class="metric-value" id="labSlots">—</div></div>
+  <div class="metric"><div class="metric-label">Profit Factor</div><div class="metric-value" id="labProfitFactor">—</div></div>
+</div>
+<div class="section"><h3>Recent Lab Transactions</h3><div style="overflow-x:auto"><table>
+<thead><tr><th>Coin</th><th>Invested</th><th>Sold</th><th>Realized P/L</th><th>Return</th><th>Exit Reason</th></tr></thead>
+<tbody id="labHistory"><tr><td colspan="6">Waiting for lab data…</td></tr></tbody>
 </table></div></div>
 </div>
 
@@ -514,6 +536,7 @@ th,td{
 </html>`;
 
 const CANDLE_BREAKOUT_DASHBOARD_API = "https://pubx-fast-momentum-production.up.railway.app/api/data";
+const PROFITABILITY_LAB_API = "https://b31-profitability-lab-production.up.railway.app/api/lab-summary";
 
 async function fetchCandleBreakoutDashboard() {
   const controller = new AbortController();
@@ -529,6 +552,23 @@ async function fetchCandleBreakoutDashboard() {
   } catch (error) {
     console.error("Candle Breakout dashboard feed unavailable:", error.message);
     return { data: null, status: null, error: "Candle Breakout data is temporarily unavailable." };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchProfitabilityLabDashboard() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(PROFITABILITY_LAB_API, { signal: controller.signal });
+    if (!response.ok) return { data: null, error: "Profitability Lab feed unavailable (" + response.status + ")." };
+    const body = await response.json();
+    if (!body || body.paperOnly !== true) return { data: null, error: "Profitability Lab did not return paper account data." };
+    return { data: body, error: null };
+  } catch (error) {
+    console.error("Profitability Lab dashboard feed unavailable:", error.message);
+    return { data: null, error: "Profitability Lab data is temporarily unavailable." };
   } finally {
     clearTimeout(timeout);
   }
@@ -576,15 +616,18 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const sharedMarketData = sharedQuotes
           ? async address => sharedQuotes.get(address) || null
           : marketData;
-        const [v31, candleBreakout] = await Promise.all([
+        const [v31, candleBreakout, profitabilityLab] = await Promise.all([
           buildDashboardData(baseAccount, sharedMarketData),
-          fetchCandleBreakoutDashboard()
+          fetchCandleBreakoutDashboard(),
+          fetchProfitabilityLabDashboard()
         ]);
         return json(res, {
           v31,
           candleBreakout: candleBreakout.data,
           candleBreakoutStatus: candleBreakout.status,
-          candleBreakoutError: candleBreakout.error
+          candleBreakoutError: candleBreakout.error,
+          profitabilityLab: profitabilityLab.data,
+          profitabilityLabError: profitabilityLab.error
         });
       }
       if (route === "/dashboard-client.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(client); }
