@@ -163,6 +163,17 @@ function renderLabData(d, error = null) {
 	$("labWinRate").textContent = pct(d.winRate || 0);
 	$("labSlots").textContent = (d.openSlots || 0) + " / " + (d.maxSlots || 2);
 	$("labProfitFactor").textContent = d.profitFactor || "—";
+	const positions = Array.isArray(d.openPositions) ? d.openPositions : [];
+	$("labOpenCount").textContent = positions.length + " / " + (d.maxSlots || 2);
+	$("labOpenPositions").innerHTML = positions.map((p, index) => {
+		const address = p.tokenAddress || p.pairAddress || "";
+		const shortAddress = address ? address.slice(0, 5) + "…" + address.slice(-5) : "—";
+		const chart = dexLink(p, p);
+		return '<tr><td>Slot ' + (index + 1) + '</td><td><strong>' + escapeHtml(p.symbol) + '</strong><br><span class="muted" title="' + escapeHtml(address) + '">' + escapeHtml(shortAddress) + '</span></td>' +
+			'<td>' + money(p.amountInvested) + '</td><td>' + price(p.entryPrice) + '</td><td>' + price(p.currentPrice) + '</td>' +
+			'<td class="' + cls(p.pnl) + '">' + money(p.pnl) + '</td><td class="' + cls(p.pnlPercent) + '">' + pct(p.pnlPercent) + '</td>' +
+			'<td>' + duration(p.holdTimeMs) + '</td><td>' + (chart ? '<a class="small-link" href="' + chart + '" target="_blank" rel="noopener noreferrer">View chart</a>' : "—") + '</td></tr>';
+	}).join("") || '<tr><td colspan="9">No open lab positions.</td></tr>';
 	const trades = Array.isArray(d.recentTrades) ? d.recentTrades : [];
 	$("labHistory").innerHTML = trades.map(t => {
 		const reasons = Array.isArray(t.exitReasons) ? t.exitReasons.join(" / ") : "—";
