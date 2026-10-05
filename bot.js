@@ -34,7 +34,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
   discoverCandidates = scanner.discoverCandidates, timers = globalThis,
   notifier = telegram, positionMonitorMs = POSITION_MONITOR_MS,
   scannerIntervalMs = SCANNER_INTERVAL_MS,
-  botLabel = "V3.1-3Slot + 10% Compound",
+  botLabel = "V3.1-3Slot + 10% Compound", maxOpenPositions = 3,
   exitPolicy = null } = {}) {
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
   let activeSession = null;
@@ -139,10 +139,10 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
   async function runScanner(session) {
     console.log("\nStarting automatic Solana scan...\n");
     const portfolio = getPortfolio();
-    if ((portfolio.positions || []).length >= 3) { console.log("All 3 V3.1 slots occupied. Skipping new entry."); return; }
+    if ((portfolio.positions || []).length >= maxOpenPositions) { console.log(`All ${maxOpenPositions} slots occupied. Skipping new entry.`); return; }
 
     const candidates = await discoverCandidates({ signal: session.signal });
-    if (!isActive(session) || (getPortfolio().positions || []).length >= 3) return;
+    if (!isActive(session) || (getPortfolio().positions || []).length >= maxOpenPositions) return;
     if (!candidates.length) {
       console.log("No candidates passed the filters.");
       return;
@@ -178,7 +178,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     }
 
     const openTokens = new Set((getPortfolio().positions || []).map(p => p.tokenAddress));
-    const freeSlots = Math.max(0, 3 - (getPortfolio().positions || []).length);
+    const freeSlots = Math.max(0, maxOpenPositions - (getPortfolio().positions || []).length);
     const strongBuys = availableCandidates
       .filter(coin => coin.signal === "STRONG BUY" && !openTokens.has(coin.tokenAddress))
       .slice(0, freeSlots);
@@ -204,7 +204,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
         void notifier.notifyTrade("BUY", trade.trade);
       }
       console.log("\nPAPER TRADE:", trade);
-      if ((getPortfolio().positions || []).length >= 3) break;
+      if ((getPortfolio().positions || []).length >= maxOpenPositions) break;
     }
 
     console.log("\nPORTFOLIO:", getPortfolio());
