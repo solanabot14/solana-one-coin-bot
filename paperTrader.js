@@ -112,7 +112,7 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, { strategyVers
 		const price = Number(coin.priceUsd);
 		if (!Number.isFinite(price) || price <= 0 || !coin.tokenAddress) return fail("Invalid token or price.");
 		if (positions.some(p => p.tokenAddress === coin.tokenAddress)) return fail("Token already has an open position.");
-		if (state.cashBalance <= 0) return fail("No cash available.");
+		if (state.cashBalance < MINIMUM_BUY_USD) return fail("At least $10 cash is required for a new trade.");
 		const next = structuredClone(state);
 		const targetBuy = Math.max(MINIMUM_BUY_USD, equity() * COMPOUND_RATE);
 		const amountInvested = Math.min(targetBuy, next.cashBalance);
