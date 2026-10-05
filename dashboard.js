@@ -48,13 +48,13 @@ async function fetchCandleBreakoutDashboard() {
     const response = await fetch(CANDLE_BREAKOUT_DASHBOARD_API, {
       signal: controller.signal
     });
-    if (!response.ok) return { data: null, status: null, error: "Candle Breakout feed unavailable (" + response.status + ")." };
+    if (!response.ok) return { data: null, status: null, error: "Pullback + Reclaim Momentum feed unavailable (" + response.status + ")." };
     const body = await response.json();
-    if (!body || !body.pullback) return { data: null, status: null, error: "Candle Breakout account data was not returned." };
+    if (!body || !body.pullback) return { data: null, status: null, error: "Pullback + Reclaim Momentum account data was not returned." };
     return { data: body.pullback, status: body.pullbackStatus || null, error: null };
   } catch (error) {
-    console.error("Candle Breakout dashboard feed unavailable:", error.message);
-    return { data: null, status: null, error: "Candle Breakout data is temporarily unavailable." };
+    console.error("Pullback + Reclaim Momentum dashboard feed unavailable:", error.message);
+    return { data: null, status: null, error: "Pullback + Reclaim Momentum data is temporarily unavailable." };
   } finally {
     clearTimeout(timeout);
   }
