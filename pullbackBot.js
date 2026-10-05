@@ -2,12 +2,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createBot } = require("./bot");
 const { createPaperTrader } = require("./paperTrader");
-const { createFastMomentumExitPolicy } = require("./pubxTestExitPolicy");
 const { getLockStatus } = require("./lpLockChecker");
 const pubxDiscovery = require("./pubxDiscovery");
 const candidateDiscovery = pubxDiscovery.discoverCandidates;
 
-const EXPERIMENT_VERSION = "FAST-MOMENTUM-STEP3-V1.5";
+const EXPERIMENT_VERSION = "PUBX-MOMENTUM-CONTINUATION-V1";
 const MAX_CANDIDATES_PER_SCAN = 25;
 const POSITION_MONITOR_MS = 2000;
 const SCANNER_INTERVAL_MS = 30000;
@@ -31,11 +30,11 @@ function createPullbackBot({ trader, timers = globalThis, getTokenData,
   const notifyNone = notifier || {
     notifyTrade: (event, trade) => telegram.sendTelegramMessage(
       telegram.formatTradeNotification(event, trade)
-        .replace("ONE COIN BOT | ", "FAST MOMENTUM V1 | ")
+        .replace("ONE COIN BOT | ", "PUBX CONTINUATION | ")
     ),
     notifyCritical: message => telegram.sendTelegramMessage(
       telegram.formatCriticalNotification(message)
-        .replace("ONE COIN BOT | ", "FAST MOMENTUM V1 | ")
+        .replace("ONE COIN BOT | ", "PUBX CONTINUATION | ")
     )
   };
   const experimentScanner = async options => {
@@ -48,37 +47,38 @@ function createPullbackBot({ trader, timers = globalThis, getTokenData,
     scanStats = { ...scanStats, eligible: candidates?.length || 0, signalCandidates: signals.length,
       rejectedByFilter: strategy.getStatus().rejectedByFilter, lockConfirmed: 0, lockRejected: 0,
       lastScanAt: new Date().toISOString() };
-    console.log(`FAST MOMENTUM SCAN | discovered: ${candidates?.length || 0} | checked: ${ranked.length} | signals: ${signals.length} | entry rejections: ${JSON.stringify(scanStats.rejectedByFilter)}`);
+    console.log(`PUBX CONTINUATION SCAN | discovered: ${candidates?.length || 0} | checked: ${ranked.length} | signals: ${signals.length} | entry rejections: ${JSON.stringify(scanStats.rejectedByFilter)}`);
     const ready = [];
     for (const signal of signals) {
       const lock = await checkLiquidityLock(signal.tokenAddress);
       if (!lock?.allowed) {
-        strategy.release(signal.tokenAddress, signal.experimentEntry.breakoutAt);
+        strategy.release(signal.tokenAddress);
         scanStats.lockRejected += 1;
         continue;
       }
       scanStats.lockConfirmed += 1;
       signal.experimentEntry.lockedLiquidityPercent = lock.lockedPercent;
-      signal.reasons.push(`FAST MOMENTUM V1: LP lock ${lock.lockedPercent.toFixed(1)}% confirmed by RugCheck`);
+      signal.reasons.push(`PUBX CONTINUATION: LP lock ${lock.lockedPercent.toFixed(1)}% confirmed by RugCheck`);
       ready.push(signal);
     }
     return ready;
   };
   const bot = createBot({
-    trader: trader || createPaperTrader(experimentDataFile(), fs, { strategyVersion: EXPERIMENT_VERSION }),
+    trader: trader || createPaperTrader(experimentDataFile(), fs, { strategyVersion: EXPERIMENT_VERSION, maxOpenPositions: 2 }),
     getTokenData,
     discoverCandidates: experimentScanner,
     timers,
     notifier: notifyNone,
+    maxOpenPositions: 2,
     positionMonitorMs,
     scannerIntervalMs,
     botLabel: EXPERIMENT_VERSION,
-    exitPolicy: createFastMomentumExitPolicy()
+    exitPolicy: null
   });
   return { ...bot, getStrategyStatus: () => ({ ...strategy.getStatus(), ...scanStats }) };
 }
 
-const trader = createPaperTrader(experimentDataFile(), fs, { strategyVersion: EXPERIMENT_VERSION });
+const trader = createPaperTrader(experimentDataFile(), fs, { strategyVersion: EXPERIMENT_VERSION, maxOpenPositions: 2 });
 const bot = createPullbackBot({ trader });
 
 module.exports = {
