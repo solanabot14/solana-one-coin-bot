@@ -41,8 +41,9 @@ function renderLiveTrade(d, targetId = "live", slotsId = "slots", maxSlots = 3) 
 		const position=slot.position, live=slot.live;
 		if(!live) return `<div class="metric"><div class="live-title"><span class="coin-name">Slot ${index+1}: ${escapeHtml(position.symbol)}</span></div><div>Price unavailable. Position remains open.</div></div>`;
 		const chart=dexLink(position,live), reasons=Array.isArray(position.entryReasons)&&position.entryReasons.length?position.entryReasons.map(escapeHtml).join(" • "):"No entry reasons recorded.";
-		const experimentTest=String(position.strategyVersion||"").startsWith("CANDLE-BREAKOUT")||String(position.strategyVersion||"").startsWith("FAST-MOMENTUM")||String(position.strategyVersion||"").startsWith("PUBX-MOMENTUM-CONTINUATION");
-		const tp1=position.firstTakeProfitDone?"DONE":experimentTest?"Waiting +12%":"Waiting +15%", tp2=position.secondTakeProfitDone?"RUNNER":"Waiting +30%";
+		const v31Tp40=String(position.strategyVersion||"").startsWith("PUBX-V31-ENTRY-TP40-PROFIT-LOCK");
+		const experimentTest=String(position.strategyVersion||"").startsWith("CANDLE-BREAKOUT")||String(position.strategyVersion||"").startsWith("FAST-MOMENTUM")||String(position.strategyVersion||"").startsWith("PUBX-MOMENTUM-CONTINUATION")||v31Tp40;
+		const tp1=position.firstTakeProfitDone?"DONE":v31Tp40?"Waiting +15%":experimentTest?"Waiting +12%":"Waiting +15%", tp2=position.secondTakeProfitDone?"RUNNER":v31Tp40?"Profit lock +4% / 8% trail":"Waiting +30%";
 		return `<div class="metric" style="margin-bottom:16px">
 		<div class="live-title"><span class="coin-name">Slot ${index+1}: ${escapeHtml(position.symbol)}</span>
 		<span class="badge">${escapeHtml(position.strategyVersion||"V3.1-3Slot")}</span><span class="badge">Score ${escapeHtml(position.entryScore??"—")}</span>
@@ -117,9 +118,7 @@ function renderPullbackData(d, state = {}) {
 	const trades = Array.isArray(d.completedTrades) ? d.completedTrades : [];
 	$("pullbackHistory").innerHTML = trades.map(t => {
 		const reason = Array.isArray(t.exitReasons) ? t.exitReasons.join(" / ") : "—";
-		const evidence = Array.isArray(t.entryReasons)
-			? t.entryReasons.filter(item => String(item).startsWith("PUBX CONTINUATION:")).join(" • ")
-			: "—";
+		const evidence = Array.isArray(t.entryReasons) ? t.entryReasons.join(" • ") : "—";
 		const chartAddress = t.pairAddress || t.tokenAddress || "";
 		return `<tr><td><strong>${escapeHtml(t.symbol)}</strong></td>
 			<td>${money(t.amountInvested)}</td><td>${money(t.saleValue)}</td>
