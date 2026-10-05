@@ -2,91 +2,96 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createBot } = require("./bot");
 const { createPaperTrader } = require("./paperTrader");
-const { getLockStatus } = require("./lpLockChecker");
-const pubxDiscovery = require("./pubxDiscovery");
-const candidateDiscovery = pubxDiscovery.discoverCandidates;
+const marketScanner = require("./scanner");
 
-const EXPERIMENT_VERSION = "PUBX-MOMENTUM-CONTINUATION-V1";
-const MAX_CANDIDATES_PER_SCAN = 25;
+const EXPERIMENT_VERSION = "PUBX-V31-ENTRY-TP40-PROFIT-LOCK-V1";
+const MAX_OPEN_POSITIONS = 2;
 const POSITION_MONITOR_MS = 2000;
-const SCANNER_INTERVAL_MS = 30000;
+const SCANNER_INTERVAL_MS = 120000;
+const MINIMUM_LP_LOCK_PERCENT = 90;
 
 function experimentDataFile(env = process.env) {
   if (env.RAILWAY_ENVIRONMENT_ID && !env.RAILWAY_VOLUME_MOUNT_PATH) {
-    throw new Error("Attach a Railway volume before starting the isolated paper trader.");
+    throw new Error("Attach a Railway volume before starting the isolated V3.1 paper trader.");
   }
   const directory = env.RAILWAY_VOLUME_MOUNT_PATH || env.DATA_DIR || __dirname;
-	return path.join(path.resolve(directory), "candleBreakoutTradingData.json");
+  return path.join(path.resolve(directory), "pubxV31Tp40PaperData.json");
+}
+
+function experimentReentryStateFile(env = process.env) {
+  if (env.RAILWAY_ENVIRONMENT_ID && !env.RAILWAY_VOLUME_MOUNT_PATH) {
+    throw new Error("Attach a Railway volume before starting the isolated V3.1 reentry guard.");
+  }
+  const directory = env.RAILWAY_VOLUME_MOUNT_PATH || env.DATA_DIR || __dirname;
+  return path.join(path.resolve(directory), "pubxV31ReentryState.json");
 }
 
 function createPullbackBot({ trader, timers = globalThis, getTokenData,
-  discover = candidateDiscovery, notifier = null,
+  discover = marketScanner.discoverCandidates, notifier = null,
   positionMonitorMs = POSITION_MONITOR_MS, scannerIntervalMs = SCANNER_INTERVAL_MS,
-  checkLiquidityLock = getLockStatus } = {}) {
-  const strategy = require("./pullbackStrategy").createPullbackStrategy();
+  checkLiquidityLock } = {}) {
   let scanStats = { eligible: 0, signalCandidates: 0, lockConfirmed: 0, lockRejected: 0,
-    discoverySource: "DexScreener profiles/boosts", minimumLockedPercent: 90, rejectedByFilter: {} };
-  const telegram = require("./telegram");
-  const notifyNone = notifier || {
-    notifyTrade: (event, trade) => telegram.sendTelegramMessage(
-      telegram.formatTradeNotification(event, trade)
-        .replace("ONE COIN BOT | ", "PUBX CONTINUATION | ")
-    ),
-    notifyCritical: message => telegram.sendTelegramMessage(
-      telegram.formatCriticalNotification(message)
-        .replace("ONE COIN BOT | ", "PUBX CONTINUATION | ")
-    )
-  };
+    discoverySource: "DexScreener profiles/boosts • V3.1 scanner", minimumLockedPercent: MINIMUM_LP_LOCK_PERCENT,
+    rejectedByFilter: {} };
+
   const experimentScanner = async options => {
     const candidates = await discover(options || {});
-    const ranked = (Array.isArray(candidates) ? candidates : [])
-      .filter(coin => coin?.tokenAddress && coin?.pairAddress)
-      .sort((a, b) => (Number(b.volume5m) || 0) - (Number(a.volume5m) || 0))
-      .slice(0, MAX_CANDIDATES_PER_SCAN);
-    const signals = strategy.observe(ranked);
-    scanStats = { ...scanStats, eligible: candidates?.length || 0, signalCandidates: signals.length,
-      rejectedByFilter: strategy.getStatus().rejectedByFilter, lockConfirmed: 0, lockRejected: 0,
+    const list = Array.isArray(candidates) ? candidates : [];
+    const signalCandidates = list.filter(coin => coin?.signal === "BUY" || coin?.signal === "STRONG BUY");
+    scanStats = { ...scanStats, eligible: list.length, signalCandidates: signalCandidates.length,
+      lockConfirmed: 0, lockRejected: 0,
+      rejectedByFilter: { SIGNAL_BELOW_BUY: list.length - signalCandidates.length },
       lastScanAt: new Date().toISOString() };
-    console.log(`PUBX CONTINUATION SCAN | discovered: ${candidates?.length || 0} | checked: ${ranked.length} | signals: ${signals.length} | entry rejections: ${JSON.stringify(scanStats.rejectedByFilter)}`);
-    const ready = [];
-    for (const signal of signals) {
-      const lock = await checkLiquidityLock(signal.tokenAddress);
-      if (!lock?.allowed) {
-        strategy.release(signal.tokenAddress);
-        scanStats.lockRejected += 1;
-        continue;
-      }
-      scanStats.lockConfirmed += 1;
-      signal.experimentEntry.lockedLiquidityPercent = lock.lockedPercent;
-      signal.reasons.push(`PUBX CONTINUATION: LP lock ${lock.lockedPercent.toFixed(1)}% confirmed by RugCheck`);
-      ready.push(signal);
-    }
-    return ready;
+    console.log(`PUBX V3.1 ENTRY SCAN | discovered: ${list.length} | BUY/STRONG BUY: ${signalCandidates.length}`);
+    return list;
   };
+
+  const telegram = require("./telegram");
+  const notify = notifier || {
+    notifyTrade: (event, trade) => telegram.sendTelegramMessage(
+      telegram.formatTradeNotification(event, trade).replace("ONE COIN BOT | ", "PUBX V3.1 TP40 | ")
+    ),
+    notifyCritical: message => telegram.sendTelegramMessage(
+      telegram.formatCriticalNotification(message).replace("ONE COIN BOT | ", "PUBX V3.1 TP40 | ")
+    )
+  };
+
   const bot = createBot({
-    trader: trader || createPaperTrader(experimentDataFile(), fs, { strategyVersion: EXPERIMENT_VERSION, maxOpenPositions: 2 }),
+    trader: trader || createPaperTrader(experimentDataFile(), fs, {
+      strategyVersion: EXPERIMENT_VERSION,
+      maxOpenPositions: MAX_OPEN_POSITIONS
+    }),
     getTokenData,
     discoverCandidates: experimentScanner,
     timers,
-    notifier: notifyNone,
-    maxOpenPositions: 2,
+    notifier: notify,
+    checkLiquidityLock,
+    onLiquidityLockCheck: lock => {
+      if (lock?.allowed && Number(lock.lockedPercent) >= MINIMUM_LP_LOCK_PERCENT) scanStats.lockConfirmed += 1;
+      else scanStats.lockRejected += 1;
+    },
     positionMonitorMs,
     scannerIntervalMs,
     botLabel: EXPERIMENT_VERSION,
-    exitPolicy: null
+    reentryStateFile: experimentReentryStateFile()
   });
-  return { ...bot, getStrategyStatus: () => ({ ...strategy.getStatus(), ...scanStats }) };
+
+  return { ...bot, getStrategyStatus: () => ({ ...scanStats }) };
 }
 
-const trader = createPaperTrader(experimentDataFile(), fs, { strategyVersion: EXPERIMENT_VERSION, maxOpenPositions: 2 });
+const trader = createPaperTrader(experimentDataFile(), fs, {
+  strategyVersion: EXPERIMENT_VERSION,
+  maxOpenPositions: MAX_OPEN_POSITIONS
+});
 const bot = createPullbackBot({ trader });
 
 module.exports = {
   EXPERIMENT_VERSION,
-  MAX_CANDIDATES_PER_SCAN,
+  MAX_OPEN_POSITIONS,
   POSITION_MONITOR_MS,
   SCANNER_INTERVAL_MS,
   experimentDataFile,
+  experimentReentryStateFile,
   createPullbackBot,
   start: bot.startBot,
   stop: bot.stopBot,
