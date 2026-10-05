@@ -1,25 +1,25 @@
+const fs = require("node:fs");
+const path = require("node:path");
 const market = require("./dexscreener");
 const scanner = require("./scanner");
 const paperTrader = require("./paperTrader");
 const telegram = require("./telegram");
+const { getLockStatus } = require("./lpLockChecker");
 
 const POSITION_MONITOR_MS = 2000;
 const SCANNER_INTERVAL_MS = 120000;
-const TOKEN_COOLDOWN_MS = 60 * 60 * 1000;
-const LOSING_TOKEN_COOLDOWN_MS = 90 * 60 * 1000;
-const HARD_STOP_OR_STREAK_COOLDOWN_MS = 3 * 60 * 60 * 1000;
-const LOSS_STREAK_LOOKBACK_MS = 24 * 60 * 60 * 1000;
-const REENTRY_COOL_1H_MAX = 10;
-const REENTRY_CONFIRMATION_MAX_GAP_MS = SCANNER_INTERVAL_MS * 2;
-const REENTRY_MIN_VOLUME_5M_USD = 5000;
-const REENTRY_MIN_VOLUME_LIQUIDITY_RATIO = 0.10;
-const REENTRY_MIN_BUY_RATIO = 0.60;
-const REENTRY_MIN_TRANSACTIONS_5M = 30;
+const REENTRY_MIN_VOLUME_5M = 3000;
+const REENTRY_MIN_VOLUME_ACCELERATION = 1.25;
+const REENTRY_MIN_MOMENTUM_5M = 0.25;
+const REENTRY_MAX_MOMENTUM_5M = 4;
+const REENTRY_MIN_TRANSACTIONS_5M = 20;
+const REENTRY_MIN_BUY_RATIO = 0.52;
+const REENTRY_MAX_BUY_RATIO = 0.80;
+const REENTRY_MIN_LP_LOCK_PERCENT = 90;
+const REENTRY_MAX_LIQUIDITY_DRAWDOWN = 0.12;
 const HARD_STOP_PERCENT = -10;
 const TAKE_PROFIT_1_PERCENT = 15;
-const TAKE_PROFIT_1_SELL_PERCENT = 25;
-const TAKE_PROFIT_2_PERCENT = 30;
-const TAKE_PROFIT_2_SELL_PERCENT = 35;
+const TAKE_PROFIT_1_SELL_PERCENT = 40;
 const TRAILING_STOP_PERCENT = 8;
 const PROFIT_LOCK_TRIGGER_PERCENT = 10;
 const PROFIT_LOCK_FLOOR_PERCENT = 4;
@@ -29,13 +29,49 @@ const MOMENTUM_EXIT_STRONG_LOSS = -5;
 const MOMENTUM_EXIT_STRONG_5M = -1;
 const MOMENTUM_EXIT_BUY_RATIO = 0.45;
 const MOMENTUM_EXIT_MIN_TRANSACTIONS = 10;
+const MAX_OPEN_POSITIONS = 2;
 
-function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
-  discoverCandidates = scanner.discoverCandidates, timers = globalThis,
-  notifier = telegram, positionMonitorMs = POSITION_MONITOR_MS,
+function defaultReentryStateFile() {
+  if (process.env.RAILWAY_ENVIRONMENT_ID && !process.env.RAILWAY_VOLUME_MOUNT_PATH) {
+    throw new Error("Attach a Railway volume before starting the V3.1 reentry guard.");
+  }
+  const directory = process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DATA_DIR || __dirname;
+  return path.join(path.resolve(directory), "pubxV31ReentryState.json");
+}
+
+function loadReentryGuards(file, io = fs) {
+  if (!io.existsSync(file)) return new Map();
+  const parsed = JSON.parse(io.readFileSync(file, "utf8"));
+  if (!parsed || parsed.schemaVersion !== 1 || !parsed.guards || typeof parsed.guards !== "object" || Array.isArray(parsed.guards)) {
+    throw new Error("Invalid V3.1 reentry state. Restore a verified backup; the state has not been reset.");
+  }
+  return new Map(Object.entries(parsed.guards));
+}
+
+function persistReentryGuards(guards, file, io = fs) {
+  io.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = file + "." + process.pid + "." + Date.now() + ".tmp";
+  try {
+    io.writeFileSync(temporary, JSON.stringify({ schemaVersion: 1, guards: Object.fromEntries(guards) }, null, 2), { flag: "wx", flush: true });
+    io.renameSync(temporary, file);
+  } finally {
+    if (io.existsSync(temporary)) io.unlinkSync(temporary);
+  }
+}
+
+function createBot({
+  trader = paperTrader,
+  getTokenData = market.getTokenData,
+  discoverCandidates = scanner.discoverCandidates,
+  timers = globalThis,
+  notifier = telegram,
+  checkLiquidityLock = getLockStatus,
+  onLiquidityLockCheck = () => {},
+  positionMonitorMs = POSITION_MONITOR_MS,
   scannerIntervalMs = SCANNER_INTERVAL_MS,
-  botLabel = "V3.1-3Slot + 10% Compound", maxOpenPositions = 3,
-  exitPolicy = null } = {}) {
+  botLabel = "V3.1 Original - 2 Slots",
+  reentryStateFile = defaultReentryStateFile()
+} = {}) {
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
   let activeSession = null;
   let scannerInterval = null;
@@ -43,152 +79,129 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
   let scannerBusy = false;
   let monitorBusy = false;
   let lastError = null;
+  const tokenCooldowns = loadReentryGuards(reentryStateFile);
   const isActive = session => activeSession === session && !session.signal.aborted;
-  const reentryObservations = new Map();
+  const getPositions = () => {
+    const portfolio = getPortfolio();
+    return Array.isArray(portfolio.positions)
+      ? portfolio.positions
+      : (portfolio.position ? [portfolio.position] : []);
+  };
 
-  function startCooldown(tokenAddress, symbol, reason) {
-    const cooldown = getTokenCooldown(tokenAddress, getPortfolio(), Date.now());
-    const minutes = cooldown ? Math.ceil(cooldown.remainingMs / 60000) : 0;
-    console.log(`COOLDOWN STARTED | ${symbol} | ${minutes} minutes | ${reason}`);
+  function syncClosedTokenGuards() {
+    const portfolio = getPortfolio();
+    const openTokens = new Set(getPositions().map(position => position.tokenAddress));
+    const latestTradeByToken = new Map();
+    for (const trade of Array.isArray(portfolio.history) ? portfolio.history : []) {
+      if (trade?.tokenAddress) latestTradeByToken.set(trade.tokenAddress, trade);
+    }
+    let changed = false;
+    for (const [tokenAddress, trade] of latestTradeByToken) {
+      if (trade.type !== "SELL" || Number(trade.percentSold) !== 100 || openTokens.has(tokenAddress)) continue;
+      const exitTime = trade.exitTime || trade.timestamp || trade.createdAt;
+      if (!exitTime) continue;
+      const current = tokenCooldowns.get(tokenAddress);
+      if (current?.exitTime === exitTime) continue;
+      tokenCooldowns.set(tokenAddress, {
+        exitTime,
+        observations: 0,
+        previousVolume5m: null,
+        peakLiquidityUsd: 0,
+        released: false
+      });
+      console.log(`REENTRY LOCKED | ${trade.symbol || tokenAddress} | awaiting renewed activity after full exit`);
+      changed = true;
+    }
+    if (changed) persistReentryGuards(tokenCooldowns, reentryStateFile);
   }
 
-  function getTokenCooldown(tokenAddress, portfolio, now) {
-    const sellsByPosition = new Map();
-    for (const trade of portfolio.history || []) {
-      if (trade?.type !== "SELL" || trade.tokenAddress !== tokenAddress || !trade.positionId) continue;
-      const events = sellsByPosition.get(trade.positionId) || [];
-      events.push(trade);
-      sellsByPosition.set(trade.positionId, events);
-    }
-
-    const closedPositions = [...sellsByPosition.values()]
-      .filter(events => events.some(event => Number(event.percentSold) === 100))
-      .map(events => {
-        events.sort((a, b) => Date.parse(a.exitTime) - Date.parse(b.exitTime));
-        const closingEvent = [...events].reverse().find(event => Number(event.percentSold) === 100);
-        return {
-          closedAt: Date.parse(closingEvent?.exitTime),
-          pnl: events.reduce((sum, event) => sum + (Number(event.pnl) || 0), 0),
-          reason: closingEvent?.reason
-        };
-      })
-      .filter(position => Number.isFinite(position.closedAt))
-      .sort((a, b) => b.closedAt - a.closedAt);
-
-    const latest = closedPositions[0];
-    if (!latest) return null;
-    const recentLossStreak = closedPositions
-      .filter(position => position.closedAt >= now - LOSS_STREAK_LOOKBACK_MS)
-      .reduce((streak, position) => {
-        if (streak.stopped || position.pnl >= 0) return { ...streak, stopped: true };
-        return { count: streak.count + 1, stopped: false };
-      }, { count: 0, stopped: false }).count;
-
-    const cooldownMs = latest.pnl >= 0
-      ? TOKEN_COOLDOWN_MS
-      : latest.reason === "HARD STOP" || recentLossStreak >= 2
-        ? HARD_STOP_OR_STREAK_COOLDOWN_MS
-        : LOSING_TOKEN_COOLDOWN_MS;
-    const remainingMs = latest.closedAt + cooldownMs - now;
-    if (latest.pnl < 0) {
-      // Losing tokens stay locked after the timer expires until a confirmed high-volume re-entry.
-      return { remainingMs: Math.max(0, remainingMs), loss: true };
-    }
-    return remainingMs > 0 ? { remainingMs, loss: false } : null;
-  }
-
-  function confirmsFreshReentry(coin, now) {
-    const tokenAddress = coin.tokenAddress;
-    const buyCount = Number(coin.buys5m) || 0;
-    const sellCount = Number(coin.sells5m) || 0;
-    const totalTransactions = buyCount + sellCount;
-    const buyRatio = totalTransactions ? buyCount / totalTransactions : 0;
-    const liquidityUsd = Number(coin.liquidityUsd) || 0;
+  function observeReentry(coin, lock) {
+    const guard = tokenCooldowns.get(coin.tokenAddress);
+    if (!guard || guard.released) return true;
     const volume5m = Number(coin.volume5m) || 0;
-    const requiredVolume5m = Math.max(
-      REENTRY_MIN_VOLUME_5M_USD,
-      liquidityUsd * REENTRY_MIN_VOLUME_LIQUIDITY_RATIO
-    );
-    const observation = {
-      at: now,
-      priceChange5m: Number(coin.priceChange5m) || 0,
-      priceChange1h: Number(coin.priceChange1h) || 0,
-      buyRatio,
-      volume5m
-    };
-    const qualifies = coin.signal === "STRONG BUY" &&
-      observation.priceChange1h > 0 && observation.priceChange1h <= REENTRY_COOL_1H_MAX &&
-      observation.priceChange5m >= 0.25 && observation.priceChange5m <= 6 &&
-      buyRatio >= REENTRY_MIN_BUY_RATIO &&
-      totalTransactions >= REENTRY_MIN_TRANSACTIONS_5M &&
-      volume5m >= requiredVolume5m;
-    const previous = reentryObservations.get(tokenAddress);
-
-    if (!qualifies) {
-      reentryObservations.delete(tokenAddress);
+    const momentum5m = Number(coin.priceChange5m) || 0;
+    const buys5m = Number(coin.buys5m) || 0;
+    const sells5m = Number(coin.sells5m) || 0;
+    const transactions5m = buys5m + sells5m;
+    const buyRatio = transactions5m ? buys5m / transactions5m : 0;
+    const liquidityUsd = Number(coin.liquidityUsd) || 0;
+    const peakLiquidityUsd = Math.max(Number(guard.peakLiquidityUsd) || 0, liquidityUsd);
+    const liquidityHealthy = liquidityUsd > 0 && liquidityUsd >= peakLiquidityUsd * (1 - REENTRY_MAX_LIQUIDITY_DRAWDOWN);
+    const lpHealthy = Boolean(lock?.allowed) && Number(lock.lockedPercent) >= REENTRY_MIN_LP_LOCK_PERCENT;
+    const active = lpHealthy && volume5m >= REENTRY_MIN_VOLUME_5M &&
+      momentum5m >= REENTRY_MIN_MOMENTUM_5M && momentum5m < REENTRY_MAX_MOMENTUM_5M &&
+      transactions5m >= REENTRY_MIN_TRANSACTIONS_5M &&
+      buyRatio >= REENTRY_MIN_BUY_RATIO && buyRatio <= REENTRY_MAX_BUY_RATIO && liquidityHealthy;
+    if (!active) {
+      tokenCooldowns.set(coin.tokenAddress, { ...guard, observations: 0, previousVolume5m: null, peakLiquidityUsd });
+      persistReentryGuards(tokenCooldowns, reentryStateFile);
+      console.log(`REENTRY GATE | ${coin.symbol} | locked | renewed activity criteria not met`);
       return false;
     }
-    if (previous && now - previous.at <= REENTRY_CONFIRMATION_MAX_GAP_MS) {
-      reentryObservations.delete(tokenAddress);
+
+    const accelerated = guard.observations >= 1 && Number(guard.previousVolume5m) > 0 &&
+      volume5m >= Number(guard.previousVolume5m) * REENTRY_MIN_VOLUME_ACCELERATION;
+    if (accelerated) {
+      tokenCooldowns.set(coin.tokenAddress, { ...guard, observations: 2, previousVolume5m: volume5m, peakLiquidityUsd, released: true });
+      persistReentryGuards(tokenCooldowns, reentryStateFile);
+      console.log(`REENTRY GATE | ${coin.symbol} | released after two activity checks and 25% volume acceleration`);
       return true;
     }
-    reentryObservations.set(tokenAddress, observation);
+
+    tokenCooldowns.set(coin.tokenAddress, { ...guard, observations: 1, previousVolume5m: volume5m, peakLiquidityUsd, released: false });
+    persistReentryGuards(tokenCooldowns, reentryStateFile);
+    console.log(`REENTRY GATE | ${coin.symbol} | 1 of 2 activity checks; waiting for >=25% 5m volume acceleration`);
     return false;
   }
 
   async function runScanner(session) {
     console.log("\nStarting automatic Solana scan...\n");
-    const portfolio = getPortfolio();
-    if ((portfolio.positions || []).length >= maxOpenPositions) { console.log(`All ${maxOpenPositions} slots occupied. Skipping new entry.`); return; }
+    if (getPositions().length >= MAX_OPEN_POSITIONS) {
+      console.log("Both V3.1 slots are occupied. Skipping new entry.");
+      return;
+    }
 
     const candidates = await discoverCandidates({ signal: session.signal });
-    if (!isActive(session) || (getPortfolio().positions || []).length >= maxOpenPositions) return;
+    if (!isActive(session) || getPositions().length >= MAX_OPEN_POSITIONS) return;
+    syncClosedTokenGuards();
     if (!candidates.length) {
       console.log("No candidates passed the filters.");
       return;
     }
 
-    const now = Date.now();
-    const availableCandidates = candidates.filter(coin => {
-      const cooldown = getTokenCooldown(coin.tokenAddress, getPortfolio(), now);
-      if (!cooldown) {
-        reentryObservations.delete(coin.tokenAddress);
-        return true;
+    const openTokens = new Set(getPositions().map(position => position.tokenAddress));
+    const availableCandidates = candidates.filter(coin => !openTokens.has(coin.tokenAddress));
+    const freeSlots = Math.max(0, MAX_OPEN_POSITIONS - getPositions().length);
+    const buyCandidates = availableCandidates.filter(
+      coin => (coin.signal === "BUY" || coin.signal === "STRONG BUY") && !openTokens.has(coin.tokenAddress)
+    );
+    const selected = [];
+
+    for (const coin of buyCandidates) {
+      const lock = await checkLiquidityLock(coin.tokenAddress);
+      onLiquidityLockCheck(lock, coin);
+      if (!isActive(session)) return;
+      if (!lock?.allowed || Number(lock.lockedPercent) < REENTRY_MIN_LP_LOCK_PERCENT) {
+        console.log(`LP LOCK GATE | ${coin.symbol} | skipped | ${lock?.reason || "LOCK_STATUS_UNAVAILABLE"}`);
+        continue;
       }
-      if (!cooldown.loss) {
-        reentryObservations.delete(coin.tokenAddress);
-        console.log(`TOKEN COOLDOWN | ${coin.symbol} | ${Math.ceil(cooldown.remainingMs / 60000)} minutes remaining`);
-        return false;
-      }
-      if (cooldown.remainingMs > 0) {
-        reentryObservations.delete(coin.tokenAddress);
-        console.log(`TOKEN LOSS COOLDOWN | ${coin.symbol} | ${Math.ceil(cooldown.remainingMs / 60000)} minutes remaining`);
-        return false;
-      }
-      if (confirmsFreshReentry(coin, now)) {
-        console.log(`COOLDOWN RELEASED | ${coin.symbol} | High-volume breakout confirmed`);
-        return true;
-      }
-      console.log(`TOKEN LOSS LOCK | ${coin.symbol} | Waiting for confirmed high-volume breakout`);
-      return false;
-    });
-    if (!availableCandidates.length) {
-      console.log("All candidates are currently on cooldown.");
+      const guard = tokenCooldowns.get(coin.tokenAddress);
+      if (guard && !guard.released && !observeReentry(coin, lock)) continue;
+      coin.reasons = [
+        ...(Array.isArray(coin.reasons) ? coin.reasons : []),
+        `LP lock ${Number(lock.lockedPercent).toFixed(1)}% confirmed by RugCheck`
+      ];
+      selected.push(coin);
+      if (selected.length >= freeSlots) break;
+    }
+
+    if (!selected.length) {
+      console.log("No BUY or STRONG BUY candidate with confirmed LP lock >=90% available.");
       return;
     }
 
-    const openTokens = new Set((getPortfolio().positions || []).map(p => p.tokenAddress));
-    const freeSlots = Math.max(0, maxOpenPositions - (getPortfolio().positions || []).length);
-    const strongBuys = availableCandidates
-      .filter(coin => coin.signal === "STRONG BUY" && !openTokens.has(coin.tokenAddress))
-      .slice(0, freeSlots);
-
-    if (!strongBuys.length) {
-      console.log("No STRONG BUY candidate available.");
-      return;
-    }
-
-    for (const coin of strongBuys) {
+    for (const coin of selected) {
+      if (!isActive(session) || getPositions().length >= MAX_OPEN_POSITIONS) break;
       console.log("\nBOT SELECTED:");
       console.log(`${coin.symbol} - ${coin.name}`);
       console.log(`Score: ${coin.score}`);
@@ -199,12 +212,11 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
 
       const trade = buy(coin);
       if (trade.success) {
-        reentryObservations.delete(coin.tokenAddress);
         openTokens.add(coin.tokenAddress);
+        if (tokenCooldowns.delete(coin.tokenAddress)) persistReentryGuards(tokenCooldowns, reentryStateFile);
         void notifier.notifyTrade("BUY", trade.trade);
       }
       console.log("\nPAPER TRADE:", trade);
-      if ((getPortfolio().positions || []).length >= maxOpenPositions) break;
     }
 
     console.log("\nPORTFOLIO:", getPortfolio());
@@ -224,45 +236,86 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
   }
 
   async function monitorPosition(session) {
-    const positions = getPortfolio().positions || [];
-    for (const snapshot of positions) {
+    for (const snapshot of getPositions()) {
       if (!isActive(session)) return;
-      let position = snapshot; const expectedPosition = positionKey(position); const tokenAddress = position.tokenAddress;
-      const freshData = await getTokenData(tokenAddress,{signal:session.signal});
-      const current = (getPortfolio().positions || []).find(p=>positionKey(p)===expectedPosition);
-      if (!isActive(session) || !current || !freshData) continue;
-      const currentPrice=Number(freshData.priceUsd); if(!Number.isFinite(currentPrice)||currentPrice<=0) continue;
-      updateHigh(expectedPosition,currentPrice); position=(getPortfolio().positions||[]).find(p=>positionKey(p)===expectedPosition); if(!position) continue;
-      const entryPrice=Number(position.entryPrice), profitPercent=((currentPrice-entryPrice)/entryPrice)*100;
-      const dropFromHigh=((position.highestPrice-currentPrice)/position.highestPrice)*100;
-      const highestProfitPercent=((Number(position.highestPrice)-entryPrice)/entryPrice)*100;
-      const momentum5m=Number(freshData.priceChange5m)||0, buys5m=Number(freshData.buys5m)||0, sells5m=Number(freshData.sells5m)||0;
-      const totalTransactions=buys5m+sells5m, buyRatio=totalTransactions?buys5m/totalTransactions:0;
-      console.log(`V3.1 SLOT MONITOR | ${position.symbol} | P/L: ${profitPercent.toFixed(2)}%`);
-      const exit=(reason,percent=100,extra={})=>{ const result=sell(currentPrice,percent,{expectedPosition,reason,...extra}); if(result.success){if(percent===100)startCooldown(tokenAddress,position.symbol,reason);void notifier.notifyTrade(reason,result.trade);} return result; };
-      if (typeof exitPolicy === "function") {
-        const decision = exitPolicy({ position, currentPrice, profitPercent, dropFromHigh,
-          highestProfitPercent, freshData, now: Date.now() });
-        if (decision && Number.isFinite(Number(decision.percent)) && decision.reason) {
-          exit(decision.reason, Number(decision.percent), decision.takeProfit ? { takeProfit: decision.takeProfit } : {});
+      const expectedPosition = positionKey(snapshot);
+      const tokenAddress = snapshot.tokenAddress;
+      const freshData = await getTokenData(tokenAddress, { signal: session.signal });
+      let position = getPositions().find(item => positionKey(item) === expectedPosition);
+      if (!isActive(session) || !position || !freshData) continue;
+
+      const currentPrice = Number(freshData.priceUsd);
+      if (!Number.isFinite(currentPrice) || currentPrice <= 0) continue;
+      updateHigh(expectedPosition, currentPrice);
+      position = getPositions().find(item => positionKey(item) === expectedPosition);
+      if (!position) continue;
+
+      const entryPrice = Number(position.entryPrice);
+      const profitPercent = ((currentPrice - entryPrice) / entryPrice) * 100;
+      const dropFromHigh = ((position.highestPrice - currentPrice) / position.highestPrice) * 100;
+      const momentum5m = Number(freshData.priceChange5m) || 0;
+      const buys5m = Number(freshData.buys5m) || 0;
+      const sells5m = Number(freshData.sells5m) || 0;
+      const totalTransactions = buys5m + sells5m;
+      const buyRatio = totalTransactions ? buys5m / totalTransactions : 0;
+      console.log(`POSITION MONITOR | ${position.symbol} | P/L: ${profitPercent.toFixed(2)}% | 5m: ${momentum5m.toFixed(2)}% | Buy Ratio: ${(buyRatio * 100).toFixed(1)}% | Drop High: ${dropFromHigh.toFixed(2)}%`);
+
+      const exit = (reason, percent = 100) => {
+        console.log(`EXIT | ${position.symbol} | ${reason}`);
+        const result = sell(currentPrice, percent, { expectedPosition, reason });
+        if (result.success) {
+          if (percent === 100) syncClosedTokenGuards();
+          void notifier.notifyTrade(reason, result.trade);
         }
+        return result;
+      };
+
+      if (profitPercent <= HARD_STOP_PERCENT) {
+        exit("HARD STOP");
         continue;
       }
-      if(profitPercent<=HARD_STOP_PERCENT){exit("HARD STOP");continue;}
-      const enoughActivity=totalTransactions>=MOMENTUM_EXIT_MIN_TRANSACTIONS, sellPressure=enoughActivity&&buyRatio<MOMENTUM_EXIT_BUY_RATIO;
-      if((profitPercent<=MOMENTUM_EXIT_MIN_LOSS&&momentum5m<=MOMENTUM_EXIT_5M&&sellPressure)||(profitPercent<=MOMENTUM_EXIT_STRONG_LOSS&&momentum5m<=MOMENTUM_EXIT_STRONG_5M)){exit("MOMENTUM EXIT");continue;}
-      const profitLockActive=highestProfitPercent>=PROFIT_LOCK_TRIGGER_PERCENT&&!position.secondTakeProfitDone;
-      if(profitLockActive&&profitPercent<=PROFIT_LOCK_FLOOR_PERCENT){exit("PROFIT LOCK");continue;}
-      if(profitPercent>=TAKE_PROFIT_1_PERCENT&&!position.firstTakeProfitDone){const r=sell(currentPrice,TAKE_PROFIT_1_SELL_PERCENT,{expectedPosition,takeProfit:"firstTakeProfitDone",reason:"TAKE PROFIT 1"});if(r.success)void notifier.notifyTrade("TAKE PROFIT 1",r.trade);continue;}
-      if(profitPercent>=TAKE_PROFIT_2_PERCENT&&position.firstTakeProfitDone&&!position.secondTakeProfitDone){const r=sell(currentPrice,TAKE_PROFIT_2_SELL_PERCENT,{expectedPosition,takeProfit:"secondTakeProfitDone",reason:"TAKE PROFIT 2"});if(r.success)void notifier.notifyTrade("TAKE PROFIT 2",r.trade);continue;}
-      if(position.secondTakeProfitDone&&dropFromHigh>=TRAILING_STOP_PERCENT) exit("TRAILING STOP");
+
+      const highestProfitPercent = ((Number(position.highestPrice) - entryPrice) / entryPrice) * 100;
+      const profitLockActive = highestProfitPercent >= PROFIT_LOCK_TRIGGER_PERCENT;
+      const profitLockFloorPrice = Math.max(
+        entryPrice * (1 + PROFIT_LOCK_FLOOR_PERCENT / 100),
+        Number(position.highestPrice) * (1 - TRAILING_STOP_PERCENT / 100)
+      );
+      if (profitLockActive && currentPrice <= profitLockFloorPrice) {
+        console.log(`PROFIT LOCK FLOOR | ${position.symbol} | protected price: ${profitLockFloorPrice.toPrecision(8)}`);
+        exit("PROFIT LOCK");
+        continue;
+      }
+
+      const enoughActivity = totalTransactions >= MOMENTUM_EXIT_MIN_TRANSACTIONS;
+      const sellPressure = enoughActivity && buyRatio < MOMENTUM_EXIT_BUY_RATIO;
+      const momentumExitA = profitPercent <= MOMENTUM_EXIT_MIN_LOSS &&
+        momentum5m <= MOMENTUM_EXIT_5M && sellPressure;
+      const momentumExitB = profitPercent <= MOMENTUM_EXIT_STRONG_LOSS &&
+        momentum5m <= MOMENTUM_EXIT_STRONG_5M;
+      if (momentumExitA || momentumExitB) {
+        exit("MOMENTUM EXIT");
+        continue;
+      }
+
+      if (profitPercent >= TAKE_PROFIT_1_PERCENT && !position.firstTakeProfitDone) {
+        const result = sell(currentPrice, TAKE_PROFIT_1_SELL_PERCENT, {
+          expectedPosition,
+          takeProfit: "firstTakeProfitDone",
+          reason: "TAKE PROFIT 1"
+        });
+        if (result.success) void notifier.notifyTrade("TAKE PROFIT 1", result.trade);
+        continue;
+      }
+
     }
   }
 
   async function tick(kind, session = activeSession) {
     if (!session || !isActive(session)) return;
     if (kind === "scanner" ? scannerBusy : monitorBusy) return;
-    if (kind === "scanner") scannerBusy = true; else monitorBusy = true;
+    if (kind === "scanner") scannerBusy = true;
+    else monitorBusy = true;
     try {
       await (kind === "scanner" ? runScanner(session) : monitorPosition(session));
     } catch (error) {
@@ -273,12 +326,13 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
         stopBot();
       }
     } finally {
-      if (kind === "scanner") scannerBusy = false; else monitorBusy = false;
+      if (kind === "scanner") scannerBusy = false;
+      else monitorBusy = false;
     }
   }
+
   function startBot() {
     if (activeSession) return;
-    // Validate/load the account before announcing that trading is running.
     getPortfolio();
     lastError = null;
     const session = new AbortController();
@@ -289,6 +343,7 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     void tick("monitor", session);
     void tick("scanner", session);
   }
+
   function stopBot() {
     if (!activeSession) return;
     activeSession.abort();
@@ -298,7 +353,13 @@ function createBot({ trader = paperTrader, getTokenData = market.getTokenData,
     scannerInterval = positionInterval = null;
     console.log("BOT STOPPED | Open positions remain saved; automatic exits are paused.");
   }
-  return { startBot, stopBot, getBotStatus: () => activeSession !== null,
-    getLastError: () => lastError };
+
+  return {
+    startBot,
+    stopBot,
+    getBotStatus: () => activeSession !== null,
+    getLastError: () => lastError
+  };
 }
+
 module.exports = { createBot, ...createBot() };
