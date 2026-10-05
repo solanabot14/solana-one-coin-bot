@@ -74,11 +74,11 @@ function rig(candidates, checkLiquidityLock = async () => ({ allowed: true, lock
   return { bot, state };
 }
 
-test("opens two original-sized slots in one scan, only for LP-locked candidates", async t => {
+test("opens BUY and STRONG BUY signals within the same LP-lock and slot limits", async t => {
   const lockChecks = [];
   const candidates = [
-    strongBuy("unlocked", { score: 12 }),
-    strongBuy("locked-1", { score: 11 }),
+    strongBuy("unlocked", { signal: "BUY", score: 7 }),
+    strongBuy("locked-1", { signal: "BUY", score: 7 }),
     strongBuy("locked-2", { score: 9 }),
     strongBuy("third-locked", { score: 8 })
   ];
