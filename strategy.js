@@ -111,7 +111,7 @@ function analyzeToken(data) {
 	} else if (buyRatio >= 0.60 && buyRatio <= 0.75) {
 		score += 4;
 		reasons.push("Strong sustainable buy pressure");
-	} else if (buyRatio >= 0.55) {
+	} else if (buyRatio >= 0.52) {
 		score += 3;
 		reasons.push("Healthy buy pressure");
 	} else if (buyRatio >= 0.50) {
@@ -143,7 +143,7 @@ function analyzeToken(data) {
 		change5m <= 6 &&
 		change1h > 0 &&
 		change1h <= 30 &&
-		buyRatio >= 0.55 &&
+		buyRatio >= 0.52 &&
 		totalTransactions >= 20;
 
 	if (
