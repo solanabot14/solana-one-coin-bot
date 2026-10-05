@@ -42,7 +42,7 @@ const page = `<!doctype html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>V3.1 Entry + TP40 Profit Lock Paper Test</title>
+<title>Bit V 3.1 40% TP1 Paper Test</title>
 
 <style>
 *{box-sizing:border-box}
@@ -244,7 +244,7 @@ th,td{
 
 <div class="header">
   <div>
-    <h1>V3.1 Entry + TP40 Profit Lock</h1>
+    <h1>Bit V 3.1 40% TP1</h1>
     <div class="subtitle">
       Early momentum • 40% TP1 • Ratcheting profit lock • Paper trading
     </div>
@@ -257,7 +257,7 @@ th,td{
 
 <div class="controls">
   <a class="panel-link" href="#v31Panel">V3.1 RECORDS</a>
-  <a class="panel-link" href="#pullbackPanel">V3.1 ENTRY + TP40 PROFIT LOCK</a>
+  <a class="panel-link" href="#pullbackPanel">BIT V 3.1 40% TP1</a>
   <a class="panel-link swarm" href="#swarmPanel">SWARM</a>
 </div>
 
@@ -315,7 +315,7 @@ th,td{
 </div>
 
 <div class="card section" id="pullbackPanel">
-<h2>V3.1 Entry + TP40 Profit Lock — Isolated Paper Test</h2>
+<h2>Bit V 3.1 40% TP1 — Isolated Paper Test</h2>
 <p class="muted">Entries use the V3.1 early-momentum score and anti-chase limits, accepting BUY or STRONG BUY after the $40,000 liquidity, $50,000 24-hour-volume, and RugCheck LP-lock ≥90% gates. Two paper slots use 10% of current equity per entry, with the existing $10 minimum when cash allows. Exit: hard stop −10%; sell 40% at +15%; hold the remaining 60% with a +4% floor after a +10% high, ratcheting upward to 8% below the high-water mark. There is no fixed TP2. Scanner interval 120 seconds. Prices are DexScreener marks, not executable sell quotes.</p>
 <p class="muted">Exit management follows V3.1: hard stop at -10%; take partial profits at +15% and +30%; apply the V3.1 momentum and profit-lock rules. Position sizing compounds at 10% of current equity. Paper prices are DexScreener marks, not executable sell quotes, so gaps and slippage can exceed a stop.</p>
 <div class="grid">
@@ -333,8 +333,8 @@ th,td{
   <div class="metric"><div class="metric-label">Last Scan Rejections</div><div class="metric-value" id="pullbackRejections">Waiting for scan</div></div>
   <div class="metric"><div class="metric-label">Entry Feed</div><div class="metric-value" id="pullbackEntryFeed">Waiting for market data</div></div>
 </div>
-<div class="section"><h3>Open V3.1 Entry + TP40 Paper Positions</h3><div id="pullbackLive" class="empty">Waiting for a V3.1 BUY signal and LP-lock confirmation...</div></div>
-<div class="section"><h3>V3.1 Entry + TP40 Paper Test Trade History</h3><p class="muted">Each trade shows dollars invested, dollars sold, realized P/L in dollars, and return percentage.</p><div style="overflow-x:auto"><table>
+<div class="section"><h3>Open Bit V 3.1 40% TP1 Paper Positions</h3><div id="pullbackLive" class="empty">Waiting for a V3.1 BUY signal and LP-lock confirmation...</div></div>
+<div class="section"><h3>Bit V 3.1 40% TP1 Paper Test Trade History</h3><p class="muted">Each trade shows dollars invested, dollars sold, realized P/L in dollars, and return percentage.</p><div style="overflow-x:auto"><table>
 <thead><tr><th>Coin</th><th>Invested ($)</th><th>Total Sold ($)</th><th>Profit / Loss ($)</th><th>Return (%)</th><th>Entry Price</th><th>Average Exit Price</th><th>Entry Evidence</th><th>Exit Reason</th><th>Chart</th></tr></thead>
 <tbody id="pullbackHistory"><tr><td colspan="10">No experimental trades yet.</td></tr></tbody>
 </table></div></div>
