@@ -111,7 +111,7 @@ async function discoverCandidatesFresh({ signal } = {}) {
 			// Safety filters
 			if (
 				(data.liquidityUsd || 0) < 40000 ||
-				(data.volume24h || 0) < 100000
+				(data.volume24h || 0) < 50000
 			) {
 				continue;
 			}
