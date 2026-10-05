@@ -1,44 +1,52 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createPullbackStrategy } = require("../pullbackStrategy");
-const { createFastMomentumExitPolicy } = require("../pubxTestExitPolicy");
 
 function coin(overrides = {}) {
   return { tokenAddress:"mint-a", pairAddress:"pair-a", symbol:"TEST", priceUsd:0.001,
-    liquidityUsd:25000, volume5m:2000, buys5m:8, sells5m:4,
-    priceChange5m:5, priceChange1h:30, ...overrides };
+    liquidityUsd:60000, volume24h:80000, volume5m:6000, buys5m:14, sells5m:8,
+    priceChange5m:45, priceChange1h:90, ...overrides };
 }
 
-function confirm(strategy, candidate, t=Date.now()) {
-  strategy.observe([candidate], t);
-  strategy.observe([{...candidate, priceUsd:Number(candidate.priceUsd)*1.01}], t+30000);
-  return strategy.observe([{...candidate, priceUsd:Number(candidate.priceUsd)*1.02}], t+60000);
-}
-
-test("step-3 admits soft pumps while rejecting a sharp single-scan chase", () => {
+test("requires a spike, pullback, reclaim, renewed flow, and two reclaim checks", () => {
   const strategy = createPullbackStrategy();
-  assert.equal(confirm(strategy, coin({priceChange5m:18,priceChange1h:75})).length, 1);
-  const sharp = createPullbackStrategy();
-  const candidate = coin({tokenAddress:"late-5m",priceChange5m:18.01});
-  assert.equal(confirm(sharp, candidate).length, 0);
-  assert.equal(sharp.getStatus().rejectedByFilter.FIVE_MINUTE_MOMENTUM_OUT_OF_RANGE, 1);
-  const spike = createPullbackStrategy();
-  spike.observe([coin({tokenAddress:"single-spike",priceUsd:0.001})], 1000);
-  assert.equal(spike.observe([coin({tokenAddress:"single-spike",priceUsd:0.00108})], 31000).length, 0);
-  assert.equal(spike.getStatus().rejectedByFilter.SINGLE_STEP_MOVE_TOO_SHARP, 1);
+  assert.equal(strategy.observe([coin()], 1000).length, 0);
+  assert.equal(strategy.observe([coin({priceUsd:0.00105})], 31000).length, 0);
+  assert.equal(strategy.getStatus().rejectedByFilter.WAITING_FOR_3_TO_12_PERCENT_PULLBACK, 1);
+  assert.equal(strategy.observe([coin({priceUsd:0.00096,volume5m:5500})], 61000).length, 0);
+  const first = strategy.observe([coin({priceUsd:0.00105,volume5m:8000})], 91000);
+  assert.equal(first.length, 0);
+  const entry = strategy.observe([coin({priceUsd:0.00106,volume5m:8500})], 121000);
+  assert.equal(entry.length, 1);
+  assert.equal(entry[0].signal, "STRONG BUY");
+  assert.equal(entry[0].experimentEntry.model, "PUBX_MOMENTUM_CONTINUATION_PULLBACK_RECLAIM_V1");
+  assert.ok(entry[0].experimentEntry.pullbackPercent >= 8 && entry[0].experimentEntry.pullbackPercent <= 9);
 });
 
-test("test-only exits take early profit, cut fast, and force position rotation", () => {
-  const exit = createFastMomentumExitPolicy();
-  const base = {entryTime:new Date(0).toISOString(),firstTakeProfitDone:false};
-  assert.equal(exit({position:base,profitPercent:-6,dropFromHigh:6,highestProfitPercent:0,freshData:{},now:1000}).reason,
-    "FAST MOMENTUM HARD STOP (-6% target)");
-  assert.equal(exit({position:base,profitPercent:-5.9,dropFromHigh:5.9,highestProfitPercent:0,freshData:{},now:1000}), null);
-  assert.equal(exit({position:base,profitPercent:8,dropFromHigh:0,highestProfitPercent:8,freshData:{},now:1000}).percent, 50);
-  assert.equal(exit({position:{...base,firstTakeProfitDone:true},profitPercent:4,dropFromHigh:5,
-    highestProfitPercent:12,freshData:{},now:1000}).reason, "FAST MOMENTUM RUNNER TRAIL");
-  assert.equal(exit({position:base,profitPercent:1,dropFromHigh:0,highestProfitPercent:1,
-    freshData:{},now:15*60*1000}).reason, "FAST MOMENTUM MAX HOLD (15 MINUTES)");
-  assert.equal(exit({position:base,profitPercent:1,dropFromHigh:0,highestProfitPercent:4,
-    freshData:{},now:8*60*1000}).reason, "FAST MOMENTUM STALE EXIT (8 MINUTES)");
+test("rejects weak liquidity, volume, reclaim extension, and excessive pullback", () => {
+  const lowLiquidity = createPullbackStrategy();
+  lowLiquidity.observe([coin({liquidityUsd:39999})], 1000);
+  assert.equal(lowLiquidity.getStatus().rejectedByFilter.LIQUIDITY_BELOW_40000, 1);
+  const lowVolume = createPullbackStrategy();
+  lowVolume.observe([coin({volume24h:49999})], 1000);
+  assert.equal(lowVolume.getStatus().rejectedByFilter.VOLUME_24H_BELOW_50000, 1);
+
+  const extended = createPullbackStrategy();
+  extended.observe([coin()], 1000);
+  extended.observe([coin({priceUsd:0.00096})], 31000);
+  assert.equal(extended.observe([coin({priceUsd:0.00104,volume5m:9000})], 61000).length, 0);
+  assert.equal(extended.getStatus().rejectedByFilter.RECLAIM_TOO_EXTENDED, 1);
+
+  const deep = createPullbackStrategy();
+  deep.observe([coin()], 1000);
+  deep.observe([coin({priceUsd:0.00087})], 31000);
+  assert.equal(deep.getStatus().rejectedByFilter.PULLBACK_EXCEEDED_12_PERCENT, 1);
+});
+
+test("requires 20 transactions, a 55% to 80% buy ratio, and renewed volume", () => {
+  const strategy = createPullbackStrategy();
+  strategy.observe([coin()], 1000);
+  strategy.observe([coin({priceUsd:0.00096,volume5m:5500})], 31000);
+  strategy.observe([coin({priceUsd:0.001,volume5m:8000,buys5m:10,sells5m:9})], 61000);
+  assert.equal(strategy.getStatus().rejectedByFilter.FEWER_THAN_20_TRANSACTIONS, 1);
 });
