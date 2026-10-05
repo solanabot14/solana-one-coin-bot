@@ -174,7 +174,7 @@ function createBot({
     const availableCandidates = candidates.filter(coin => !openTokens.has(coin.tokenAddress));
     const freeSlots = Math.max(0, MAX_OPEN_POSITIONS - getPositions().length);
     const buyCandidates = availableCandidates.filter(
-      coin => coin.signal === "STRONG BUY" && !openTokens.has(coin.tokenAddress)
+      coin => (coin.signal === "BUY" || coin.signal === "STRONG BUY") && !openTokens.has(coin.tokenAddress)
     );
     const selected = [];
 
@@ -196,7 +196,7 @@ function createBot({
     }
 
     if (!selected.length) {
-      console.log("No STRONG BUY candidate with confirmed LP lock >=90% available.");
+      console.log("No BUY or STRONG BUY candidate with confirmed LP lock >=90% available.");
       return;
     }
 
