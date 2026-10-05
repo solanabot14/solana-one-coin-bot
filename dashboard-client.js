@@ -46,7 +46,7 @@ function renderLiveTrade(d, targetId = "live", slotsId = "slots", maxSlots = 3) 
 		const tp1=position.firstTakeProfitDone?"DONE":v31Tp40?"Waiting +15%":experimentTest?"Waiting +12%":"Waiting +15%", tp2=position.secondTakeProfitDone?"RUNNER":v31Tp40?"Profit lock +4% / 8% trail":"Waiting +30%";
 		return `<div class="metric" style="margin-bottom:16px">
 		<div class="live-title"><span class="coin-name">Slot ${index+1}: ${escapeHtml(position.symbol)}</span>
-		<span class="badge">${escapeHtml(position.strategyVersion||"V3.1-3Slot")}</span><span class="badge">Score ${escapeHtml(position.entryScore??"—")}</span>
+		<span class="badge">${escapeHtml(v31Tp40?"Bit V 3.1 40% TP1":(position.strategyVersion||"V3.1-3Slot"))}</span><span class="badge">Score ${escapeHtml(position.entryScore??"—")}</span>
 		${chart?`<a class="small-link" href="${chart}" target="_blank" rel="noopener noreferrer">DexScreener</a>`:""}</div>
 		<div class="grid">
 		<div class="metric"><div class="metric-label">Invested</div><div class="metric-value">${money(position.amountInvested)}</div></div>
