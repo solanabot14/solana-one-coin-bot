@@ -1,5 +1,8 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const { createBot } = require("../bot");
 
 const settle = () => new Promise(resolve => setImmediate(resolve));
@@ -32,8 +35,13 @@ function strongBuy(tokenAddress, changes = {}) {
   };
 }
 
-function rig(candidates, checkLiquidityLock = async () => ({ allowed: true, lockedPercent: 95 })) {
-  const state = { startingBalance: 100, cashBalance: 100, positions: [], history: [] };
+function temporaryStateFile() {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "v31-reentry-"));
+  return path.join(directory, "reentry.json");
+}
+
+function rig(candidates, checkLiquidityLock = async () => ({ allowed: true, lockedPercent: 95 }), options = {}) {
+  const state = options.state || { startingBalance: 100, cashBalance: 100, positions: [], history: [] };
   let nextPosition = 0;
   const trader = {
     buy(coin) {
@@ -60,7 +68,8 @@ function rig(candidates, checkLiquidityLock = async () => ({ allowed: true, lock
     discoverCandidates: async () => candidates,
     getTokenData: async () => null,
     notifier,
-    checkLiquidityLock
+    checkLiquidityLock,
+    reentryStateFile: options.reentryStateFile || temporaryStateFile()
   });
   return { bot, state };
 }
@@ -157,4 +166,47 @@ test("activates a +4% protective floor after a +10% peak gain", async t => {
   assert.equal(sellCalls.length, 1);
   assert.equal(sellCalls[0].options.reason, "PROFIT LOCK");
   assert.equal(sellCalls[0].price, 104);
+});
+
+
+test("keeps a full-exit token blocked across restart until two strong activity checks", async t => {
+  const tokenAddress = "persistent-reentry-token";
+  const state = {
+    startingBalance: 100,
+    cashBalance: 100,
+    positions: [],
+    history: [
+      { type: "BUY", tokenAddress, positionId: "old-position", entryTime: "2026-10-04T20:00:00.000Z" },
+      { type: "SELL", tokenAddress, positionId: "old-position", percentSold: 100, exitTime: "2026-10-04T21:00:00.000Z", symbol: "REENTRY" }
+    ]
+  };
+  const stateFile = temporaryStateFile();
+  const firstCandidate = strongBuy(tokenAddress, {
+    volume5m: 4000,
+    liquidityUsd: 60000,
+    buys5m: 12,
+    sells5m: 8,
+    priceChange5m: 1
+  });
+  const first = rig([firstCandidate], async () => ({ allowed: true, lockedPercent: 95 }), { state, reentryStateFile: stateFile });
+  t.after(() => first.bot.stopBot());
+  first.bot.startBot();
+  await settle();
+  assert.equal(state.positions.length, 0, "one observation is not enough to reenter");
+  assert.equal(JSON.parse(fs.readFileSync(stateFile, "utf8")).guards[tokenAddress].observations, 1);
+  first.bot.stopBot();
+
+  const secondCandidate = strongBuy(tokenAddress, {
+    volume5m: 5200,
+    liquidityUsd: 58000,
+    buys5m: 12,
+    sells5m: 8,
+    priceChange5m: 1
+  });
+  const second = rig([secondCandidate], async () => ({ allowed: true, lockedPercent: 95 }), { state, reentryStateFile: stateFile });
+  t.after(() => second.bot.stopBot());
+  second.bot.startBot();
+  await settle();
+  assert.equal(state.positions.length, 1, "a second valid scan with >=25% volume growth releases the reentry lock");
+  assert.equal(state.positions[0].tokenAddress, tokenAddress);
 });
