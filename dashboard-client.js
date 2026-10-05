@@ -43,7 +43,7 @@
     var api = state.api || {};
     var input = [
       { id:'v31', name:'V3.1', label:'V3.1 Original', data:api.v31, status:state.status, mode:'PAPER' },
-      { id:'candle', name:'Candle Breakout / PubX Fast Momentum', label:'Candle Breakout', data:api.candleBreakout, status:api.candleBreakoutStatus, mode:'PAPER' },
+      { id:'candle', name:'Pullback + Reclaim Momentum', label:'Pullback + Reclaim Momentum', data:api.candleBreakout, status:api.candleBreakoutStatus, mode:'PAPER' },
       { id:'lab', name:'B3.1 Lab', label:'B3.1 Lab', data:api.profitabilityLab, status:{ running:api.profitabilityLab && api.profitabilityLab.running }, mode:'PAPER', limited:true }
     ];
     systems = input.map(function (s) {
@@ -223,7 +223,7 @@
     else if(tab==='ANALYTICS') content=renderEntryExitAnalytics(system.trades);
     else content=renderTransactions(system.trades.map(function(t){return Object.assign({type:'CLOSED TRADE',time:t.exitTime},t);}),true);
     var control=system.id==='v31'?'<button class="button primary" data-control="start">START V3.1</button><button class="button danger" data-control="stop">STOP V3.1</button>':'';
-    $('view').innerHTML=pageHead(esc(system.name),system.id==='candle'?'PubX FAST-MOMENTUM-STEP3-V1.5 · shown as Candle Breakout in the existing V3.1 dashboard':system.id==='lab'?'Paper-only profitability experiment':'Paper account · read-only analytics',control+'<span class="badge">PAPER</span>')+tabHtml+content+(system.historyLimited?'<div class="notice">This feed currently exposes its 15 most recent trades only. Full historical analytics need a read-only history feed.</div>':'');
+    $('view').innerHTML=pageHead(esc(system.name),system.id==='candle'?'PubX paper test · pullback and reclaim entry plan':system.id==='lab'?'Paper-only profitability experiment':'Paper account · read-only analytics',control+'<span class="badge">PAPER</span>')+tabHtml+content+(system.historyLimited?'<div class="notice">This feed currently exposes its 15 most recent trades only. Full historical analytics need a read-only history feed.</div>':'');
   }
   function cumulative(trades) { var es=events(trades), total=0;return es.map(function(e){total+=e.pnl;return {label:dateTime(e.time),value:total};}); }
   function renderPositions(system) {
