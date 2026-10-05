@@ -2,6 +2,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 
+const COMPOUND_RATE = 0.10;
+const MINIMUM_BUY_USD = 10;
+
 function defaultDataFile() {
 	if (process.env.RAILWAY_ENVIRONMENT_ID && !process.env.RAILWAY_VOLUME_MOUNT_PATH) {
 		throw new Error("Attach a Railway volume before starting the paper trader.");
@@ -109,9 +112,9 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, { strategyVers
 		const price = Number(coin.priceUsd);
 		if (!Number.isFinite(price) || price <= 0 || !coin.tokenAddress) return fail("Invalid token or price.");
 		if (positions.some(p => p.tokenAddress === coin.tokenAddress)) return fail("Token already has an open position.");
-		if (state.cashBalance <= 0) return fail("No cash available.");
+		if (state.cashBalance < MINIMUM_BUY_USD) return fail("At least $10 cash is required for a new trade.");
 		const next = structuredClone(state);
-		const amountInvested = Math.min(equity() * 0.10, next.cashBalance);
+		const amountInvested = Math.min(Math.max(equity() * COMPOUND_RATE, MINIMUM_BUY_USD), next.cashBalance);
 		if (!(amountInvested > 0)) return fail("No cash available.");
 		const buys5m = Number(coin.buys5m) || 0, sells5m = Number(coin.sells5m) || 0;
 		const totalTransactions5m = buys5m + sells5m;
