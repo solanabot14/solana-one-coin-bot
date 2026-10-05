@@ -42,7 +42,7 @@ const page = `<!doctype html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Fast Momentum Step-3 V1.5 Paper Test</title>
+<title>PUBX Momentum Continuation V1 Paper Test</title>
 
 <style>
 *{box-sizing:border-box}
@@ -244,7 +244,7 @@ th,td{
 
 <div class="header">
   <div>
-    <h1>Fast Momentum Step-3 V1.5</h1>
+    <h1>PUBX Momentum Continuation V1</h1>
     <div class="subtitle">
       Fast market scan • Locked liquidity • Paper Trading
     </div>
@@ -257,7 +257,7 @@ th,td{
 
 <div class="controls">
   <a class="panel-link" href="#v31Panel">V3.1 RECORDS</a>
-  <a class="panel-link" href="#pullbackPanel">FAST MOMENTUM STEP-3 V1.5</a>
+  <a class="panel-link" href="#pullbackPanel">PUBX MOMENTUM CONTINUATION V1</a>
   <a class="panel-link swarm" href="#swarmPanel">SWARM</a>
 </div>
 
@@ -306,7 +306,7 @@ th,td{
 
 </div>
 
-<div class="card section"><h2>Open Slots</h2><div class="value" id="slots">0 / 3</div></div>\n\n<div class="card section">\n\n  <h2>Live Trade</h2>
+<div class="card section"><h2>Open Slots</h2><div class="value" id="slots">0 / 2</div></div>\n\n<div class="card section">\n\n  <h2>Live Trade</h2>
 
   <div id="live" class="empty">
     Waiting for a trade...
@@ -315,9 +315,9 @@ th,td{
 </div>
 
 <div class="card section" id="pullbackPanel">
-<h2>Fast Momentum Step-3 V1.5 — Early Pump Paper Test</h2>
-<p class="muted">Fast Momentum Step-3 scans DexScreener profiles, community takeovers, and boosts every 30 seconds without waiting for candle closes. It enters after three live price checks show two consecutive rises of 0.25%–6% each. Entry keeps liquidity ≥$20,000, at least 4 five-minute transactions, ≥52% buys, volume ≥$1,000 or 1% of liquidity, 5m change from -1% to +18%, and 1h change from -15% to +75%. RugCheck must confirm LP lock ≥90%; unavailable lock data blocks entry.</p>
-<p class="muted">Exits: paper hard-stop target -6%; exit on confirmed flow fade near -2.5%; sell half at +8%, then trail the remainder by 5% with a +2% protection floor. Close stalled positions after 8 minutes and force exit after 15 minutes to free the slot for a new coin. Prices are DexScreener marks, not executable sell quotes, so sudden gaps can exceed a stop. Paper test only.</p>
+<h2>PUBX Momentum Continuation V1 — Pullback and Reclaim Paper Test</h2>
+<p class="muted">Entries wait for a fresh five-minute spike of 8% or more, a 3%–12% pullback, then a reclaim of the local high across two live checks. Reclaim requires at least $5,000 five-minute volume (or 4% of liquidity), 20 five-minute transactions, and 55%–80% buys. Filters: liquidity ≥$40,000, 24-hour volume ≥$50,000, and RugCheck LP lock ≥90%. Candidates expire after 20 minutes. Paper entries use the same V3.1 exit rules and 10% equity sizing; this test allows two simultaneous positions. Prices are DexScreener marks, not executable sell quotes.</p>
+<p class="muted">Exit management follows V3.1: hard stop at -10%; take partial profits at +15% and +30%; apply the V3.1 momentum and profit-lock rules. Position sizing compounds at 10% of current equity. Paper prices are DexScreener marks, not executable sell quotes, so gaps and slippage can exceed a stop.</p>
 <div class="grid">
   <div class="metric"><div class="metric-label">Status</div><div class="metric-value" id="pullbackStatus">—</div></div>
   <div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value" id="pullbackStarting">$100.00</div></div>
