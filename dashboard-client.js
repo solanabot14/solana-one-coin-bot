@@ -44,7 +44,8 @@
     var input = [
       { id:'v31', name:'V3.1', label:'V3.1 Original', data:api.v31, status:state.status, mode:'PAPER' },
       { id:'candle', name:'Bit V 3.1 40% TP1', label:'Bit V 3.1 40% TP1', data:api.candleBreakout, status:api.candleBreakoutStatus, mode:'PAPER' },
-      { id:'lab', name:'B3.1 Lab', label:'B3.1 Lab', data:api.profitabilityLab, status:{ running:api.profitabilityLab && api.profitabilityLab.running }, mode:'PAPER', limited:true }
+      { id:'lab', name:'B3.1 Lab', label:'B3.1 Lab', data:api.profitabilityLab, status:{ running:api.profitabilityLab && api.profitabilityLab.running }, mode:'PAPER', limited:true },
+      { id:'buy-test', name:'V3.1 BUY Priority Test', label:'V3.1 BUY Priority Test', data:api.buyPriorityTest, status:api.buyPriorityTestStatus, mode:'PAPER' }
     ];
     systems = input.map(function (s) {
       var d = s.data || {};
@@ -111,7 +112,7 @@
   function kpi(label,value,note,cls,primary) {
     return '<div class="kpi-card '+(primary?'kpi-primary':'')+'"><div class="kpi-label">'+label+'</div><div class="kpi-value mono '+(cls||'')+'">'+value+'</div>'+(note?'<div class="kpi-note">'+note+'</div>':'')+'</div>';
   }
-  function systemIcon(id){return id==='v31'?'V3':id==='candle'?'B3':id==='lab'?'LB':'SW';}
+  function systemIcon(id){return id==='v31'?'V3':id==='candle'?'B3':id==='lab'?'LB':id==='buy-test'?'BUY':'SW';}
   function systemRow(s) {
     var m=metrics(s.trades);
     return '<tr class="click-row" data-open-system="'+s.id+'"><td><div class="system-name"><span class="system-mark">'+systemIcon(s.id)+'</span>'+esc(s.label)+' <span class="badge">PAPER</span></div></td><td>'+int(m.trades)+'</td><td>'+int(m.wins)+'</td><td>'+int(m.losses)+'</td><td>'+metric(m.winRate,function(x){return x.toFixed(1)+'%';})+'</td><td>'+money(m.grossProfit)+'</td><td>−'+money(m.grossLoss)+'</td><td class="'+signClass(m.netPnl)+'">'+money(m.netPnl)+'</td><td>'+pct(m.returnPercent)+'</td><td>'+money(m.averageTrade)+'</td><td>'+money(m.averageWin)+'</td><td>'+money(m.averageLoss)+'</td><td>'+metric(m.profitFactor,function(x){return x===Infinity?'∞':x.toFixed(2);})+'</td><td>'+money(m.best)+'</td><td>'+money(m.worst)+'</td><td>'+duration(m.averageHoldMs)+'</td><td>'+money(m.capitalDeployed)+'</td><td><span class="status-line '+(s.running?'':'offline')+'"><i></i>'+(s.running?'RUNNING':'STOPPED')+'</span></td></tr>';
@@ -210,11 +211,11 @@
 
   function botById(id) { return systems.find(function(s){return s.id===id;}); }
   function renderBot(path) {
-    var id=path.split('/')[2]||'v31'; id=id==='candle-breakout'?'candle':id==='b31-lab'?'lab':id; var system=botById(id);
+    var id=path.split('/')[2]||'v31'; id=id==='candle-breakout'?'candle':id==='b31-lab'?'lab':id==='buy-priority-test'?'buy-test':id; var system=botById(id);
     if(!system){$('view').innerHTML=pageHead('System unavailable','This bot is not present in the current source feed.');return;}
     var tab=(path.split('/')[3]||'overview').toUpperCase(); state.botTab=tab;
     var tabs=['OVERVIEW','LIVE','PERFORMANCE','ANALYTICS','TRANSACTIONS'];
-    var base=id==='candle'?'/trading/candle-breakout':id==='lab'?'/trading/b31-lab':'/trading/v31';
+    var base=id==='candle'?'/trading/candle-breakout':id==='lab'?'/trading/b31-lab':id==='buy-test'?'/trading/buy-priority-test':'/trading/v31';
     var tabHtml='<div class="tab-row">'+tabs.map(function(x){return '<button data-route="'+base+(x==='OVERVIEW'?'':'/'+x.toLowerCase())+'" class="'+(x===tab?'active':'')+'">'+x+'</button>';}).join('')+'</div>';
     var m=metrics(system.trades), content='';
     if(tab==='OVERVIEW') content='<div class="kpi-grid">'+kpi('CURRENT EQUITY',money(system.equity),'Current account equity')+kpi('REALIZED P&L',money(m.netPnl),'Closed positions',signClass(m.netPnl))+kpi("TODAY'S P&L",money(todayPnl(system.trades)),'Realized exits')+kpi('RETURN',pct(system.totalPnlPercent),'From starting balance',signClass(system.totalPnlPercent))+kpi('WIN RATE',metric(m.winRate,function(x){return x.toFixed(1)+'%';}))+kpi('TRADES',int(m.trades),'Known closed trades')+kpi('OPEN POSITIONS',int(system.positions.length),'Currently observed')+kpi('AVG TRADE',money(m.averageTrade),'Per closed trade',signClass(m.averageTrade))+kpi('PROFIT FACTOR',metric(m.profitFactor,function(x){return x===Infinity?'∞':x.toFixed(2);}))+'</div><div class="grid-2"><div class="panel"><div class="panel-head"><div><div class="panel-title">REALIZED P&L CURVE</div><div class="panel-subtitle">Built from recorded exits</div></div></div><div class="chart-wrap">'+svgLine(cumulative(system.trades),system.name)+'</div></div><div class="panel"><div class="panel-head"><div><div class="panel-title">WIN / LOSS</div><div class="panel-subtitle">Count and dollar contribution</div></div></div>'+splitContribution(system.trades)+'</div></div>';
@@ -223,7 +224,7 @@
     else if(tab==='ANALYTICS') content=renderEntryExitAnalytics(system.trades);
     else content=renderTransactions(system.trades.map(function(t){return Object.assign({type:'CLOSED TRADE',time:t.exitTime},t);}),true);
     var control=system.id==='v31'?'<button class="button primary" data-control="start">START V3.1</button><button class="button danger" data-control="stop">STOP V3.1</button>':'';
-    $('view').innerHTML=pageHead(esc(system.name),system.id==='candle'?'TP1 +15%: sell 40%; remaining 60% locks at +4% after +10%, trails 8%':system.id==='lab'?'Paper-only profitability experiment':'Paper account · read-only analytics',control+'<span class="badge">PAPER</span>')+tabHtml+content+(system.historyLimited?'<div class="notice">This feed currently exposes its 15 most recent trades only. Full historical analytics need a read-only history feed.</div>':'');
+    $('view').innerHTML=pageHead(esc(system.name),system.id==='candle'?'TP1 +15%: sell 40%; remaining 60% locks at +4% after +10%, trails 8%':system.id==='lab'?'Paper-only profitability experiment':system.id==='buy-test'?'BUY-first entries; target 2 BUY for each STRONG BUY · 10% compounding · $10 minimum':'Paper account · read-only analytics',control+'<span class="badge">PAPER</span>')+tabHtml+content+(system.id==='buy-test'?'<div class="notice">Estimated costs: 0.30% pool fee per swap, approximate price impact from displayed liquidity, and $0.01 network fee per swap. These paper estimates can differ from actual live routes and fees.</div>':'')+(system.historyLimited?'<div class="notice">This feed currently exposes its 15 most recent trades only. Full historical analytics need a read-only history feed.</div>':'');
   }
   function cumulative(trades) { var es=events(trades), total=0;return es.map(function(e){total+=e.pnl;return {label:dateTime(e.time),value:total};}); }
   function renderPositions(system) {
@@ -353,14 +354,14 @@
 
   function openTransaction(index) {
     var list=visibleTransactions,t=list[index];if(!t)return;
-    var fields=[['Bot / strategy',t.system],['Strategy',t.strategy],['Mode',t.mode||'PAPER'],['Swarm ID',t.swarmId||'Not applicable'],['Parent',t.parentId||'Not recorded'],['Genesis',t.genesisId||'Not recorded'],['Generation',t.generation],['Token',t.token||t.symbol],['Entry time',dateTime(t.entryTime)],['Exit time',dateTime(t.exitTime||t.time)],['Hold duration',duration(t.holdMs)],['Capital invested',money(t.invested||t.amountInvested||t.amount)],['Entry price',priceValue(t.entryPrice||t.price)],['Exit price',priceValue(t.exitPrice||t.price)],['Amount received',money(t.saleValue||t.amountReceived)],['Fees','NOT ENOUGH DATA'],['Gross P&L',t.grossPnl==null&&t.pnlGross==null?'NOT ENOUGH DATA':money(t.grossPnl??t.pnlGross)],['Net P&L',money(t.netPnl??t.pnl)],['Return',pct(t.returnPercent??t.pnlPercent)],['Entry reason',t.entryReason||'Not recorded'],['Exit reason',t.exitReason||t.reason||'Not recorded']];
+    var fields=[['Bot / strategy',t.system],['Strategy',t.strategy],['Mode',t.mode||'PAPER'],['Swarm ID',t.swarmId||'Not applicable'],['Parent',t.parentId||'Not recorded'],['Genesis',t.genesisId||'Not recorded'],['Generation',t.generation],['Token',t.token||t.symbol],['Entry time',dateTime(t.entryTime)],['Exit time',dateTime(t.exitTime||t.time)],['Hold duration',duration(t.holdMs)],['Capital invested',money(t.invested||t.amountInvested||t.amount)],['Entry price',priceValue(t.entryPrice||t.price)],['Exit price',priceValue(t.exitPrice||t.price)],['Amount received',money(t.saleValue||t.amountReceived)],['Estimated fees',t.estimatedFeesUsd==null?'NOT ENOUGH DATA':money(t.estimatedFeesUsd)],['Estimated slippage',t.estimatedSlippageUsd==null?'NOT ENOUGH DATA':money(t.estimatedSlippageUsd)],['Gross P&L',t.grossPnl==null&&t.pnlGross==null?'NOT ENOUGH DATA':money(t.grossPnl??t.pnlGross)],['Net P&L',money(t.netPnl??t.pnl)],['Return',pct(t.returnPercent??t.pnlPercent)],['Entry reason',t.entryReason||'Not recorded'],['Exit reason',t.exitReason||t.reason||'Not recorded']];
     var raw=t.sourceRecord||t;
     $('detailDrawer').innerHTML='<div class="drawer-top"><div><div class="eyebrow">TRANSACTION DETAIL</div><h2>'+esc(t.token||t.symbol||'Trade')+'</h2></div><button class="icon-button" data-action="close-drawer">×</button></div><div class="detail-grid">'+fields.map(function(x){return '<div class="detail-field"><span>'+esc(x[0])+'</span><strong>'+esc(x[1]===null||x[1]===undefined?'NOT ENOUGH DATA':x[1])+'</strong></div>';}).join('')+'</div><details class="raw-record"><summary>ALL SAVED TRANSACTION FIELDS</summary><pre>'+esc(JSON.stringify(raw,null,2))+'</pre></details><div class="footer-note">Transaction detail uses fields present in saved records. No missing values are estimated.</div>';
     $('drawerBackdrop').classList.remove('hidden');$('detailDrawer').classList.add('open');$('detailDrawer').setAttribute('aria-hidden','false');
   }
   function priceValue(value) { var x=n(value);return x===null?'NOT ENOUGH DATA':'$'+x.toFixed(8); }
     function closeDrawer() {$('drawerBackdrop').classList.add('hidden');$('detailDrawer').classList.remove('open');$('detailDrawer').setAttribute('aria-hidden','true');}
-  function routeForSystem(id) { return id==='v31'?'/trading/v31':id==='candle'?'/trading/candle-breakout':id==='swarm'?'/swarm':'/trading/b31-lab'; }
+  function routeForSystem(id) { return id==='v31'?'/trading/v31':id==='candle'?'/trading/candle-breakout':id==='buy-test'?'/trading/buy-priority-test':id==='swarm'?'/swarm':'/trading/b31-lab'; }
 
   document.addEventListener('click',function(event){
     var routeEl=event.target.closest('[data-route]');if(routeEl){event.preventDefault();navigate(routeEl.getAttribute('data-route'));$('sidebar').classList.remove('open');return;}
