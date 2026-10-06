@@ -9,6 +9,7 @@ const { getTokenData, getTokensData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
 const swarm = require("./janMvpBot");
 const buyPriorityTest = require("./buyPriorityTest");
+const buyPriorityLock85 = require("./buyPriorityLock85");
 
 function getConfig(env = process.env) {
   const railway = !!env.RAILWAY_ENVIRONMENT_ID;
@@ -157,8 +158,17 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         if (route === "/api/start") controls.startBot(); else controls.stopBot();
         return json(res, { running: controls.getBotStatus() });
       }
+      if (route === "/api/lock85/start" || route === "/api/lock85/stop") {
+        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
+        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        if (route === "/api/lock85/start") buyPriorityLock85.startBot(); else buyPriorityLock85.stopBot();
+        return json(res, { running: buyPriorityLock85.getBotStatus() });
+      }
       if (req.method !== "GET") return json(res, { error: "Method not allowed" }, 405);
       if (route === "/api/status") return json(res, { running: controls.getBotStatus(), error: controls.getLastError() });
+      if (route === "/api/lock85/status") return json(res, { running: buyPriorityLock85.getBotStatus(), error: buyPriorityLock85.getLastError(), mode: "paper", lockThresholdPercent: 85 });
+      if (route === "/api/lock85/data") return json(res, { label: "V3.1 BUY Priority Test - 85% LP Lock", mode: "paper", lockThresholdPercent: 85, account: buyPriorityLock85.buildDashboardAccount() });
       if (route === "/api/swarm") return json(res, { running: swarm.getStatus(), error: swarm.getLastError(), ...swarm.getDashboardState() });
       if (route === "/api/data") {
         const baseAccount = portfolio();
@@ -190,6 +200,8 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           buyPriorityTestStatus: { running: buyPriorityTest.getBotStatus(), error: buyPriorityTest.getLastError() }
         });
       }
+      if (route === "/trading/buy-priority-lock85") { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); return res.end(fs.readFileSync(path.join(__dirname, "buyPriorityLock85Panel.html"), "utf8")); }
+      if (route === "/buyPriorityLock85Panel.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(fs.readFileSync(path.join(__dirname, "buyPriorityLock85Panel.js"), "utf8")); }
       if (route === "/dashboard-client.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(client); }
       if (route === "/analytics-core.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(analyticsCore); }
       if (route === "/terminal.css") { res.writeHead(200, { "Content-Type": "text/css; charset=utf-8" }); return res.end(terminalCss); }
@@ -212,11 +224,13 @@ if (require.main === module) {
   bot.startBot();
   swarm.start();
   buyPriorityTest.startBot();
+  buyPriorityLock85.startBot();
   server.listen(config.port, config.host, () => console.log("Dashboard listening on " + config.host + ":" + config.port));
   const shutdown = () => {
     swarm.stop();
     bot.stopBot();
     buyPriorityTest.stopBot();
+    buyPriorityLock85.stopBot();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 12000).unref();
   };

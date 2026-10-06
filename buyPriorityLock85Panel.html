@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark"><title>BUY Priority Test · 85% Lock</title><link rel="stylesheet" href="/terminal.css">
+<style>
+body{background:#080d16;color:#edf4ff}.lock85-wrap{max-width:1120px;margin:auto;padding:22px}.lock85-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.lock85-head h1{margin:7px 0;font-size:22px}.lock85-muted{color:#8fa2ba}.lock85-tag{color:#54d6ff;border:1px solid #24536b;border-radius:99px;padding:4px 9px;font-size:11px}.lock85-actions{display:flex;gap:8px}.lock85-actions button{cursor:pointer}.lock85-notice{padding:12px;border:1px solid #28435c;background:#102033;border-radius:10px;margin:16px 0;color:#c5d6e9}.lock85-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.lock85-card,.lock85-panel{background:#111a29;border:1px solid #253248;border-radius:12px;padding:15px}.lock85-card small{color:#8fa2ba;font-size:11px;letter-spacing:.08em}.lock85-card strong{display:block;margin-top:6px;font-size:19px}.lock85-panel{margin-top:14px;overflow:auto}.lock85-panel h2{font-size:13px;letter-spacing:.08em;color:#b9c9dc}.lock85-panel table{min-width:620px}.lock85-panel td a{color:#54d6ff}.lock85-positive{color:#53dc9a}.lock85-negative{color:#ff7186}
+@media(max-width:740px){.lock85-wrap{padding:14px}.lock85-head{display:block}.lock85-actions{margin-top:12px}.lock85-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style></head><body><main class="lock85-wrap">
+<div class="lock85-head"><div><a class="lock85-muted" href="/">← Back to One Coin Operations</a><h1>V3.1 BUY Priority Test · 85% LP Lock</h1><div class="lock85-muted">Separate paper account · verified 85% minimum</div></div>
+<div class="lock85-actions"><button class="button primary" data-lock85="start">START</button><button class="button" data-lock85="stop">STOP</button><button class="button" data-lock85-refresh>REFRESH</button></div></div>
+<div class="lock85-notice">Only the LP-lock threshold changes from the existing BUY Priority Test. An unverified lock is still rejected. This panel uses its own paper balance and re-entry state.</div>
+<div id="lock85-summary" class="lock85-grid"></div>
+<section class="lock85-panel"><h2>OPEN PAPER POSITIONS</h2><table><thead><tr><th>TOKEN</th><th>INVESTED</th><th>ENTRY</th><th>SIGNAL</th><th>DEXSCREENER</th></tr></thead><tbody id="lock85-positions"></tbody></table></section>
+<section class="lock85-panel"><h2>TRADE HISTORY</h2><table><thead><tr><th>TIME</th><th>TOKEN</th><th>TYPE</th><th>INVESTED</th><th>RECEIVED</th><th>P&amp;L</th><th>DEXSCREENER</th></tr></thead><tbody id="lock85-history"></tbody></table></section>
+<p id="lock85-status" class="lock85-muted">Loading…</p></main><script src="/buyPriorityLock85Panel.js" defer></script></body></html>
