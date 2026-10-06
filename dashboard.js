@@ -173,9 +173,11 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       if (route === "/api/data") {
         const baseAccount = portfolio();
         const buyTestAccount = buyPriorityTest.buildDashboardAccount();
+        const lock85Account = buyPriorityLock85.buildDashboardAccount();
         const addresses = [...new Set([
           ...(baseAccount.positions || (baseAccount.position ? [baseAccount.position] : [])).map(p => p.tokenAddress),
-          ...(buyTestAccount.positions || []).map(p => p.tokenAddress)
+          ...(buyTestAccount.positions || []).map(p => p.tokenAddress),
+          ...(lock85Account.positions || []).map(p => p.tokenAddress)
         ].filter(Boolean))];
         const sharedQuotes = batchMarketData && addresses.length
           ? await batchMarketData(addresses)
@@ -183,11 +185,12 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const sharedMarketData = sharedQuotes
           ? async address => sharedQuotes.get(address) || null
           : marketData;
-        const [v31, candleBreakout, profitabilityLab, buyTest] = await Promise.all([
+        const [v31, candleBreakout, profitabilityLab, buyTest, lock85] = await Promise.all([
           buildDashboardData(baseAccount, sharedMarketData),
           fetchCandleBreakoutDashboard(),
           fetchProfitabilityLabDashboard(),
-          buildDashboardData(buyTestAccount, sharedMarketData).then(applyBuyPriorityCostEstimates)
+          buildDashboardData(buyTestAccount, sharedMarketData).then(applyBuyPriorityCostEstimates),
+          buildDashboardData(lock85Account, sharedMarketData)
         ]);
         return json(res, {
           v31,
@@ -197,7 +200,9 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           profitabilityLab: profitabilityLab.data,
           profitabilityLabError: profitabilityLab.error,
           buyPriorityTest: buyTest,
-          buyPriorityTestStatus: { running: buyPriorityTest.getBotStatus(), error: buyPriorityTest.getLastError() }
+          buyPriorityTestStatus: { running: buyPriorityTest.getBotStatus(), error: buyPriorityTest.getLastError() },
+          buyPriorityLock85: lock85,
+          buyPriorityLock85Status: { running: buyPriorityLock85.getBotStatus(), error: buyPriorityLock85.getLastError() }
         });
       }
       if (route === "/trading/buy-priority-lock85") { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); return res.end(fs.readFileSync(path.join(__dirname, "buyPriorityLock85Panel.html"), "utf8")); }
