@@ -15,6 +15,55 @@
   var numberFmt = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
   var currencyFmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
 
+  var SIM_POOL_FEE_RATE = 0.003;
+  var SIM_NETWORK_FEE_USD = 0.01;
+  function impactPercent(amountUsd, liquidityUsd) {
+    var amount=n(amountUsd),liquidity=n(liquidityUsd);
+    if(amount===null||amount<=0||liquidity===null||liquidity<=0)return null;
+    return amount/(liquidity/2+amount)*100;
+  }
+  function estimateTradeCosts(raw, fallback) {
+    raw=raw||{};fallback=fallback||{};
+    var invested=n(raw.amountInvested??raw.invested??fallback.invested);
+    var grossPnl=n(raw.pnl??fallback.pnl);
+    if(invested===null||grossPnl===null)return null;
+    var liquidity=n(raw.entryLiquidityUsd??fallback.entryLiquidityUsd);
+    var sells=Array.isArray(raw.sells)?raw.sells:[];
+    var saleValues=sells.map(function(x){return n(x.saleValue??x.amountReceived);}).filter(function(x){return x!==null&&x>=0;});
+    if(!saleValues.length)saleValues=[Math.max(0,invested+grossPnl)];
+    var entryImpact=impactPercent(invested,liquidity);
+    var slippage=entryImpact===null?null:invested*entryImpact/100;
+    if(slippage!==null)saleValues.forEach(function(value){var impact=impactPercent(value,liquidity);if(impact===null)slippage=null;else if(slippage!==null)slippage+=value*impact/100;});
+    var poolFees=(invested+saleValues.reduce(function(a,b){return a+b;},0))*SIM_POOL_FEE_RATE;
+    var exitCount=Math.max(1,sells.length);
+    var fees=poolFees+(1+exitCount)*SIM_NETWORK_FEE_USD;
+    return {grossPnl:grossPnl,feesUsd:fees,slippageUsd:slippage,totalCostUsd:slippage===null?null:fees+slippage,
+      netPnl:slippage===null?null:grossPnl-fees-slippage,liquidityAvailable:liquidity!==null&&liquidity>0,estimated:true};
+  }
+  function simulateBotCosts(system) {
+    var rows=(system.trades||[]).map(function(t){var raw=t.sourceRecord||t;var estimate=estimateTradeCosts(raw,{invested:t.invested,pnl:t.pnl,entryLiquidityUsd:t.entryLiquidityUsd});
+      return estimate?{token:t.token||raw.symbol||'—',time:t.exitTime||t.time||null,...estimate}:null;}).filter(Boolean);
+    var fees=rows.reduce(function(sum,x){return sum+x.feesUsd;},0);
+    var knownSlippage=rows.filter(function(x){return x.slippageUsd!==null;}).reduce(function(sum,x){return sum+x.slippageUsd;},0);
+    var complete=rows.length>0&&rows.every(function(x){return x.slippageUsd!==null;});
+    var gross=rows.reduce(function(sum,x){return sum+x.grossPnl;},0);
+    return {rows:rows,count:rows.length,feesUsd:fees,slippageUsd:complete?knownSlippage:null,missingSlippage:rows.filter(function(x){return x.slippageUsd===null;}).length,
+      netPnl:complete?gross-fees-knownSlippage:null,grossPnl:gross,complete:complete};
+  }
+  function costSimulationPanel(system) {
+    var c=simulateBotCosts(system);
+    var note=c.count?(c.complete?'All listed completed trades have entry liquidity data for this estimate.':c.missingSlippage+' of '+c.count+' trades lack saved entry liquidity; estimated slippage and net P&L are unavailable.'): 'No completed trades are available for a cost estimate yet.';
+    var rows=c.rows.map(function(x){return '<tr><td class="text-left">'+esc(x.token)+'</td><td>'+dateTime(x.time)+'</td><td>'+money(x.grossPnl)+'</td><td>'+money(x.feesUsd)+'</td><td>'+money(x.slippageUsd)+'</td><td class="'+signClass(x.netPnl)+'">'+money(x.netPnl)+'</td></tr>';});
+    return '<div class="panel section-gap"><div class="panel-head"><div><div class="panel-title">SIMULATED FEES &amp; SLIPPAGE</div><div class="panel-subtitle">Reporting-only estimate · '+int(c.count)+' completed trades</div></div><span class="badge">PAPER MODEL</span></div><div class="kpi-grid">'+kpi('GROSS P&amp;L',money(c.grossPnl),'Recorded exits')+kpi('EST. NETWORK + POOL FEES',money(c.feesUsd),'0.30% per swap + $0.01 per transaction')+kpi('EST. SLIPPAGE',c.complete?money(c.slippageUsd):'NOT ENOUGH DATA','Approx. pool impact at trade size')+kpi('EST. NET P&amp;L',c.complete?money(c.netPnl):'NOT ENOUGH DATA','Gross P&L minus modeled costs',c.complete?signClass(c.netPnl):'neutral')+'</div><div class="footer-note">'+esc(note)+' Assumptions: 0.30% pool fee per swap, $0.01 Solana network fee per transaction, and constant-product impact from saved entry liquidity. Estimates only; existing bot rules and account balances are unchanged.</div>'+table(['TOKEN','EXIT TIME','GROSS P&amp;L','EST. FEES','EST. SLIPPAGE','EST. NET P&amp;L'],rows,'No completed trades to estimate')+'</div>';
+  }
+  function swarmCostSimulationPanel() {
+    var executions=state.swarm&&Array.isArray(state.swarm.executions)?state.swarm.executions:[];
+    var buys=new Map();executions.filter(function(x){return x.type==='BUY';}).forEach(function(x){buys.set(x.positionId||x.id,x);});
+    var sells=executions.filter(function(x){return x.type==='SELL';});
+    var trades=sells.map(function(sell){var buy=buys.get(sell.positionId);var raw=Object.assign({},sell,{amountInvested:buy?Number(buy.amountInvested||buy.amount):Number(sell.amountInvested||sell.amount),entryLiquidityUsd:buy?buy.entryLiquidityUsd:sell.entryLiquidityUsd,sells:[sell]});
+      return {sourceRecord:raw,token:sell.symbol||'—',time:sell.time||sell.exitTime,invested:raw.amountInvested,pnl:sell.pnl,entryLiquidityUsd:raw.entryLiquidityUsd};});
+    return costSimulationPanel({trades:trades,label:'Swarm'});
+  }
   function $(id) { return document.getElementById(id); }
   function esc(value) { return String(value == null ? '' : value).replace(/[&<>"']/g, function (s) { return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[s]; }); }
   function n(value) { if(value===null||value===undefined||value==='')return null;var x = Number(value); return Number.isFinite(x) ? x : null; }
@@ -224,7 +273,7 @@
     else if(tab==='ANALYTICS') content=renderEntryExitAnalytics(system.trades);
     else content=renderTransactions(system.trades.map(function(t){return Object.assign({type:'CLOSED TRADE',time:t.exitTime},t);}),true);
     var control=system.id==='v31'?'<button class="button primary" data-control="start">START V3.1</button><button class="button danger" data-control="stop">STOP V3.1</button>':'';
-    $('view').innerHTML=pageHead(esc(system.name),system.id==='candle'?'TP1 +15%: sell 40%; remaining 60% locks at +4% after +10%, trails 8%':system.id==='lab'?'Paper-only profitability experiment':system.id==='buy-test'?'BUY-first entries; target 2 BUY for each STRONG BUY · 10% compounding · $10 minimum':'Paper account · read-only analytics',control+'<span class="badge">PAPER</span>')+tabHtml+content+(system.id==='buy-test'?'<div class="notice">Estimated costs: 0.30% pool fee per swap, approximate price impact from displayed liquidity, and $0.01 network fee per swap. These paper estimates can differ from actual live routes and fees.</div>':'')+(system.historyLimited?'<div class="notice">This feed currently exposes its 15 most recent trades only. Full historical analytics need a read-only history feed.</div>':'');
+    $('view').innerHTML=pageHead(esc(system.name),system.id==='candle'?'TP1 +15%: sell 40%; remaining 60% locks at +4% after +10%, trails 8%':system.id==='lab'?'Paper-only profitability experiment':system.id==='buy-test'?'BUY-first entries; target 2 BUY for each STRONG BUY · 10% compounding · $10 minimum':'Paper account · read-only analytics',control+'<span class="badge">PAPER</span>')+tabHtml+content+(tab==='OVERVIEW'?costSimulationPanel(system):'')+(system.historyLimited?'<div class="notice">This feed currently exposes its 15 most recent trades only. Full historical analytics need a read-only history feed.</div>':'');
   }
   function cumulative(trades) { var es=events(trades), total=0;return es.map(function(e){total+=e.pnl;return {label:dateTime(e.time),value:total};}); }
   function renderPositions(system) {
@@ -274,7 +323,7 @@
     else if(tab==='REPRODUCTION') html=reproductionView(slots.find(function(s){return s.swarmId===(bits[2]||state.selectedNode);})||slots[0]);
     else if(tab==='PERFORMANCE') html=swarmPerformance(slots);
     else html=renderTransactions(swarmTransactions(),true);
-    $('view').innerHTML=pageHead('Swarm','Every swarm is an independent root with its own reproduction plan. '+(sw.running?'RUNNING':'STOPPED'),'<span class="badge">'+esc(sw.mode||'PAPER')+'</span>')+html;
+    $('view').innerHTML=pageHead('Swarm','Every swarm is an independent root with its own reproduction plan. '+(sw.running?'RUNNING':'STOPPED'),'<span class="badge">'+esc(sw.mode||'PAPER')+'</span>')+html+(tab==='OVERVIEW'?swarmCostSimulationPanel():'');
   }
   function swarmTrades() { return swarmTransactions().filter(function(t){return t.type==='SELL';}).map(function(t){return normalizeTrade(t,{name:'Swarm',id:'swarm'},true);}); }
   function swarmTransactions() { var x=state.swarm&&Array.isArray(state.swarm.executions)?state.swarm.executions:[];return x.map(function(r){return Object.assign({},r,{system:'Swarm · V3.1',systemId:'swarm',type:r.type||'TRADE',time:r.time||null,exitTime:r.exitTime||r.time||null,token:r.symbol||'-',pnl:n(r.pnl),invested:n(r.amountInvested||r.amount),exitReason:r.reason||'Not recorded',entryReason:r.entrySignal||'Not recorded'});}); }
