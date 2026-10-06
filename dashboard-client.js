@@ -59,9 +59,15 @@
   function swarmCostSimulationPanel() {
     var executions=state.swarm&&Array.isArray(state.swarm.executions)?state.swarm.executions:[];
     var buys=new Map();executions.filter(function(x){return x.type==='BUY';}).forEach(function(x){buys.set(x.positionId||x.id,x);});
-    var sells=executions.filter(function(x){return x.type==='SELL';});
-    var trades=sells.map(function(sell){var buy=buys.get(sell.positionId);var raw=Object.assign({},sell,{amountInvested:buy?Number(buy.amountInvested||buy.amount):Number(sell.amountInvested||sell.amount),entryLiquidityUsd:buy?buy.entryLiquidityUsd:sell.entryLiquidityUsd,sells:[sell]});
-      return {sourceRecord:raw,token:sell.symbol||'—',time:sell.time||sell.exitTime,invested:raw.amountInvested,pnl:sell.pnl,entryLiquidityUsd:raw.entryLiquidityUsd};});
+    var groups=new Map();
+    executions.filter(function(x){return x.type==='SELL';}).forEach(function(sell,index){var key=sell.positionId||'unpaired-'+index;var group=groups.get(key);
+      if(!group){var buy=buys.get(sell.positionId);group={buy:buy,sells:[],grossPnl:0,token:sell.symbol||'—',time:sell.time||sell.exitTime};groups.set(key,group);}
+      group.sells.push(sell);group.grossPnl+=Number(sell.pnl)||0;});
+    var trades=Array.from(groups.values()).map(function(group){var buy=group.buy,soldQty=group.sells.reduce(function(sum,x){return sum+(Number(x.quantitySold)||0);},0);
+      var boughtQty=Number(buy&&buy.quantity)||0,share=boughtQty>0?Math.min(1,soldQty/boughtQty):1;
+      var fullInvested=Number(buy&&(buy.amountInvested||buy.amount))||Number(group.sells[0].amountInvested||group.sells[0].amount)||0;
+      var raw={amountInvested:fullInvested*share,pnl:group.grossPnl,entryLiquidityUsd:buy?buy.entryLiquidityUsd:group.sells[0].entryLiquidityUsd,sells:group.sells};
+      return {sourceRecord:raw,token:group.token,time:group.time,invested:raw.amountInvested,pnl:raw.pnl,entryLiquidityUsd:raw.entryLiquidityUsd};});
     return costSimulationPanel({trades:trades,label:'Swarm'});
   }
   function $(id) { return document.getElementById(id); }
