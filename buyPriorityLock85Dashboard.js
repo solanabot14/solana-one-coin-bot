@@ -33,7 +33,7 @@ const server = http.createServer((req, res) => {
   const route = new URL(req.url, "http://" + (req.headers.host || "localhost")).pathname;
   if (route === "/healthz") return json(res, { ok: true, mode: "paper" });
   if (!authorized(req)) {
-    res.writeHead(401, { "www-authenticate": "Basic realm=\\"One Coin Bot Paper\\"; charset=\\"UTF-8\\"", "cache-control": "no-store" });
+    res.writeHead(401, { "www-authenticate": "Basic realm=OneCoinBot; charset=UTF-8", "cache-control": "no-store" });
     return res.end("Authentication required.");
   }
   if (route === "/api/status" && req.method === "GET") return json(res, { running: bot.getBotStatus(), error: bot.getLastError(), mode: "paper", lockThresholdPercent: 85 });
