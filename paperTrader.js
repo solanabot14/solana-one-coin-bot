@@ -56,7 +56,10 @@ function validateState(data) {
 	}
 }
 
-function createPaperTrader(dataFile = defaultDataFile(), io = fs, { strategyVersion = "V3.1-Original-2Slots" } = {}) {
+function createPaperTrader(dataFile = defaultDataFile(), io = fs, {
+	strategyVersion = "V3.1-Original-2Slots",
+	getBuySizing = null
+} = {}) {
 	let state = {
 		startingBalance: 100,
 		cashBalance: 100,
@@ -114,13 +117,22 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, { strategyVers
 		if (positions.some(p => p.tokenAddress === coin.tokenAddress)) return fail("Token already has an open position.");
 		if (state.cashBalance < MINIMUM_BUY_USD) return fail("At least $10 cash is required for a new trade.");
 		const next = structuredClone(state);
-		const amountInvested = Math.min(Math.max(equity() * COMPOUND_RATE, MINIMUM_BUY_USD), next.cashBalance);
-		if (!(amountInvested > 0)) return fail("No cash available.");
+		const sizing = typeof getBuySizing === "function"
+			? getBuySizing(structuredClone(state))
+			: null;
+		const requestedAmount = sizing
+			? Number(sizing.amountInvested)
+			: Math.max(equity() * COMPOUND_RATE, MINIMUM_BUY_USD);
+		const amountInvested = Math.min(requestedAmount, next.cashBalance);
+		if (!Number.isFinite(amountInvested) || amountInvested < MINIMUM_BUY_USD) {
+			return fail("At least $10 cash is required for a new trade.");
+		}
 		const buys5m = Number(coin.buys5m) || 0, sells5m = Number(coin.sells5m) || 0;
 		const totalTransactions5m = buys5m + sells5m;
 		const buyRatio5m = totalTransactions5m > 0 ? buys5m / totalTransactions5m : 0;
 		const position = { id: randomUUID(), symbol: coin.symbol, name: coin.name, tokenAddress: coin.tokenAddress,
 			pairAddress: coin.pairAddress || null, entryPrice: price, quantity: amountInvested / price, amountInvested,
+			...(sizing && Number.isFinite(Number(sizing.compoundRate)) ? { compoundRate: Number(sizing.compoundRate) } : {}),
 			...(coin.experimentEntry ? { experimentEntry: structuredClone(coin.experimentEntry) } : {}),
 			firstTakeProfitDone:false, secondTakeProfitDone:false, highestPrice:price, entryTime:new Date().toISOString(),
 			strategyVersion, entryScore:Number(coin.score)||0, entrySignal:coin.signal||null,
