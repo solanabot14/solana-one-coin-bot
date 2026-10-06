@@ -8,6 +8,7 @@ const { getPortfolio } = require("./paperTrader");
 const { getTokenData, getTokensData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
 const swarm = require("./janMvpBot");
+const buyPriorityTest = require("./buyPriorityTest");
 
 function getConfig(env = process.env) {
   const railway = !!env.RAILWAY_ENVIRONMENT_ID;
@@ -77,6 +78,55 @@ async function fetchProfitabilityLabDashboard() {
   }
 }
 
+function applyBuyPriorityCostEstimates(data) {
+  if (!data) return data;
+  const costsByPosition = new Map();
+  for (const row of data.history || []) {
+    if (row.type !== "SELL" || !row.costEstimateAvailable) continue;
+    const prior = costsByPosition.get(row.positionId) || { estimatedCostUsd: 0, estimatedFeesUsd: 0, estimatedSlippageUsd: 0, grossPnl: 0 };
+    costsByPosition.set(row.positionId, {
+      estimatedCostUsd: prior.estimatedCostUsd + Number(row.estimatedCostUsd || 0),
+      estimatedFeesUsd: prior.estimatedFeesUsd + Number(row.estimatedFeesUsd || 0),
+      estimatedSlippageUsd: prior.estimatedSlippageUsd + Number(row.estimatedSlippageUsd || 0),
+      grossPnl: prior.grossPnl + Number(row.grossPnl || 0)
+    });
+  }
+  data.completedTrades = (data.completedTrades || []).map(trade => {
+    const cost = costsByPosition.get(trade.positionId) || { estimatedCostUsd: 0, estimatedFeesUsd: 0, estimatedSlippageUsd: 0, grossPnl: trade.pnl };
+    return { ...trade, grossPnl: cost.grossPnl, netPnl: Number(trade.pnl || 0), estimatedCostUsd: cost.estimatedCostUsd,
+      estimatedFeesUsd: cost.estimatedFeesUsd, estimatedSlippageUsd: cost.estimatedSlippageUsd,
+      costEstimateAvailable: true, pnlPercent: Number(trade.amountInvested) > 0 ? Number(trade.pnl || 0) / Number(trade.amountInvested) * 100 : trade.pnlPercent };
+  });
+  const realizedEstimatedCosts = [...costsByPosition.values()].reduce((sum, item) => sum + item.estimatedCostUsd, 0);
+  let openEstimatedCosts = 0;
+  for (const item of data.livePositions || []) {
+    const position = item.position || {};
+    const live = item.live || {};
+    const assumptions = position.experimentEntry?.estimatedCostModel;
+    if (!assumptions) continue;
+    const value = Number(live.currentValue) || 0;
+    const liquidity = Number(assumptions.entryLiquidityUsd) || 0;
+    const impact = value > 0 && liquidity > 0 ? value / (liquidity / 2 + value) * 100 : 0;
+    const poolFeeRate = Number(assumptions.assumedPoolFeePercentPerSwap || 0) / 100;
+    openEstimatedCosts += Number(position.estimatedEntryCostUsd || 0) + value * (impact / 100 + poolFeeRate) + Number(assumptions.estimatedSolanaNetworkFeeUsdPerSwap || 0);
+  }
+  if (Number.isFinite(Number(data.equity))) {
+    data.grossEquity = data.equity;
+    data.totalEstimatedCosts = realizedEstimatedCosts + openEstimatedCosts;
+    data.equity = Number(data.equity) - data.totalEstimatedCosts;
+    data.totalPnl = data.equity - Number(data.startingBalance || 0);
+    data.totalPnlPercent = Number(data.startingBalance) > 0 ? data.totalPnl / Number(data.startingBalance) * 100 : null;
+  }
+  data.costModel = {
+    label: "Estimated paper execution costs",
+    poolFeePercentPerSwap: 0.30,
+    estimatedNetworkFeeUsdPerSwap: 0.01,
+    slippageMethod: "Approximate constant-product price impact using entry liquidity from DexScreener",
+    warning: "Estimates only; live pool fees, routing, priority fees and fills can differ."
+  };
+  return data;
+}
+
 function createDashboardServer({ config = getConfig(), controls = bot,
   portfolio = getPortfolio, marketData = getTokenData,
   batchMarketData = marketData === getTokenData ? getTokensData : null } = {}) {
@@ -112,8 +162,10 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       if (route === "/api/swarm") return json(res, { running: swarm.getStatus(), error: swarm.getLastError(), ...swarm.getDashboardState() });
       if (route === "/api/data") {
         const baseAccount = portfolio();
+        const buyTestAccount = buyPriorityTest.buildDashboardAccount();
         const addresses = [...new Set([
-          ...(baseAccount.positions || (baseAccount.position ? [baseAccount.position] : [])).map(p => p.tokenAddress)
+          ...(baseAccount.positions || (baseAccount.position ? [baseAccount.position] : [])).map(p => p.tokenAddress),
+          ...(buyTestAccount.positions || []).map(p => p.tokenAddress)
         ].filter(Boolean))];
         const sharedQuotes = batchMarketData && addresses.length
           ? await batchMarketData(addresses)
@@ -121,10 +173,11 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const sharedMarketData = sharedQuotes
           ? async address => sharedQuotes.get(address) || null
           : marketData;
-        const [v31, candleBreakout, profitabilityLab] = await Promise.all([
+        const [v31, candleBreakout, profitabilityLab, buyTest] = await Promise.all([
           buildDashboardData(baseAccount, sharedMarketData),
           fetchCandleBreakoutDashboard(),
-          fetchProfitabilityLabDashboard()
+          fetchProfitabilityLabDashboard(),
+          buildDashboardData(buyTestAccount, sharedMarketData).then(applyBuyPriorityCostEstimates)
         ]);
         return json(res, {
           v31,
@@ -132,7 +185,9 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           candleBreakoutStatus: candleBreakout.status,
           candleBreakoutError: candleBreakout.error,
           profitabilityLab: profitabilityLab.data,
-          profitabilityLabError: profitabilityLab.error
+          profitabilityLabError: profitabilityLab.error,
+          buyPriorityTest: buyTest,
+          buyPriorityTestStatus: { running: buyPriorityTest.getBotStatus(), error: buyPriorityTest.getLastError() }
         });
       }
       if (route === "/dashboard-client.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(client); }
@@ -156,10 +211,12 @@ if (require.main === module) {
   const server = createDashboardServer({ config });
   bot.startBot();
   swarm.start();
+  buyPriorityTest.startBot();
   server.listen(config.port, config.host, () => console.log("Dashboard listening on " + config.host + ":" + config.port));
   const shutdown = () => {
     swarm.stop();
     bot.stopBot();
+    buyPriorityTest.stopBot();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 12000).unref();
   };
