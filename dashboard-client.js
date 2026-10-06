@@ -56,7 +56,7 @@
     var rows=c.rows.map(function(x){return '<tr><td class="text-left">'+esc(x.token)+'</td><td>'+dateTime(x.time)+'</td><td>'+money(x.grossPnl)+'</td><td>'+money(x.feesUsd)+'</td><td>'+money(x.slippageUsd)+'</td><td class="'+signClass(x.netPnl)+'">'+money(x.netPnl)+'</td></tr>';});
     return '<div class="panel section-gap"><div class="panel-head"><div><div class="panel-title">SIMULATED FEES &amp; SLIPPAGE</div><div class="panel-subtitle">Reporting-only estimate · '+int(c.count)+' '+unit+'</div></div><span class="badge">PAPER MODEL</span></div><div class="kpi-grid">'+kpi('GROSS P&amp;L',money(c.grossPnl),'Recorded exits')+kpi('EST. NETWORK + POOL FEES',money(c.feesUsd),'0.30% per swap + $0.01 per transaction')+kpi('EST. SLIPPAGE',c.complete?money(c.slippageUsd):'NOT ENOUGH DATA','Approx. pool impact at trade size')+kpi('EST. NET P&amp;L',c.complete?money(c.netPnl):'NOT ENOUGH DATA','Gross P&L minus modeled costs',c.complete?signClass(c.netPnl):'neutral')+'</div><div class="footer-note">'+esc(note)+' Assumptions: 0.30% pool fee per swap, $0.01 Solana network fee per transaction, and constant-product impact from saved entry liquidity. Estimates only; existing bot rules and account balances are unchanged.</div>'+table(['TOKEN','EXIT TIME','GROSS P&amp;L','EST. FEES','EST. SLIPPAGE','EST. NET P&amp;L'],rows,'No completed trades to estimate')+'</div>';
   }
-  function swarmCostSimulationPanel() {
+  function swarmCostSimulationSystem() {
     var executions=state.swarm&&Array.isArray(state.swarm.executions)?state.swarm.executions:[];
     var buys=new Map();executions.filter(function(x){return x.type==='BUY';}).forEach(function(x){buys.set(x.positionId||x.id,x);});
     var groups=new Map();
@@ -68,7 +68,18 @@
       var fullInvested=Number(buy&&(buy.amountInvested||buy.amount))||Number(group.sells[0].amountInvested||group.sells[0].amount)||0;
       var raw={amountInvested:fullInvested*share,pnl:group.grossPnl,entryLiquidityUsd:buy?buy.entryLiquidityUsd:group.sells[0].entryLiquidityUsd,sells:group.sells};
       return {sourceRecord:raw,token:group.token,time:group.time,invested:raw.amountInvested,pnl:raw.pnl,entryLiquidityUsd:raw.entryLiquidityUsd};});
-    return costSimulationPanel({trades:trades,label:'Swarm'});
+    return {label:'Swarm',trades:trades};
+  }
+  function swarmCostSimulationPanel() { return costSimulationPanel(swarmCostSimulationSystem()); }
+  function costSummaryPanel() {
+    var entries=systems.map(function(system){return {label:system.label,sim:simulateBotCosts(system)};});
+    var lockData=state.api&&state.api.buyPriorityLock85||{};
+    var lockSystem={id:'buy-lock85',name:'V3.1 BUY Priority Test · 85% LP Lock',label:'V3.1 BUY Priority Test · 85% Lock'};
+    lockSystem.trades=(lockData.completedTrades||[]).map(function(t){return normalizeTrade(t,lockSystem,false);});
+    entries.push({label:lockSystem.label,sim:simulateBotCosts(lockSystem)});
+    entries.push({label:'Swarm · V3.1',sim:simulateBotCosts(swarmCostSimulationSystem())});
+    var rows=entries.map(function(entry){var c=entry.sim;return '<tr><td class="text-left"><strong>'+esc(entry.label)+'</strong></td><td>'+int(c.count)+'</td><td>'+money(c.count?c.feesUsd:null)+'</td><td>'+ (c.count&&c.complete?money(c.slippageUsd):'NOT ENOUGH DATA')+'</td><td class="'+signClass(c.netPnl)+'">'+(c.count&&c.complete?money(c.netPnl):'NOT ENOUGH DATA')+'</td></tr>';});
+    return '<div class="table-panel section-gap"><div class="table-head"><div><h2>SIMULATED FEES &amp; SLIPPAGE · ALL BOTS</h2><span class="sub">At-a-glance paper estimates from each bot’s recorded trades</span></div><span class="badge">REPORTING ONLY</span></div>'+table(['BOT','TRADES / EVENTS','EST. NETWORK + POOL FEES','EST. SLIPPAGE','EST. NET P&amp;L'],rows,'No bot records are available')+'<div class="footer-note">Assumptions: 0.30% pool fee per swap, $0.01 network fee per transaction, and approximate price impact using saved entry liquidity. “Not enough data” means the bot feed lacks completed trades or liquidity needed for a slippage estimate. Strategy rules and current account figures are unchanged.</div></div>';
   }
   function $(id) { return document.getElementById(id); }
   function esc(value) { return String(value == null ? '' : value).replace(/[&<>"']/g, function (s) { return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[s]; }); }
@@ -249,7 +260,7 @@
       kpi('WORST TRADE',money(m.worst),'Selected period',signClass(m.worst))
     ].join('');
     $('view').innerHTML=pageHead('Command Center','A live, read-only view of connected paper trading systems.',rangeBar(state.range,['1D','7D','30D','90D','ALL'],'range'))+
-      liveTradingPanel()+'<div class="kpi-grid">'+kpis+'</div>'+statusNotice()+
+      liveTradingPanel()+'<div class="kpi-grid">'+kpis+'</div>'+costSummaryPanel()+statusNotice()+
       '<div class="grid-2"><div class="panel"><div class="panel-head"><div><div class="panel-title">ACCOUNT PERFORMANCE</div><div class="panel-subtitle">Transaction-derived cumulative realized P&L · historical equity snapshots unavailable</div></div><div class="right segmented">'+['EQUITY','REALIZED P&L','DAILY P&L','CUMULATIVE P&L'].map(function(x){return '<button data-chart="'+x+'" class="'+(state.chartMetric===x?'active':'')+'">'+x+'</button>';}).join('')+'</div></div><div class="overlay-pills">'+overlayButtons()+'</div><div class="chart-wrap">'+svgMultiLine(chartSeries(),state.chartMetric)+'</div><div class="footer-note">Connected sources are shown as one observed view. A historical equity curve is not stored, so this chart uses realized P&L events.</div></div><div class="panel"><div class="panel-head"><div><div class="panel-title">DAILY P&L</div><div class="panel-subtitle">Realized sale P&L, by Puerto Rico date</div></div><div class="right">'+rangeBar(state.range==='ALL'?'7D':state.range,['7D','30D','90D','ALL'],'range')+'</div></div>'+dailyBar(allTrades,dayLimit)+'</div></div>'+ 
       '<div class="table-panel"><div class="table-head"><h2>PERFORMANCE BY SYSTEM</h2><span class="sub">Click a row to open its workspace</span></div>'+table(['BOT / STRATEGY','TRADES','WINS','LOSSES','WIN RATE','GROSS PROFIT','GROSS LOSS','NET P&L','RETURN','AVG TRADE','AVG WIN','AVG LOSS','PROFIT FACTOR','BEST TRADE','WORST TRADE','AVG HOLD','CAPITAL DEPLOYED','STATUS'],systemRows,'No system records available')+'</div>'+
       '<div class="grid-2 equal"><div class="panel"><div class="panel-head"><div><div class="panel-title">WIN / LOSS CONTRIBUTION</div><div class="panel-subtitle">Count and dollar contribution are shown separately</div></div></div>'+splitContribution(rangeTrades)+'</div><div class="panel"><div class="panel-head"><div><div class="panel-title">EXIT REASONS</div><div class="panel-subtitle">Historical exits, aggregated from saved transactions</div></div><a class="button small" href="/analytics" data-route="/analytics">OPEN ANALYTICS</a></div>'+smallGroupTable(exitGroups(rangeTrades),'EXIT')+'</div></div>';
