@@ -8,6 +8,8 @@ const { getLockStatus } = require("./lpLockChecker");
 
 const BOT_LABEL = "V3.1 BUY Priority Test";
 const BUY_TO_STRONG_BUY_RATIO = 2;
+const COMPOUND_RATES = [0.10, 0.125, 0.15];
+const MINIMUM_BUY_USD = 10;
 const POOL_FEE_PERCENT_ESTIMATE = 0.30;
 const NETWORK_FEE_USD_ESTIMATE = 0.01;
 
@@ -27,10 +29,30 @@ function estimatedImpactPercent(tradeUsd, liquidityUsd) {
   return trade / (approximateUsdReserve + trade) * 100;
 }
 
+function nextCompoundRate(portfolio) {
+  const completedEntries = (portfolio.history || []).filter(row => row.type === "BUY").length;
+  return COMPOUND_RATES[completedEntries % COMPOUND_RATES.length];
+}
+
+function getBuySizing(portfolio) {
+  const rate = nextCompoundRate(portfolio);
+  const equity = Number(portfolio.startingBalance) > 0
+    ? Number(portfolio.cashBalance) + (portfolio.positions || []).reduce((sum, position) => sum + Number(position.amountInvested || 0), 0)
+    : 100;
+  const cash = Number(portfolio.cashBalance) || 0;
+  return {
+    compoundRate: rate,
+    amountInvested: Math.min(Math.max(equity * rate, MINIMUM_BUY_USD), cash)
+  };
+}
+
 const trader = createPaperTrader(
   statePath("v31BuyPriorityTestTradingData.json"),
   fs,
-  { strategyVersion: "V3.1-BUY-Priority-2to1-CostEstimate" }
+  {
+    strategyVersion: "V3.1-BUY-Priority-2to1-CostEstimate",
+    getBuySizing
+  }
 );
 
 async function discoverBuyPriorityCandidates(options = {}) {
@@ -55,10 +77,8 @@ async function discoverBuyPriorityCandidates(options = {}) {
 
   return [...buyCandidates, ...strongBuyCandidates].map(candidate => {
     const portfolio = trader.getPortfolio();
-    const equity = Number(portfolio.startingBalance) > 0
-      ? Number(portfolio.cashBalance) + (portfolio.positions || []).reduce((sum, position) => sum + Number(position.amountInvested || 0), 0)
-      : 100;
-    const tradeUsd = Math.min(Math.max(equity * 0.10, 10), Number(portfolio.cashBalance) || 0);
+    const sizing = getBuySizing(portfolio);
+    const tradeUsd = sizing.amountInvested;
     return {
       ...candidate,
       reasons: [
@@ -70,6 +90,7 @@ async function discoverBuyPriorityCandidates(options = {}) {
       experimentEntry: {
         signalBucket: candidate.signal,
         buyToStrongBuyTarget: "2:1",
+        compoundRatePercent: sizing.compoundRate * 100,
         estimatedCostModel: {
           label: "Paper estimate; not a live quote",
           tradeSizeUsd: Number(tradeUsd.toFixed(2)),
