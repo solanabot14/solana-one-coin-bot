@@ -445,6 +445,49 @@
     function closeDrawer() {$('drawerBackdrop').classList.add('hidden');$('detailDrawer').classList.remove('open');$('detailDrawer').setAttribute('aria-hidden','true');}
   function routeForSystem(id) { return id==='v31'?'/trading/v31':id==='candle'?'/trading/candle-breakout':id==='buy-test'?'/trading/buy-priority-test':id==='swarm'?'/swarm':'/trading/b31-lab'; }
 
+  function csvCell(value) {
+    if(value===null||value===undefined)return '';
+    var textValue=String(value);
+    if(typeof value==='string'&&/^\\s*[=+@-]/.test(textValue))textValue="'"+textValue;
+    return '"'+textValue.replace(/"/g,'""')+'"';
+  }
+  function exportCsv() {
+    var rows=Array.isArray(visibleTransactions)?visibleTransactions:[];
+    var headers=['TIME','BOT / STRATEGY','STRATEGY','MODE','TOKEN','TOKEN ADDRESS','PAIR ADDRESS','TYPE','SWARM','GENESIS','ENTRY TIME','EXIT TIME','HOLD MINUTES','INVESTED USD','RECEIVED USD','ENTRY PRICE','EXIT PRICE','FEES USD','SLIPPAGE USD','GROSS P&L USD','NET P&L USD','RETURN %','ENTRY REASON','EXIT REASON'];
+    var csvRows=[headers].concat(rows.map(function(trade){
+      var source=trade.sourceRecord||{};
+      var field=function(keys){
+        for(var i=0;i<keys.length;i++){
+          var key=keys[i];
+          if(trade[key]!==undefined&&trade[key]!==null&&trade[key]!=='')return trade[key];
+          if(source[key]!==undefined&&source[key]!==null&&source[key]!=='')return source[key];
+        }
+        return '';
+      };
+      var holdMs=field(['holdMs','holdTimeMs']);
+      var holdMinutes=holdMs===''?'':(Number(holdMs)/60000).toFixed(2);
+      return [
+        field(['time','exitTime','entryTime']),field(['system','systemId']),field(['strategy','strategyVersion']),field(['mode']),
+        field(['token','symbol','name']),field(['tokenAddress','mint','tokenMint']),field(['pairAddress']),field(['type']),
+        field(['swarmId']),field(['genesisId']),field(['entryTime']),field(['exitTime']),holdMinutes,
+        field(['invested','amountInvested','amount']),field(['saleValue','amountReceived']),field(['entryPrice','buyPrice']),
+        field(['exitPrice','sellPrice']),field(['estimatedFeesUsd','feesUsd','actualFeesUsd']),
+        field(['estimatedSlippageUsd','slippageUsd']),field(['grossPnl','pnlGross']),field(['netPnl','pnl']),
+        field(['returnPercent','pnlPercent']),field(['entryReason','entrySignal']),field(['exitReason','reason'])
+      ];
+    }));
+    var csv='\\uFEFF'+csvRows.map(function(row){return row.map(csvCell).join(',');}).join('\\r\\n');
+    var blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+    var url=URL.createObjectURL(blob),link=document.createElement('a');
+    link.href=url;
+    link.download='transactions-'+new Date().toISOString().slice(0,10)+'.csv';
+    link.style.display='none';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(function(){URL.revokeObjectURL(url);},1000);
+  }
+
   document.addEventListener('click',function(event){
     if(event.target.closest('[data-dex-link]'))return;
     var routeEl=event.target.closest('[data-route]');if(routeEl){event.preventDefault();navigate(routeEl.getAttribute('data-route'));$('sidebar').classList.remove('open');return;}
