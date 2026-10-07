@@ -83,51 +83,77 @@ function applyBuyPriorityCostEstimates(data) {
   if (!data) return data;
   const costsByPosition = new Map();
   for (const row of data.history || []) {
-    if (row.type !== "SELL" || !row.costEstimateAvailable) continue;
-    const prior = costsByPosition.get(row.positionId) || { estimatedCostUsd: 0, estimatedFeesUsd: 0, estimatedSlippageUsd: 0, grossPnl: 0 };
+    if (row.type !== "SELL") continue;
+    const prior = costsByPosition.get(row.positionId) || {
+      estimatedCostUsd: 0, estimatedFeesUsd: 0, estimatedSlippageUsd: 0, grossPnl: 0
+    };
     costsByPosition.set(row.positionId, {
       estimatedCostUsd: prior.estimatedCostUsd + Number(row.estimatedCostUsd || 0),
       estimatedFeesUsd: prior.estimatedFeesUsd + Number(row.estimatedFeesUsd || 0),
       estimatedSlippageUsd: prior.estimatedSlippageUsd + Number(row.estimatedSlippageUsd || 0),
-      grossPnl: prior.grossPnl + Number(row.grossPnl || 0)
+      grossPnl: prior.grossPnl + Number(row.grossPnl ?? row.pnl ?? 0)
     });
   }
   data.completedTrades = (data.completedTrades || []).map(trade => {
-    const cost = costsByPosition.get(trade.positionId) || { estimatedCostUsd: 0, estimatedFeesUsd: 0, estimatedSlippageUsd: 0, grossPnl: trade.pnl };
-    return { ...trade, grossPnl: cost.grossPnl, netPnl: Number(trade.pnl || 0), estimatedCostUsd: cost.estimatedCostUsd,
-      estimatedFeesUsd: cost.estimatedFeesUsd, estimatedSlippageUsd: cost.estimatedSlippageUsd,
-      costEstimateAvailable: true, pnlPercent: Number(trade.amountInvested) > 0 ? Number(trade.pnl || 0) / Number(trade.amountInvested) * 100 : trade.pnlPercent };
+    const cost = costsByPosition.get(trade.positionId) || {
+      estimatedCostUsd: 0, estimatedFeesUsd: 0, estimatedSlippageUsd: 0, grossPnl: trade.pnl
+    };
+    return {
+      ...trade,
+      grossPnl: cost.grossPnl,
+      netPnl: Number(trade.pnl || 0),
+      estimatedCostUsd: cost.estimatedCostUsd,
+      estimatedFeesUsd: cost.estimatedFeesUsd,
+      estimatedSlippageUsd: cost.estimatedSlippageUsd,
+      costEstimateAvailable: true,
+      pnlPercent: Number(trade.amountInvested) > 0
+        ? Number(trade.pnl || 0) / Number(trade.amountInvested) * 100
+        : trade.pnlPercent
+    };
   });
-  const realizedEstimatedCosts = [...costsByPosition.values()].reduce((sum, item) => sum + item.estimatedCostUsd, 0);
+  const realizedEstimatedCosts = [...costsByPosition.values()]
+    .reduce((sum, item) => sum + item.estimatedCostUsd, 0);
   let openEstimatedCosts = 0;
+  let openEstimatedFees = 0;
   for (const item of data.livePositions || []) {
     const position = item.position || {};
     const live = item.live || {};
-    const assumptions = position.experimentEntry?.estimatedCostModel;
-    if (!assumptions) continue;
     const value = Number(live.currentValue) || 0;
-    const liquidity = Number(assumptions.entryLiquidityUsd) || 0;
-    const impact = value > 0 && liquidity > 0 ? value / (liquidity / 2 + value) * 100 : 0;
+    const assumptions = position.experimentEntry?.estimatedCostModel || {};
+    const liquidity = Number(live.liquidityUsd || assumptions.entryLiquidityUsd) || 0;
+    const impact = value > 0 && liquidity > 0 ? value / (liquidity / 2 + value) * 100 : null;
     const poolFeeRate = Number(assumptions.assumedPoolFeePercentPerSwap || 0) / 100;
-    openEstimatedCosts += Number(position.estimatedEntryCostUsd || 0) + value * (impact / 100 + poolFeeRate) + Number(assumptions.estimatedSolanaNetworkFeeUsdPerSwap || 0);
+    const networkFee = Number(assumptions.estimatedSolanaNetworkFeeUsdPerSwap || 0);
+    const priorityFee = Number(assumptions.estimatedPriorityFeeUsdPerSwap || 0);
+    const entryCosts = position.remainingEntryCosts || {};
+    const remainingEntryCosts = (Number(entryCosts.feesUsd) || 0) + (Number(entryCosts.slippageUsd) || 0);
+    const remainingEntryFees = Number(entryCosts.feesUsd) || 0;
+    const futureExitFees = value > 0 ? value * poolFeeRate + networkFee + priorityFee : 0;
+    const futureExitSlippage = value > 0 && impact !== null ? value * impact / 100 : 0;
+    openEstimatedFees += remainingEntryFees + futureExitFees;
+    openEstimatedCosts += remainingEntryCosts + futureExitFees + futureExitSlippage;
   }
-  if (Number.isFinite(Number(data.equity))) {
-    data.grossEquity = data.equity;
+  const accountEquity = Number(data.equity);
+  if (Number.isFinite(accountEquity)) {
+    data.grossEquity = accountEquity + realizedEstimatedCosts + openEstimatedCosts;
     data.totalEstimatedCosts = realizedEstimatedCosts + openEstimatedCosts;
-    data.equity = Number(data.equity) - data.totalEstimatedCosts;
+    data.totalFeesUsd = [...costsByPosition.values()].reduce((sum, item) => sum + item.estimatedFeesUsd, 0) + openEstimatedFees;
+    data.equity = accountEquity - openEstimatedCosts;
     data.totalPnl = data.equity - Number(data.startingBalance || 0);
-    data.totalPnlPercent = Number(data.startingBalance) > 0 ? data.totalPnl / Number(data.startingBalance) * 100 : null;
+    data.totalPnlPercent = Number(data.startingBalance) > 0
+      ? data.totalPnl / Number(data.startingBalance) * 100
+      : null;
   }
   data.costModel = {
     label: "Estimated paper execution costs",
     poolFeePercentPerSwap: 0.30,
     estimatedNetworkFeeUsdPerSwap: 0.01,
-    slippageMethod: "Approximate constant-product price impact using entry liquidity from DexScreener",
-    warning: "Estimates only; live pool fees, routing, priority fees and fills can differ."
+    estimatedPriorityFeeUsdPerSwap: 0.01,
+    slippageMethod: "Approximate constant-product price impact using DexScreener liquidity",
+    warning: "Estimates only; live routes and fills can differ."
   };
   return data;
 }
-
 function createDashboardServer({ config = getConfig(), controls = bot,
   portfolio = getPortfolio, marketData = getTokenData,
   batchMarketData = marketData === getTokenData ? getTokensData : null } = {}) {
@@ -200,7 +226,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           profitabilityLab: profitabilityLab.data,
           profitabilityLabError: profitabilityLab.error,
           buyPriorityTest: buyTest,
-          buyPriorityTestStatus: { running: buyPriorityTest.getBotStatus(), error: buyPriorityTest.getLastError() },
+          buyPriorityTestStatus: { running: buyPriorityTest.getBotStatus(), entriesPaused: buyPriorityTest.getEntriesPaused(), error: buyPriorityTest.getLastError() },
           buyPriorityLock85: lock85,
           buyPriorityLock85Status: { running: buyPriorityLock85.getBotStatus(), error: buyPriorityLock85.getLastError() }
         });
