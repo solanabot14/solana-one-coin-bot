@@ -3,6 +3,8 @@ const MIN_LOCKED_PERCENT = 90;
 const SUCCESS_CACHE_MS = 10 * 60 * 1000;
 const FAILURE_CACHE_MS = 2 * 60 * 1000;
 const TIMEOUT_MS = 8000;
+const REPORT_CACHE_MS = 2 * 60 * 1000;
+const reportCache = new Map();
 
 function createLpLockChecker({ httpGet = (...args) => require("axios").get(...args), clock = Date.now } = {}) {
 	const cache = new Map();
@@ -33,5 +35,20 @@ function createLpLockChecker({ httpGet = (...args) => require("axios").get(...ar
 	return { getLockStatus };
 }
 
+async function getTokenReport(tokenAddress, { httpGet = (...args) => require("axios").get(...args), clock = Date.now } = {}) {
+	if (!tokenAddress) return null;
+	const cached = reportCache.get(tokenAddress);
+	if (cached && cached.expiresAt > clock()) return cached.value;
+	try {
+		const response = await httpGet(`${API_BASE}/${encodeURIComponent(tokenAddress)}/report`, { timeout: TIMEOUT_MS });
+		const report = response?.data;
+		if (!report || typeof report !== "object") return null;
+		reportCache.set(tokenAddress, { value: report, expiresAt: clock() + REPORT_CACHE_MS });
+		return report;
+	} catch (_) {
+		return null;
+	}
+}
+
 const client = createLpLockChecker();
-module.exports = { API_BASE, MIN_LOCKED_PERCENT, SUCCESS_CACHE_MS, FAILURE_CACHE_MS, createLpLockChecker, getLockStatus: client.getLockStatus };
+module.exports = { API_BASE, MIN_LOCKED_PERCENT, SUCCESS_CACHE_MS, FAILURE_CACHE_MS, createLpLockChecker, getLockStatus: client.getLockStatus, getTokenReport };
