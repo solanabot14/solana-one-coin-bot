@@ -12,7 +12,7 @@ const STRATEGY_VERSION = "v3.2-momentum";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const CONFIG = Object.freeze({
  capital:{startingUsd:100,maxOpenPositions:4,tradeFraction:0.10,minimumTradeUsd:10,maximumLiquidityFraction:0.01,pauseAtBalanceUsd:70},
- entry:{minimumAgeMinutes:30,maximumAgeHours:6,minimumLiquidityUsd:20000,minimumVolume1hUsd:10000,maximumTop10HolderPercent:30,minimumSellQuotePercent:90,watchlistMaxTokens:20,watchlistPollIntervalSeconds:15,watchlistTimeoutMinutes:90,priceHistoryRetentionMinutes:12,volumeWindowMinutes:5,sampleTimeDriftIntervals:2,discoveryRefreshSeconds:120,safetyRecheckSeconds:120,stopLossCooldownHours:24,permanentStopLossPercent:25,pumpRisePercent:40,pullbackMinPercent:20,pullbackMaxPercent:40,removeAfterDropPercent:50,baseNoNewLowMinutes:3,triggerRisePercent:8,volumeSurgeMultiplier:1.5,maximumRecoveryPercent:70,pullbackStopBelowLowPercent:3},
+ entry:{minimumAgeMinutes:30,maximumAgeHours:48,minimumLiquidityUsd:20000,minimumVolume1hUsd:10000,maximumTop10HolderPercent:30,minimumSellQuotePercent:90,watchlistMaxTokens:20,watchlistPollIntervalSeconds:15,watchlistTimeoutMinutes:90,priceHistoryRetentionMinutes:12,volumeWindowMinutes:5,sampleTimeDriftIntervals:2,discoveryRefreshSeconds:120,safetyRecheckSeconds:120,stopLossCooldownHours:24,permanentStopLossPercent:25,initialBreakoutRisePercent:8,baseBreakdownPercent:3,baseNoNewLowMinutes:3,reentryMinGivebackPercent:25,reentryMaxGivebackPercent:50,reentryTriggerRisePercent:4,volumeSurgeMultiplier:1.5,maximumRecoveryPercent:70,baseStopBelowLowPercent:3},
  exit:{stopLossPercent:15,breakevenTriggerPercent:15,firstTargetPercent:25,firstTargetOriginalPositionPercent:40,secondTargetPercent:60,secondTargetOriginalPositionPercent:30,trailingStopPercent:20,timeStopMinutes:15,minimumGainAtTimeStopPercent:5,maximumHoldMinutes:60,liquidityDropPercent:30,stalePriceDataMs:30000},
  estimatedCosts:{poolFeePercentPerSwap:0.30,solanaFeeUsdPerSwap:0.01,priorityFeeUsdPerSwap:0.01},
  logging:{rejectedTokenCooldownSeconds:300,maxRejectedLogEntries:1000,maxWatchlistRemovalEvents:200}
@@ -194,38 +194,40 @@ function removeWatchedToken(tokenAddress, reason, now = Date.now()) {
   if (watchlistRemovalEvents.length > CONFIG.logging.maxWatchlistRemovalEvents) watchlistRemovalEvents.shift();
 }
 
-function addWatchedToken(tokenAddress, data, now = Date.now()) {
+function addWatchedToken(tokenAddress, data, now = Date.now(), reentryContext = { isReentry: false }) {
   const blockedUntil = recentlyRemovedTokens.get(tokenAddress);
-  if (blockedUntil && blockedUntil > now) return false;
+  if (blockedUntil && blockedUntil > now && !reentryContext?.isReentry) return false;
   if (blockedUntil) recentlyRemovedTokens.delete(tokenAddress);
   if (watchlist.has(tokenAddress)) return false;
 
   if (watchlist.size >= CONFIG.entry.watchlistMaxTokens) {
     const oldest = [...watchlist.entries()]
       .sort((a, b) => a[1].admittedAt - b[1].admittedAt)[0];
-    if (oldest) {
-      removeWatchedToken(oldest[0], "watchlist_full_oldest_evicted", now);
-    }
+    if (oldest) removeWatchedToken(oldest[0], "watchlist_full_oldest_evicted", now);
   }
 
   const price = optionalNumber(data.priceUsd);
   if (!(price > 0)) return false;
 
+  const isReentry = Boolean(reentryContext?.isReentry);
   const item = {
     tokenAddress,
     pairAddress: data.pairAddress,
     admittedAt: now,
-    state: "WATCH",
-    statesReached: [{ state: "WATCH", at: now }],
+    state: isReentry ? "REENTRY_PULLBACK" : "WATCH",
+    statesReached: [{ state: isReentry ? "REENTRY_PULLBACK" : "WATCH", at: now }],
     lowSinceWatching: price,
-    pumpPeak: null,
+    initialBaseLowUsd: null,
+    pumpPeak: price,
     pullbackNumber: 0,
-    pullbackPeak: null,
-    pullbackLow: null,
+    pullbackPeak: isReentry ? reentryContext.previousPeakUsd : null,
+    pullbackLow: isReentry ? price : null,
     firstPullbackLow: null,
     secondPullbackLow: null,
-    noNewLowSince: null,
+    noNewLowSince: isReentry ? now : null,
     recoveryPeak: null,
+    reentryContext: isReentry ? { ...reentryContext } : null,
+    isReentry,
     samples: [],
     lastPrice: price,
     lastSampleAt: now,
@@ -236,7 +238,9 @@ function addWatchedToken(tokenAddress, data, now = Date.now()) {
 
   recordWatchSample(item, data, now);
   watchlist.set(tokenAddress, item);
-  logWatchEvent(item, "STATE:WATCH", now, { reason: "admitted" });
+  logWatchEvent(item, "STATE:" + item.state, now, {
+    reason: isReentry ? "one_profitable_reentry_setup" : "admitted"
+  });
   return true;
 }
 
@@ -244,12 +248,10 @@ function updateWatchedToken(tokenAddress, data, now = Date.now()) {
   const item = watchlist.get(tokenAddress);
   if (!item) return;
 
-  if (now - item.admittedAt >=
-      CONFIG.entry.watchlistTimeoutMinutes * 60000) {
+  if (now - item.admittedAt >= CONFIG.entry.watchlistTimeoutMinutes * 60000) {
     removeWatchedToken(tokenAddress, "no_trigger_within_90_minutes", now);
     return;
   }
-
   if (!data || data.pairAddress !== item.pairAddress) {
     if (data?.pairAddress && data.pairAddress !== item.pairAddress) {
       removeWatchedToken(tokenAddress, "pair_changed", now);
@@ -259,97 +261,70 @@ function updateWatchedToken(tokenAddress, data, now = Date.now()) {
 
   const price = optionalNumber(data.priceUsd);
   if (!(price > 0) || !recordWatchSample(item, data, now)) return;
-
   const e = CONFIG.entry;
 
   if (item.state === "WATCH") {
     item.lowSinceWatching = Math.min(item.lowSinceWatching, price);
-    if (price >= item.lowSinceWatching * (1 + e.pumpRisePercent / 100)) {
+    if (price >= item.lowSinceWatching * (1 + e.initialBreakoutRisePercent / 100)) {
+      item.initialBaseLowUsd = item.lowSinceWatching;
+      item.pullbackLow = item.initialBaseLowUsd;
       item.pumpPeak = price;
-      setWatchState(item, "PUMP", now);
+      setWatchState(item, "BREAKOUT", now);
     }
     return;
   }
 
-  if (item.state === "PUMP") {
+  if (item.state === "BREAKOUT") {
     item.pumpPeak = Math.max(item.pumpPeak || price, price);
-    const dropPercent = (item.pumpPeak - price) / item.pumpPeak * 100;
-
-    if (dropPercent > e.removeAfterDropPercent) {
-      removeWatchedToken(tokenAddress, "drop_over_50_percent", now);
-      return;
-    }
-
-    if (dropPercent >= e.pullbackMinPercent &&
-        dropPercent <= e.pullbackMaxPercent) {
-      item.pullbackNumber = 1;
-      item.pullbackPeak = item.pumpPeak;
-      item.pullbackLow = price;
-      item.noNewLowSince = now;
-      setWatchState(item, "PULLBACK", now);
+    if (price <= item.initialBaseLowUsd * (1 - e.baseBreakdownPercent / 100)) {
+      removeWatchedToken(tokenAddress, "breakout_failed_below_base", now);
     }
     return;
   }
 
-  if (item.state === "PULLBACK") {
-    const dropPercent = (item.pullbackPeak - price) / item.pullbackPeak * 100;
-
-    if (dropPercent > e.removeAfterDropPercent) {
-      removeWatchedToken(tokenAddress, "drop_over_50_percent", now);
+  if (item.state === "REENTRY_PULLBACK") {
+    const context = item.reentryContext;
+    if (!context || !(context.previousGainUsd > 0)) {
+      removeWatchedToken(tokenAddress, "reentry_context_missing", now);
       return;
     }
-
+    const givebackPercent =
+      (context.previousPeakUsd - price) / context.previousGainUsd * 100;
+    if (price <= context.previousBaseLowUsd) {
+      removeWatchedToken(tokenAddress, "reentry_not_a_higher_low", now);
+      return;
+    }
+    if (givebackPercent > e.reentryMaxGivebackPercent) {
+      removeWatchedToken(tokenAddress, "reentry_pullback_too_deep", now);
+      return;
+    }
+    if (givebackPercent < e.reentryMinGivebackPercent) {
+      removeWatchedToken(tokenAddress, "reentry_pullback_recovered_before_base", now);
+      return;
+    }
     if (price < item.pullbackLow) {
-      if (item.pullbackNumber === 2 &&
-          price <= item.firstPullbackLow) {
-        removeWatchedToken(tokenAddress, "second_pullback_lower_low", now);
-        return;
-      }
       item.pullbackLow = price;
       item.noNewLowSince = now;
     }
-
+    item.pumpPeak = Math.max(item.pumpPeak || price, price);
     if (now - item.noNewLowSince >= e.baseNoNewLowMinutes * 60000) {
-      if (item.pullbackNumber === 1) {
-        item.firstPullbackLow = item.pullbackLow;
-      } else {
-        item.secondPullbackLow = item.pullbackLow;
-      }
-      item.recoveryPeak = price;
-      setWatchState(item, "BASE", now);
+      item.firstPullbackLow = item.pullbackLow;
+      item.pullbackNumber = 1;
+      setWatchState(item, "REENTRY_BASE", now);
     }
     return;
   }
 
-  if (item.state === "BASE") {
-    if (item.pullbackNumber === 1 &&
-        item.firstPullbackLow !== null &&
-        price < item.firstPullbackLow) {
-      removeWatchedToken(tokenAddress, "later_lower_low", now);
+  if (item.state === "REENTRY_BASE") {
+    const context = item.reentryContext;
+    if (price < item.pullbackLow) {
+      removeWatchedToken(tokenAddress, "reentry_lower_low", now);
       return;
     }
-
-    item.recoveryPeak = Math.max(item.recoveryPeak || price, price);
-    const dropPercent = (item.recoveryPeak - price) / item.recoveryPeak * 100;
-
-    if (dropPercent > e.removeAfterDropPercent) {
-      removeWatchedToken(tokenAddress, "drop_over_50_percent", now);
-      return;
-    }
-
-    if (item.pullbackNumber === 1 &&
-        dropPercent >= e.pullbackMinPercent &&
-        dropPercent <= e.pullbackMaxPercent) {
-      if (price <= item.firstPullbackLow) {
-        removeWatchedToken(tokenAddress, "second_pullback_lower_low", now);
-        return;
-      }
-
-      item.pullbackNumber = 2;
-      item.pullbackPeak = item.recoveryPeak;
-      item.pullbackLow = price;
-      item.noNewLowSince = now;
-      setWatchState(item, "PULLBACK", now);
+    const givebackPercent =
+      (context.previousPeakUsd - price) / context.previousGainUsd * 100;
+    if (givebackPercent > e.reentryMaxGivebackPercent) {
+      removeWatchedToken(tokenAddress, "reentry_pullback_too_deep", now);
     }
   }
 }
@@ -404,14 +379,19 @@ async function getSafetyMetadata(tokenAddress) {
 }
 
 function buildEntryTrigger(item, now) {
-  if (!item || item.state !== "BASE" || !item.latestData) return null;
+  if (!item || !["BREAKOUT", "REENTRY_BASE"].includes(item.state) ||
+      !item.latestData) return null;
 
   const data = item.latestData;
   const current = item.samples[item.samples.length - 1];
   const e = CONFIG.entry;
+  const isReentry = item.state === "REENTRY_BASE";
+  const baseLow = isReentry ? item.pullbackLow : item.initialBaseLowUsd;
+  const requiredRisePercent = isReentry
+    ? e.reentryTriggerRisePercent
+    : e.initialBreakoutRisePercent;
 
-  if (!current || current.price <= 0 ||
-      !(item.pullbackPeak > 0) || !(item.pullbackLow > 0)) return null;
+  if (!current || current.price <= 0 || !(baseLow > 0)) return null;
 
   const pairCreatedAt = optionalNumber(data.pairCreatedAt);
   const ageMinutes = pairCreatedAt === null
@@ -421,7 +401,6 @@ function buildEntryTrigger(item, now) {
   const volume1h = optionalNumber(data.volume1h);
   const buys1h = optionalNumber(data.buys1h);
   const sells1h = optionalNumber(data.sells1h);
-
   if (!Number.isFinite(ageMinutes) ||
       ageMinutes < e.minimumAgeMinutes ||
       ageMinutes > e.maximumAgeHours * 60 ||
@@ -429,41 +408,42 @@ function buildEntryTrigger(item, now) {
       volume1h === null || volume1h < e.minimumVolume1hUsd ||
       buys1h === null || sells1h === null || buys1h <= sells1h) return null;
 
-  const pullbackDepthPercent =
-    (item.pullbackPeak - item.pullbackLow) / item.pullbackPeak * 100;
-  if (pullbackDepthPercent < e.pullbackMinPercent ||
-      pullbackDepthPercent > e.pullbackMaxPercent) return null;
+  const riseFromBasePercent = (current.price - baseLow) / baseLow * 100;
+  if (riseFromBasePercent < requiredRisePercent) return null;
 
-  const riseFromLowPercent =
-    (current.price - item.pullbackLow) / item.pullbackLow * 100;
-  if (riseFromLowPercent < e.triggerRisePercent) return null;
-
-  const fullDrop = item.pullbackPeak - item.pullbackLow;
-  if (!(fullDrop > 0)) return null;
-  const recoveryPercent =
-    (current.price - item.pullbackLow) / fullDrop * 100;
-  if (recoveryPercent > e.maximumRecoveryPercent) return null;
+  let reentryGivebackPercent = null;
+  let recoveryPercent = null;
+  if (isReentry) {
+    const context = item.reentryContext;
+    const fullDrop = context.previousPeakUsd - item.pullbackLow;
+    if (!(fullDrop > 0)) return null;
+    reentryGivebackPercent =
+      (context.previousPeakUsd - item.pullbackLow) /
+      context.previousGainUsd * 100;
+    if (reentryGivebackPercent < e.reentryMinGivebackPercent ||
+        reentryGivebackPercent > e.reentryMaxGivebackPercent) return null;
+    recoveryPercent =
+      (current.price - item.pullbackLow) / fullDrop * 100;
+    if (recoveryPercent > e.maximumRecoveryPercent) return null;
+  }
 
   if (current.buys5m === null || current.sells5m === null ||
       current.buys5m <= current.sells5m ||
       current.volume5m === null || current.volume5m <= 0) return null;
 
-  const previousWindowAt = current.at - e.volumeWindowMinutes * 60 * 1000;
+  const previousWindowAt = current.at - e.volumeWindowMinutes * 60000;
   const allowedSampleDriftMs =
     e.watchlistPollIntervalSeconds * e.sampleTimeDriftIntervals * 1000;
   const previousSample = item.samples
     .filter(sample => sample.at < current.at &&
       sample.volume5m !== null && sample.volume5m > 0)
     .sort((a, b) =>
-      Math.abs(a.at - previousWindowAt) -
-      Math.abs(b.at - previousWindowAt)
+      Math.abs(a.at - previousWindowAt) - Math.abs(b.at - previousWindowAt)
     )[0];
 
   if (!previousSample ||
       Math.abs(previousSample.at - previousWindowAt) > allowedSampleDriftMs ||
-      current.volume5m < previousSample.volume5m * e.volumeSurgeMultiplier) {
-    return null;
-  }
+      current.volume5m < previousSample.volume5m * e.volumeSurgeMultiplier) return null;
 
   return {
     ...data,
@@ -475,14 +455,20 @@ function buildEntryTrigger(item, now) {
     signal: "BUY",
     score: 1,
     reasons: [
-      "v3.2-momentum pullback recovery confirmed",
-      "Price is " + riseFromLowPercent.toFixed(1) + "% above pullback low",
+      STRATEGY_VERSION + (isReentry ? " profitable re-entry confirmed" : " early momentum breakout confirmed"),
+      "Price is " + riseFromBasePercent.toFixed(1) + "% above the " +
+        (isReentry ? "higher pullback low" : "watched base low"),
       "5m volume is at least " + e.volumeSurgeMultiplier + "x the prior 5m window"
     ],
-    pullbackLowUsd: item.pullbackLow,
-    pullbackPeakUsd: item.pullbackPeak,
+    entryMode: isReentry ? "PROFITABLE_REENTRY" : "EARLY_BREAKOUT",
+    baseLowUsd: baseLow,
+    previousPeakUsd: isReentry ? item.reentryContext.previousPeakUsd : null,
+    reentryGivebackPercent,
+    breakoutRisePercent: riseFromBasePercent,
     triggerPriceUsd: current.price,
-    pullbackDepthPercent,
+    pullbackLowUsd: isReentry ? item.pullbackLow : null,
+    pullbackPeakUsd: isReentry ? item.reentryContext.previousPeakUsd : null,
+    pullbackDepthPercent: isReentry ? reentryGivebackPercent : null,
     triggerRecoveryPercent: recoveryPercent
   };
 }
@@ -608,16 +594,14 @@ async function checkEntryFilters(data, token) {
   const ageMinutes = (now - pairCreatedAt) / 60000;
   if (ageMinutes < CONFIG.entry.minimumAgeMinutes ||
       ageMinutes > CONFIG.entry.maximumAgeHours * 60) {
-    return rejectToken(tokenAddress, "PAIR_AGE_OUTSIDE_30M_TO_6H", now);
+    return rejectToken(tokenAddress, "PAIR_AGE_OUTSIDE_30M_TO_48H", now);
   }
-
   if (watchlist.has(tokenAddress)) return false;
 
   const liquidity = optionalNumber(data.liquidityUsd);
   const volume1h = optionalNumber(data.volume1h);
   const buys1h = optionalNumber(data.buys1h);
   const sells1h = optionalNumber(data.sells1h);
-
   if (liquidity === null || volume1h === null ||
       buys1h === null || sells1h === null) {
     return rejectToken(tokenAddress, "REQUIRED_MARKET_DATA_MISSING", now);
@@ -632,17 +616,75 @@ async function checkEntryFilters(data, token) {
     return rejectToken(tokenAddress, "ONE_HOUR_BUYS_NOT_ABOVE_SELLS", now);
   }
 
+  const reentryContext = getEligibleReentryContext(tokenAddress);
+  if (!reentryContext) {
+    return rejectToken(tokenAddress, "DO_NOT_REENTER_UNPROFITABLE_OR_REENTERED_TOKEN", now);
+  }
+  if (reentryContext.isReentry) {
+    const givebackPercent =
+      (reentryContext.previousPeakUsd - price) /
+      reentryContext.previousGainUsd * 100;
+    if (price <= reentryContext.previousBaseLowUsd ||
+        givebackPercent < CONFIG.entry.reentryMinGivebackPercent ||
+        givebackPercent > CONFIG.entry.reentryMaxGivebackPercent) {
+      return rejectToken(tokenAddress, "REENTRY_PRICE_OUTSIDE_PULLBACK_BAND", now);
+    }
+  }
+
   const safety = await getSafetyMetadata(tokenAddress);
   if (!safety?.passed) {
     return rejectToken(tokenAddress, safety?.reason || "SAFETY_CHECK_FAILED", now);
   }
 
   Object.assign(data, safety.metadata);
-  if (!addWatchedToken(tokenAddress, data, now)) {
+  if (!addWatchedToken(tokenAddress, data, now, reentryContext)) {
     return rejectToken(tokenAddress, "RECENTLY_REMOVED_FROM_WATCHLIST", now);
   }
   return false;
 }
+
+function getEligibleReentryContext(tokenAddress, portfolio = trader.getPortfolio()) {
+  const history = Array.isArray(portfolio.history) ? portfolio.history : [];
+  const buys = history.filter(row =>
+    row?.type === "BUY" &&
+    row.tokenAddress === tokenAddress &&
+    row.strategyVersion === STRATEGY_VERSION &&
+    ["EARLY_BREAKOUT", "PROFITABLE_REENTRY"].includes(row.experimentEntry?.entryMode)
+  );
+  if (buys.length === 0) return { isReentry: false };
+  if (buys.length !== 1) return null;
+
+  const buy = buys[0];
+  const sells = history.filter(row =>
+    row?.type === "SELL" && row.positionId === buy.positionId
+  );
+  const finalSell = [...sells].reverse().find(row => Number(row.percentSold) === 100);
+  if (!finalSell) return null;
+  const netPnl = sells.reduce((sum, row) =>
+    sum + (Number(row.netPnl ?? row.pnl) || 0), 0);
+  if (!(netPnl > 0) ||
+      !/TAKE PROFIT|TRAILING STOP/i.test(String(finalSell.reason || ""))) {
+    return null;
+  }
+
+  const previousBaseLowUsd = optionalNumber(buy.experimentEntry?.baseLowUsd);
+  const previousPeakUsd = Math.max(
+    Number(buy.highestPrice) || 0,
+    ...sells.map(row => Number(row.highestPrice) || 0)
+  );
+  const previousGainUsd = previousPeakUsd - previousBaseLowUsd;
+  if (!(previousBaseLowUsd > 0) || !(previousGainUsd > 0)) return null;
+
+  return {
+    isReentry: true,
+    previousBaseLowUsd,
+    previousPeakUsd,
+    previousGainUsd,
+    previousPositionId: buy.positionId
+  };
+}
+
+
 
 function getRecentStopLossGuards(portfolio, now = Date.now()) {
   const openIds = new Set((portfolio.positions || []).map(position => position.id));
@@ -661,7 +703,7 @@ function getRecentStopLossGuards(portfolio, now = Date.now()) {
   for (const [positionId, rows] of sells) {
     if (openIds.has(positionId)) continue;
     const final = [...rows].reverse().find(row => Number(row.percentSold) === 100);
-    if (!final || !/STOP LOSS|PULLBACK LOW STOP/i.test(String(final.reason || ""))) continue;
+    if (!final || !/STOP LOSS|PULLBACK LOW STOP|BASE LOW STOP/i.test(String(final.reason || ""))) continue;
     const closedAt = Date.parse(final.exitTime || final.timestamp || final.createdAt);
     if (!Number.isFinite(closedAt)) continue;
     const entry = entries.get(positionId);
@@ -796,11 +838,12 @@ async function discoverBuyPriorityCandidates(options = {}) {
       reasons: [...(Array.isArray(candidate.reasons) ? candidate.reasons : []), STRATEGY_VERSION + " sell route passed"],
       experimentEntry: {
         strategy: STRATEGY_VERSION,
-        pullbackLowUsd: Number(candidate.pullbackLowUsd),
-        pullbackPeakUsd: Number(candidate.pullbackPeakUsd),
+        entryMode: candidate.entryMode,
+        baseLowUsd: Number(candidate.baseLowUsd),
+        previousPeakUsd: Number(candidate.previousPeakUsd) || null,
+        reentryGivebackPercent: Number(candidate.reentryGivebackPercent) || null,
+        breakoutRisePercent: Number(candidate.breakoutRisePercent),
         triggerPriceUsd: Number(candidate.triggerPriceUsd),
-        pullbackDepthPercent: Number(candidate.pullbackDepthPercent),
-        triggerRecoveryPercent: Number(candidate.triggerRecoveryPercent),
         compoundRatePercent: sizing.compoundRate * 100,
         entryMetrics: {
           pairAgeMinutes: Math.max(0, (now - Number(candidate.pairCreatedAt)) / 60000),
@@ -949,12 +992,12 @@ function evaluateExit({ position, freshData, currentPrice, now = Date.now() }) {
   const dropFromHigh = high > 0 ? (high - currentPrice) / high * 100 : 0;
   const stage = getPositionStage(position);
 
-  const pullbackLow = Number(position.experimentEntry?.pullbackLowUsd);
-  const pullbackStopPrice = pullbackLow > 0
-    ? pullbackLow * (1 - CONFIG.entry.pullbackStopBelowLowPercent / 100) : NaN;
+  const baseLow = Number(position.experimentEntry?.baseLowUsd);
+  const baseStopPrice = baseLow > 0
+    ? baseLow * (1 - CONFIG.entry.baseStopBelowLowPercent / 100) : NaN;
   const hardStopPrice = entry * (1 - CONFIG.exit.stopLossPercent / 100);
-  let activeStopPrice = Number.isFinite(pullbackStopPrice)
-    ? Math.max(pullbackStopPrice, hardStopPrice) : hardStopPrice;
+  let activeStopPrice = Number.isFinite(baseStopPrice)
+    ? Math.max(baseStopPrice, hardStopPrice) : hardStopPrice;
   if (highProfitPercent >= CONFIG.exit.breakevenTriggerPercent) {
     activeStopPrice = Math.max(activeStopPrice, entry);
   }
@@ -962,9 +1005,9 @@ function evaluateExit({ position, freshData, currentPrice, now = Date.now() }) {
     if (highProfitPercent >= CONFIG.exit.breakevenTriggerPercent && activeStopPrice === entry) {
       return { reason: "BREAKEVEN STOP", percent: 100 };
     }
-    const isPullbackStop = Number.isFinite(pullbackStopPrice) && pullbackStopPrice >= hardStopPrice;
+    const isBaseStop = Number.isFinite(baseStopPrice) && baseStopPrice >= hardStopPrice;
     return {
-      reason: isPullbackStop ? "PULLBACK LOW STOP -" + CONFIG.entry.pullbackStopBelowLowPercent + "%" : "STOP LOSS -" + CONFIG.exit.stopLossPercent + "%",
+      reason: isBaseStop ? "BASE LOW STOP -" + CONFIG.entry.baseStopBelowLowPercent + "%" : "STOP LOSS -" + CONFIG.exit.stopLossPercent + "%",
       percent: 100
     };
   }
