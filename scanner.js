@@ -54,7 +54,7 @@ async function fetchDiscoverySource(source, signal) {
 	}
 }
 
-async function discoverCandidatesFresh({ signal } = {}) {
+async function discoverCandidatesFresh({ signal, minimumLiquidityUsd = 40000, minimumVolume24hUsd = 50000, candidateFilter = null, analyzeCandidate = null } = {}) {
 	console.log("\nScanning Solana for active tokens...");
 
 	try {
@@ -110,13 +110,23 @@ async function discoverCandidatesFresh({ signal } = {}) {
 
 			// Safety filters
 			if (
-				(data.liquidityUsd || 0) < 40000 ||
-				(data.volume24h || 0) < 50000
+				(data.liquidityUsd || 0) < minimumLiquidityUsd ||
+				(data.volume24h || 0) < minimumVolume24hUsd
 			) {
 				continue;
 			}
 
-			const analysis = analyzeToken(data);
+			if (typeof candidateFilter === "function") {
+				let passed = false;
+				try { passed = await candidateFilter(data, token); } catch (error) {
+					console.log("CUSTOM FILTER ERROR | " + data.symbol + " | " + error.message);
+				}
+				if (!passed) continue;
+			}
+
+			const analysis = typeof analyzeCandidate === "function"
+				? await analyzeCandidate(data)
+				: analyzeToken(data);
 
 			console.log(
 				"PASSED FILTERS: " + data.symbol + " | " +
@@ -151,6 +161,10 @@ async function discoverCandidatesFresh({ signal } = {}) {
 }
 
 function discoverCandidates(options = {}) {
+	// A policy-specific scan must not reuse a candidate list filtered under another bot's policy.
+	if (options.candidateFilter || options.analyzeCandidate || options.minimumLiquidityUsd !== undefined || options.minimumVolume24hUsd !== undefined) {
+		return discoverCandidatesFresh(options);
+	}
 	if (sharedScanPromise) return sharedScanPromise.then(items => structuredClone(items));
 	if (sharedScanReady && Date.now() - sharedScanAt < SHARED_SCAN_CACHE_MS) {
 		return Promise.resolve(structuredClone(sharedScanCandidates));
