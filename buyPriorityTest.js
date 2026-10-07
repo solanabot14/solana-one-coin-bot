@@ -7,7 +7,7 @@ const { createBot } = require("./bot");
 const { getLockStatus, getTokenReport } = require("./lpLockChecker");
 const telegram = require("./telegram");
 
-const BOT_LABEL = "V3.1 BUY Priority Test";
+const BOT_LABEL = "New Claude Strategy";
 const CONFIG = Object.freeze({
   capital: {
     startingUsd: 100,
@@ -100,7 +100,7 @@ const trader = createPaperTrader(
   statePath("v31BuyPriorityTestTradingData.json"),
   fs,
   {
-    strategyVersion: "V3.1-BUY-Priority-NewStrategy-Paper",
+    strategyVersion: "New-Claude-Strategy-Paper",
     getBuySizing,
     maxOpenPositions: CONFIG.capital.maxOpenPositions,
     startingBalance: CONFIG.capital.startingUsd,
@@ -177,16 +177,16 @@ async function discoverBuyPriorityCandidates(options = {}) {
     minimumLiquidityUsd: CONFIG.entry.minimumLiquidityUsd,
     minimumVolume24hUsd: 0,
     candidateFilter: checkEntryFilters,
-    analyzeCandidate: () => ({ score: 1, signal: "BUY", reasons: ["All configured BUY Priority Test filters passed"] })
+    analyzeCandidate: () => ({ score: 1, signal: "BUY", reasons: ["All configured New Claude Strategy filters passed"] })
   });
   const portfolio = trader.getPortfolio();
   return candidates.map(candidate => {
     const sizing = getBuySizing(portfolio, candidate);
     return {
       ...candidate,
-      reasons: [...(Array.isArray(candidate.reasons) ? candidate.reasons : []), "BUY Priority Test strategy filters passed"],
+      reasons: [...(Array.isArray(candidate.reasons) ? candidate.reasons : []), "New Claude Strategy filters passed"],
       experimentEntry: {
-        strategy: "BUY Priority Test new strategy",
+        strategy: "New Claude Strategy",
         compoundRatePercent: sizing.compoundRate * 100,
         estimatedCostModel: {
           label: "Estimated paper execution costs",
@@ -287,6 +287,7 @@ function buildDashboardAccount() {
   }) : [];
   return {
     ...account,
+    label: BOT_LABEL,
     history,
     positions: account.positions || [],
     position: (account.positions || [])[0] || null,
