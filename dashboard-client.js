@@ -192,8 +192,21 @@
     return position.pairAddress || live.pairAddress || position.tokenAddress || live.tokenAddress || position.mint || live.mint || position.tokenMint || live.tokenMint || '';
   }
   function transactionDexScreenerAddress(trade) {
+    var source=trade.sourceRecord||{}, base=trade.baseToken||source.baseToken||{}, token=trade.token&&typeof trade.token==='object'?trade.token:{};
+    return trade.pairAddress||source.pairAddress||trade.pairId||source.pairId||
+      trade.tokenAddress||source.tokenAddress||trade.mint||source.mint||trade.mintAddress||source.mintAddress||
+      trade.tokenMint||source.tokenMint||trade.baseTokenAddress||source.baseTokenAddress||
+      base.address||token.address||'';
+  }
+  function transactionDexScreenerLink(trade) {
+    var address=transactionDexScreenerAddress(trade);
+    if(address) return {href:'https://dexscreener.com/solana/'+encodeURIComponent(address),label:'OPEN DEXSCREENER ↗',hint:'Opens this token or pair directly on DexScreener.'};
     var source=trade.sourceRecord||{};
-    return trade.pairAddress||source.pairAddress||trade.tokenAddress||source.tokenAddress||trade.mint||source.mint||trade.tokenMint||source.tokenMint||'';
+    var query=trade.symbol||trade.tokenSymbol||trade.token||trade.name||trade.tokenName||source.symbol||source.tokenSymbol||source.token||source.name||source.tokenName||'';
+    query=String(query).trim();
+    return {href:query?'https://dexscreener.com/search?q='+encodeURIComponent(query):'https://dexscreener.com/search',
+      label:query?'SEARCH DEXSCREENER ↗':'OPEN DEXSCREENER ↗',
+      hint:query?'Search by token name because this older trade has no saved address. Verify the result.':'Open DexScreener search; this older trade has no saved token name or address.'};
   }
   function livePositionRow(source, item, swarmId) {
     var position=item.position||item, live=item.live||item, address=dexScreenerAddress(position,live);
@@ -366,9 +379,9 @@
   function transactionRow(t,index) {
     var rowId=t.positionId||t.id||index,type=String(t.type||'TRADE').toUpperCase();
     var closed=type==='SELL'||type==='CLOSED TRADE'||type==='CLOSED'||(!!t.exitTime&&type!=='BUY');
-    var address=closed?transactionDexScreenerAddress(t):'';
-    var dexLink=closed?(address?'<a class="dex-link" data-dex-link href="https://dexscreener.com/solana/'+encodeURIComponent(address)+'" target="_blank" rel="noopener noreferrer">DEXSCREENER ↗</a>':'<span class="dex-unavailable">NO DEX LINK</span>'):'';
-    var token=esc(t.token||t.symbol||'-');
+    var dex=closed?transactionDexScreenerLink(t):null;
+    var dexLink=closed?'<a class="dex-link" data-dex-link href="'+esc(dex.href)+'" title="'+esc(dex.hint)+'" aria-label="'+esc(dex.label)+'" target="_blank" rel="noopener noreferrer">'+dex.label+'</a>':'';
+    var token=esc(t.token||t.symbol||t.name||'-');
     return '<tr class="click-row" data-transaction="'+esc(rowId)+'" data-tx-index="'+index+'"><td>'+dateTime(t.time||t.exitTime||t.entryTime)+'</td><td class="text-left">'+esc(t.system||'-')+'</td><td class="text-left">'+esc(t.swarmId||'-')+'</td><td class="text-left"><strong>'+token+'</strong>'+(closed?'<div class="closed-dex-link">'+dexLink+'</div>':'')+'</td><td>'+esc(t.type||'TRADE')+'</td><td>'+money(t.invested||t.amountInvested||t.amount)+'</td><td>'+money(t.saleValue||t.amountReceived)+'</td><td class="'+signClass(t.pnl)+'">'+money(t.pnl)+'</td><td>'+pct(t.pnlPercent||t.returnPercent)+'</td><td class="text-left">'+esc(t.entryReason||'Not recorded')+'</td><td class="text-left">'+esc(t.exitReason||t.reason||'Not recorded')+'</td></tr>';
   }
   function renderTransactions(source, compact) {
