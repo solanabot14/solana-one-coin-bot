@@ -71,7 +71,13 @@ function createBot({
   positionMonitorMs = POSITION_MONITOR_MS,
   scannerIntervalMs = SCANNER_INTERVAL_MS,
   botLabel = "V3.1 Original - 2 Slots",
-  reentryStateFile = defaultReentryStateFile()
+  reentryStateFile = defaultReentryStateFile(),
+  maxOpenPositions = MAX_OPEN_POSITIONS,
+  requireLiquidityLock = true,
+  useReentryGuards = true,
+  exitDecision = null,
+  pauseEntriesAtBalance = null,
+  entryPauseStateFile = null
 } = {}) {
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
   let activeSession = null;
@@ -80,6 +86,16 @@ function createBot({
   let scannerBusy = false;
   let monitorBusy = false;
   let lastError = null;
+  let entriesPaused = false;
+  let pauseAlertSent = false;
+  if (entryPauseStateFile && fs.existsSync(entryPauseStateFile)) {
+    try {
+      entriesPaused = JSON.parse(fs.readFileSync(entryPauseStateFile, "utf8")).paused === true;
+      pauseAlertSent = entriesPaused;
+    } catch (error) {
+      throw new Error("Unable to read entry-pause state: " + error.message);
+    }
+  }
   const tokenCooldowns = loadReentryGuards(reentryStateFile);
   const isActive = session => activeSession === session && !session.signal.aborted;
   const getPositions = () => {
@@ -87,6 +103,35 @@ function createBot({
     return Array.isArray(portfolio.positions)
       ? portfolio.positions
       : (portfolio.position ? [portfolio.position] : []);
+  };
+  const getCurrentBalance = () => {
+    const portfolio = getPortfolio();
+    return (Number(portfolio.cashBalance) || 0) +
+      getPositions().reduce((sum, position) => sum + (Number(position.amountInvested) || 0), 0);
+  };
+  const entriesPausedByBalance = () => {
+    if (entriesPaused) return true;
+    const threshold = Number(pauseEntriesAtBalance);
+    if (Number.isFinite(threshold) && threshold > 0 && getCurrentBalance() <= threshold) {
+      entriesPaused = true;
+      if (entryPauseStateFile) {
+        try {
+          fs.mkdirSync(path.dirname(entryPauseStateFile), { recursive: true });
+          const temporary = entryPauseStateFile + "." + process.pid + "." + Date.now() + ".tmp";
+          fs.writeFileSync(temporary, JSON.stringify({ paused: true, balance: getCurrentBalance(), threshold, at: new Date().toISOString() }), { flag: "wx" });
+          fs.renameSync(temporary, entryPauseStateFile);
+        } catch (error) {
+          console.error("Unable to persist entry-pause state:", error.message);
+        }
+      }
+      if (!pauseAlertSent) {
+        pauseAlertSent = true;
+        const message = botLabel + " paused new entries: balance reached $" + threshold.toFixed(2) + ". Existing positions remain monitored.";
+        console.error(message);
+        void notifier.notifyCritical(message);
+      }
+    }
+    return entriesPaused;
   };
 
   function syncClosedTokenGuards() {
@@ -157,13 +202,14 @@ function createBot({
 
   async function runScanner(session) {
     console.log("\nStarting automatic Solana scan...\n");
-    if (getPositions().length >= MAX_OPEN_POSITIONS) {
-      console.log("Both V3.1 slots are occupied. Skipping new entry.");
+    if (entriesPausedByBalance()) return;
+    if (getPositions().length >= maxOpenPositions) {
+      console.log("All " + maxOpenPositions + " " + botLabel + " slots are occupied. Skipping new entry.");
       return;
     }
 
     const candidates = await discoverCandidates({ signal: session.signal });
-    if (!isActive(session) || getPositions().length >= MAX_OPEN_POSITIONS) return;
+    if (!isActive(session) || entriesPausedByBalance() || getPositions().length >= maxOpenPositions) return;
     syncClosedTokenGuards();
     if (!candidates.length) {
       console.log("No candidates passed the filters.");
@@ -172,25 +218,28 @@ function createBot({
 
     const openTokens = new Set(getPositions().map(position => position.tokenAddress));
     const availableCandidates = candidates.filter(coin => !openTokens.has(coin.tokenAddress));
-    const freeSlots = Math.max(0, MAX_OPEN_POSITIONS - getPositions().length);
+    const freeSlots = Math.max(0, maxOpenPositions - getPositions().length);
     const buyCandidates = availableCandidates.filter(
       coin => (coin.signal === "BUY" || coin.signal === "STRONG BUY") && !openTokens.has(coin.tokenAddress)
     );
     const selected = [];
 
     for (const coin of buyCandidates) {
-      const lock = await checkLiquidityLock(coin.tokenAddress);
-      if (!isActive(session)) return;
-      if (!lock?.allowed || Number(lock.lockedPercent) < REENTRY_MIN_LP_LOCK_PERCENT) {
-        console.log(`LP LOCK GATE | ${coin.symbol} | skipped | ${lock?.reason || "LOCK_STATUS_UNAVAILABLE"}`);
-        continue;
+      let lock = null;
+      if (requireLiquidityLock) {
+        lock = await checkLiquidityLock(coin.tokenAddress);
+        if (!isActive(session)) return;
+        if (!lock?.allowed || Number(lock.lockedPercent) < REENTRY_MIN_LP_LOCK_PERCENT) {
+          console.log(`LP LOCK GATE | ${coin.symbol} | skipped | ${lock?.reason || "LOCK_STATUS_UNAVAILABLE"}`);
+          continue;
+        }
+        coin.reasons = [
+          ...(Array.isArray(coin.reasons) ? coin.reasons : []),
+          `LP lock ${Number(lock.lockedPercent).toFixed(1)}% confirmed by RugCheck`
+        ];
       }
-      const guard = tokenCooldowns.get(coin.tokenAddress);
+      const guard = useReentryGuards ? tokenCooldowns.get(coin.tokenAddress) : null;
       if (guard && !guard.released && !observeReentry(coin, lock)) continue;
-      coin.reasons = [
-        ...(Array.isArray(coin.reasons) ? coin.reasons : []),
-        `LP lock ${Number(lock.lockedPercent).toFixed(1)}% confirmed by RugCheck`
-      ];
       selected.push(coin);
       if (selected.length >= freeSlots) break;
     }
@@ -201,7 +250,7 @@ function createBot({
     }
 
     for (const coin of selected) {
-      if (!isActive(session) || getPositions().length >= MAX_OPEN_POSITIONS) break;
+      if (!isActive(session) || entriesPausedByBalance() || getPositions().length >= maxOpenPositions) break;
       console.log("\nBOT SELECTED:");
       console.log(`${coin.symbol} - ${coin.name}`);
       console.log(`Score: ${coin.score}`);
@@ -262,13 +311,30 @@ function createBot({
 
       const exit = (reason, percent = 100) => {
         console.log(`EXIT | ${position.symbol} | ${reason}`);
-        const result = sell(currentPrice, percent, { expectedPosition, reason });
+        const result = sell(currentPrice, percent, { expectedPosition, reason, liquidityUsd: freshData.liquidityUsd });
         if (result.success) {
           if (percent === 100) syncClosedTokenGuards();
           void notifier.notifyTrade(reason, result.trade);
         }
         return result;
       };
+
+      if (typeof exitDecision === "function") {
+        const action = exitDecision({ position, freshData, currentPrice, profitPercent, now: Date.now() });
+        if (action) {
+          const result = sell(currentPrice, action.percent ?? 100, {
+            expectedPosition,
+            reason: action.reason,
+            takeProfit: action.takeProfit,
+            liquidityUsd: freshData.liquidityUsd
+          });
+          if (result.success) {
+            if ((action.percent ?? 100) === 100) syncClosedTokenGuards();
+            void notifier.notifyTrade(action.reason, result.trade);
+          }
+        }
+        continue;
+      }
 
       if (profitPercent <= HARD_STOP_PERCENT) {
         exit("HARD STOP");
@@ -298,7 +364,8 @@ function createBot({
         const result = sell(currentPrice, TAKE_PROFIT_1_SELL_PERCENT, {
           expectedPosition,
           takeProfit: "firstTakeProfitDone",
-          reason: "TAKE PROFIT 1"
+          reason: "TAKE PROFIT 1",
+          liquidityUsd: freshData.liquidityUsd
         });
         if (result.success) void notifier.notifyTrade("TAKE PROFIT 1", result.trade);
         continue;
@@ -308,7 +375,8 @@ function createBot({
         const result = sell(currentPrice, TAKE_PROFIT_2_SELL_PERCENT, {
           expectedPosition,
           takeProfit: "secondTakeProfitDone",
-          reason: "TAKE PROFIT 2"
+          reason: "TAKE PROFIT 2",
+          liquidityUsd: freshData.liquidityUsd
         });
         if (result.success) void notifier.notifyTrade("TAKE PROFIT 2", result.trade);
         continue;
@@ -366,7 +434,8 @@ function createBot({
     startBot,
     stopBot,
     getBotStatus: () => activeSession !== null,
-    getLastError: () => lastError
+    getLastError: () => lastError,
+    getEntriesPaused: () => entriesPaused || entriesPausedByBalance()
   };
 }
 
