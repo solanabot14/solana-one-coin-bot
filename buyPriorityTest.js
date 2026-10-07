@@ -56,6 +56,11 @@ const CONFIG = Object.freeze({
     poolFeePercentPerSwap: 0.30,
     solanaFeeUsdPerSwap: 0.01,
     priorityFeeUsdPerSwap: 0.01
+  },
+  logging: {
+    rejectedTokenCooldownSeconds: 300,
+    maxRejectedLogEntries: 1000,
+    maxWatchlistRemovalEvents: 200
   }
 });
 
@@ -134,6 +139,60 @@ function optionalNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+const rejectedTokenLogTimes = new Map();
+
+function logPrice(value) {
+  const number = optionalNumber(value);
+  return number === null ? "n/a" : number.toExponential(6);
+}
+
+function logUsd(value) {
+  const number = optionalNumber(value);
+  return number === null ? "n/a" : "$" + number.toFixed(2);
+}
+
+function logWatchEvent(item, event, now, details = {}) {
+  const peak = item.pullbackPeak ?? item.pumpPeak;
+  const low = item.pullbackLow ?? item.firstPullbackLow ?? item.secondPullbackLow;
+  const trigger = details.triggerPriceUsd ??
+    item.lastTriggerPriceUsd ??
+    item.triggerCandidate?.triggerPriceUsd;
+  const states = (item.statesReached || []).map(row => row.state).join(">");
+
+  console.info(
+    "V3.2-MOMENTUM | " + event +
+    " | token=" + item.tokenAddress +
+    " | state=" + (item.state || "REMOVED") +
+    " | states=" + (states || "none") +
+    " | peak=" + logPrice(peak) +
+    " | pullback_low=" + logPrice(low) +
+    " | trigger_price=" + logPrice(trigger) +
+    (details.reason ? " | reason=" + details.reason : "")
+  );
+}
+
+function rejectToken(tokenAddress, reason, now = Date.now()) {
+  const address = tokenAddress || "unknown";
+  const key = address + "|" + reason;
+  const previousAt = rejectedTokenLogTimes.get(key);
+
+  if (previousAt &&
+      now - previousAt <
+        CONFIG.logging.rejectedTokenCooldownSeconds * 1000) return false;
+
+  rejectedTokenLogTimes.set(key, now);
+  if (rejectedTokenLogTimes.size > CONFIG.logging.maxRejectedLogEntries) {
+    const oldestKey = rejectedTokenLogTimes.keys().next().value;
+    if (oldestKey) rejectedTokenLogTimes.delete(oldestKey);
+  }
+
+  console.info(
+    "V3.2-MOMENTUM | REJECTED | token=" + address +
+    " | reason=" + reason
+  );
+  return false;
+}
+
 function recordWatchSample(item, data, now) {
   const price = optionalNumber(data.priceUsd);
   if (!(price > 0)) return false;
@@ -158,12 +217,17 @@ function setWatchState(item, state, now) {
   if (item.state === state) return;
   item.state = state;
   item.statesReached.push({ state, at: now });
+  logWatchEvent(item, "STATE:" + state, now);
 }
 
 function removeWatchedToken(tokenAddress, reason, now = Date.now()) {
   const item = watchlist.get(tokenAddress);
   if (!item) return;
 
+  logWatchEvent(item, "REMOVED", now, {
+    reason,
+    triggerPriceUsd: item.triggerCandidate?.triggerPriceUsd
+  });
   watchlist.delete(tokenAddress);
   recentlyRemovedTokens.set(
     tokenAddress,
@@ -181,7 +245,7 @@ function removeWatchedToken(tokenAddress, reason, now = Date.now()) {
     secondPullbackLow: item.secondPullbackLow
   });
 
-  if (watchlistRemovalEvents.length > 200) watchlistRemovalEvents.shift();
+  if (watchlistRemovalEvents.length > CONFIG.logging.maxWatchlistRemovalEvents) watchlistRemovalEvents.shift();
 }
 
 function addWatchedToken(tokenAddress, data, now = Date.now()) {
@@ -226,6 +290,7 @@ function addWatchedToken(tokenAddress, data, now = Date.now()) {
 
   recordWatchSample(item, data, now);
   watchlist.set(tokenAddress, item);
+  logWatchEvent(item, "STATE:WATCH", now, { reason: "admitted" });
   return true;
 }
 
@@ -347,21 +412,29 @@ async function getSafetyMetadata(tokenAddress) {
   const report = await getTokenReport(tokenAddress);
   if (!report || report.rugged !== false ||
       !Array.isArray(report.risks) ||
-      !report.token || !Array.isArray(report.topHolders)) return null;
+      !report.token || !Array.isArray(report.topHolders)) {
+    return { passed: false, reason: "RUGCHECK_REPORT_MISSING_OR_FAILED" };
+  }
 
   const revoked = value => value === null || value === false || value === "";
   if (!revoked(report.token.mintAuthority) ||
-      !revoked(report.token.freezeAuthority)) return null;
+      !revoked(report.token.freezeAuthority)) {
+    return { passed: false, reason: "MINT_OR_FREEZE_AUTHORITY_NOT_REVOKED" };
+  }
 
   const holders = report.topHolders.slice(0, 10);
   if (holders.length < 10 ||
-      holders.some(holder => optionalNumber(holder?.pct) === null)) return null;
+      holders.some(holder => optionalNumber(holder?.pct) === null)) {
+    return { passed: false, reason: "TOP10_HOLDER_DATA_MISSING" };
+  }
 
   const top10HolderPercent = holders.reduce(
     (sum, holder) => sum + Number(holder.pct),
     0
   );
-  if (top10HolderPercent >= CONFIG.entry.maximumTop10HolderPercent) return null;
+  if (top10HolderPercent >= CONFIG.entry.maximumTop10HolderPercent) {
+    return { passed: false, reason: "TOP10_HOLDERS_AT_OR_ABOVE_LIMIT" };
+  }
 
   const unsafeRisk = report.risks.some(risk => {
     const name = String(risk?.name || "").toLowerCase();
@@ -369,13 +442,18 @@ async function getSafetyMetadata(tokenAddress) {
     return ["danger", "critical"].includes(level) ||
       /honeypot|blacklist|freeze authority|mint authority|transfer fee|high tax/.test(name);
   });
-  if (unsafeRisk) return null;
+  if (unsafeRisk) {
+    return { passed: false, reason: "RUGCHECK_UNSAFE_RISK" };
+  }
 
   return {
-    top10HolderPercent,
-    mintAuthorityRevoked: true,
-    freezeAuthorityRevoked: true,
-    rugCheckPassed: true
+    passed: true,
+    metadata: {
+      top10HolderPercent,
+      mintAuthorityRevoked: true,
+      freezeAuthorityRevoked: true,
+      rugCheckPassed: true
+    }
   };
 }
 
@@ -503,14 +581,29 @@ async function pollWatchlist({ signal } = {}) {
           now - stillWatching.triggerSafetyCheckedAt >=
             CONFIG.entry.safetyRecheckSeconds * 1000) {
         const safety = await getSafetyMetadata(tokenAddress);
-        if (!safety) {
-          removeWatchedToken(tokenAddress, "entry_safety_recheck_failed", now);
+        if (!safety?.passed) {
+          removeWatchedToken(
+            tokenAddress,
+            "entry_safety_recheck_failed:" + (safety?.reason || "unknown"),
+            now
+          );
           continue;
         }
-        stillWatching.triggerSafety = safety;
+        stillWatching.triggerSafety = safety.metadata;
         stillWatching.triggerSafetyCheckedAt = now;
       }
 
+      if (!stillWatching.triggerCandidate) {
+        stillWatching.lastTriggerPriceUsd = trigger.triggerPriceUsd;
+        stillWatching.statesReached.push({
+          state: "TRIGGER",
+          at: now,
+          price: trigger.triggerPriceUsd
+        });
+        logWatchEvent(stillWatching, "TRIGGER", now, {
+          triggerPriceUsd: trigger.triggerPriceUsd
+        });
+      }
       stillWatching.triggerCandidate = {
         ...trigger,
         ...stillWatching.triggerSafety
@@ -527,14 +620,19 @@ async function checkEntryFilters(data, token) {
   const pairAddress = data?.pairAddress;
   const price = optionalNumber(data?.priceUsd);
   const pairCreatedAt = optionalNumber(data?.pairCreatedAt);
-  const ageMinutes = pairCreatedAt === null
-    ? NaN
-    : (now - pairCreatedAt) / 60000;
 
-  if (!tokenAddress || !pairAddress || !(price > 0) ||
-      !Number.isFinite(ageMinutes) ||
-      ageMinutes < CONFIG.entry.minimumAgeMinutes ||
-      ageMinutes > CONFIG.entry.maximumAgeHours * 60) return false;
+  if (!tokenAddress || !pairAddress || price === null || !(price > 0)) {
+    return rejectToken(tokenAddress, "MISSING_PRICE_OR_PAIR_DATA", now);
+  }
+  if (pairCreatedAt === null) {
+    return rejectToken(tokenAddress, "PAIR_AGE_DATA_MISSING", now);
+  }
+
+  const ageMinutes = (now - pairCreatedAt) / 60000;
+  if (ageMinutes < CONFIG.entry.minimumAgeMinutes ||
+      ageMinutes > CONFIG.entry.maximumAgeHours * 60) {
+    return rejectToken(tokenAddress, "PAIR_AGE_OUTSIDE_30M_TO_6H", now);
+  }
 
   if (watchlist.has(tokenAddress)) return false;
 
@@ -544,16 +642,28 @@ async function checkEntryFilters(data, token) {
   const sells1h = optionalNumber(data.sells1h);
 
   if (liquidity === null || volume1h === null ||
-      buys1h === null || sells1h === null ||
-      liquidity < CONFIG.entry.minimumLiquidityUsd ||
-      volume1h < CONFIG.entry.minimumVolume1hUsd ||
-      buys1h <= sells1h) return false;
+      buys1h === null || sells1h === null) {
+    return rejectToken(tokenAddress, "REQUIRED_MARKET_DATA_MISSING", now);
+  }
+  if (liquidity < CONFIG.entry.minimumLiquidityUsd) {
+    return rejectToken(tokenAddress, "LIQUIDITY_BELOW_MINIMUM", now);
+  }
+  if (volume1h < CONFIG.entry.minimumVolume1hUsd) {
+    return rejectToken(tokenAddress, "ONE_HOUR_VOLUME_BELOW_MINIMUM", now);
+  }
+  if (buys1h <= sells1h) {
+    return rejectToken(tokenAddress, "ONE_HOUR_BUYS_NOT_ABOVE_SELLS", now);
+  }
 
   const safety = await getSafetyMetadata(tokenAddress);
-  if (!safety) return false;
+  if (!safety?.passed) {
+    return rejectToken(tokenAddress, safety?.reason || "SAFETY_CHECK_FAILED", now);
+  }
 
-  Object.assign(data, safety);
-  addWatchedToken(tokenAddress, data, now);
+  Object.assign(data, safety.metadata);
+  if (!addWatchedToken(tokenAddress, data, now)) {
+    return rejectToken(tokenAddress, "RECENTLY_REMOVED_FROM_WATCHLIST", now);
+  }
   return false;
 }
 
@@ -689,8 +799,38 @@ function evaluateExit({ position, currentPrice, now = Date.now() }) {
   return null;
 }
 
+function logTradeSummary(event, trade = {}) {
+  const entryPrice = optionalNumber(trade.entryPrice);
+  const exitPrice = optionalNumber(trade.exitPrice);
+  const entryCosts = trade.entryExecutionCosts || {};
+  const estimatedFees = optionalNumber(trade.estimatedFeesUsd) ??
+    optionalNumber(entryCosts.feesUsd) ?? 0;
+  const estimatedSlippage = optionalNumber(trade.estimatedSlippageUsd) ??
+    optionalNumber(entryCosts.slippageUsd) ?? 0;
+  const netPnl = optionalNumber(trade.netPnl ?? trade.pnl);
+  const startedAt = Date.parse(trade.entryTime || "");
+  const endedAt = Date.parse(trade.exitTime || "");
+  const holdMinutes = Number.isFinite(startedAt)
+    ? Math.max(0, ((Number.isFinite(endedAt) ? endedAt : Date.now()) - startedAt) / 60000)
+    : null;
+  const reason = trade.reason || event || "UNKNOWN";
+
+  console.info(
+    "TRADE | strategy=v3.2-momentum" +
+    " | event=" + (event || trade.type || "UNKNOWN") +
+    " | token=" + (trade.tokenAddress || "unknown") +
+    " | entry=" + logPrice(entryPrice) +
+    " | exit=" + (exitPrice === null ? "open" : logPrice(exitPrice)) +
+    " | reason=" + reason +
+    " | pnl_after_costs=" + (netPnl === null ? "pending" : logUsd(netPnl)) +
+    " | fees=" + logUsd(estimatedFees) +
+    " | slippage=" + logUsd(estimatedSlippage) +
+    " | hold_minutes=" + (holdMinutes === null ? "n/a" : holdMinutes.toFixed(2))
+  );
+}
+
 const quietNotifier = {
-  notifyTrade: async () => {},
+  notifyTrade: async (event, trade) => logTradeSummary(event, trade),
   notifyCritical: message => telegram.notifyCritical(message)
 };
 
