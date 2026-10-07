@@ -138,6 +138,15 @@ function persistStages() {
   }
 }
 
+function getPositionStage(position) {
+  if (profitStages.has(position.id)) return Number(profitStages.get(position.id)) || 0;
+  const rows = (trader.getPortfolio().history || []).filter(row => row.type === "SELL" && row.positionId === position.id);
+  const completed = rows.filter(row => String(row.reason || "").startsWith("TAKE PROFIT +")).length;
+  if (completed) return Math.min(3, completed);
+  if (position.firstTakeProfitDone) return position.secondTakeProfitDone ? 3 : 1;
+  return 0;
+}
+
 const recentPriceObservations = new Map();
 async function checkEntryFilters(data, token) {
   const now = Date.now();
@@ -489,7 +498,7 @@ function evaluateExit({ position, freshData, currentPrice, now = Date.now() }) {
   const highProfitPercent = (high - entry) / entry * 100;
   const holdMinutes = Math.max(0, (now - new Date(position.entryTime).getTime()) / 60000);
   const dropFromHigh = high > 0 ? (high - currentPrice) / high * 100 : 0;
-  const stage = Number(profitStages.get(position.id)) || 0;
+  const stage = getPositionStage(position);
 
   if (profitPercent <= -CONFIG.exit.stopLossPercent) {
     return { reason: "STOP LOSS -" + CONFIG.exit.stopLossPercent + "%", percent: 100 };
