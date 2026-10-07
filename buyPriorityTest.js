@@ -28,16 +28,18 @@ const CONFIG = Object.freeze({
     watchlistPollIntervalSeconds: 15,
     watchlistTimeoutMinutes: 90,
     priceHistoryRetentionMinutes: 12,
+    discoveryRefreshSeconds: 120,
+    safetyRecheckSeconds: 120,
 
     pumpRisePercent: 40,
     pullbackMinPercent: 20,
     pullbackMaxPercent: 40,
     removeAfterDropPercent: 50,
     baseNoNewLowMinutes: 3,
-
     triggerRisePercent: 8,
     volumeSurgeMultiplier: 1.5,
-    maximumRecoveryPercent: 70
+    maximumRecoveryPercent: 70,
+    pullbackStopBelowLowPercent: 3
   },
   exit: {
     stopLossPercent: 15,
@@ -112,7 +114,7 @@ const trader = createPaperTrader(
   statePath("v31BuyPriorityTestTradingData.json"),
   fs,
   {
-    strategyVersion: "New-Claude-Strategy-Paper",
+    strategyVersion: "v3.2-momentum",
     getBuySizing,
     maxOpenPositions: CONFIG.capital.maxOpenPositions,
     startingBalance: CONFIG.capital.startingUsd,
@@ -124,7 +126,6 @@ const watchlist = new Map();
 const watchlistRemovalEvents = [];
 const recentlyRemovedTokens = new Map();
 
-let watchlistPollTimer = null;
 let watchlistPollBusy = false;
 
 function optionalNumber(value) {
@@ -149,6 +150,7 @@ function recordWatchSample(item, data, now) {
   item.samples = item.samples.filter(sample => sample.at >= cutoff);
   item.lastPrice = price;
   item.lastSampleAt = now;
+  item.latestData = { ...data };
   return true;
 }
 
@@ -216,7 +218,10 @@ function addWatchedToken(tokenAddress, data, now = Date.now()) {
     recoveryPeak: null,
     samples: [],
     lastPrice: price,
-    lastSampleAt: now
+    lastSampleAt: now,
+    triggerCandidate: null,
+    triggerSafety: null,
+    triggerSafetyCheckedAt: 0
   };
 
   recordWatchSample(item, data, now);
@@ -338,17 +343,167 @@ function updateWatchedToken(tokenAddress, data, now = Date.now()) {
   }
 }
 
-async function pollWatchlist() {
+async function getSafetyMetadata(tokenAddress) {
+  const report = await getTokenReport(tokenAddress);
+  if (!report || report.rugged !== false ||
+      !Array.isArray(report.risks) ||
+      !report.token || !Array.isArray(report.topHolders)) return null;
+
+  const revoked = value => value === null || value === false || value === "";
+  if (!revoked(report.token.mintAuthority) ||
+      !revoked(report.token.freezeAuthority)) return null;
+
+  const holders = report.topHolders.slice(0, 10);
+  if (holders.length < 10 ||
+      holders.some(holder => optionalNumber(holder?.pct) === null)) return null;
+
+  const top10HolderPercent = holders.reduce(
+    (sum, holder) => sum + Number(holder.pct),
+    0
+  );
+  if (top10HolderPercent >= CONFIG.entry.maximumTop10HolderPercent) return null;
+
+  const unsafeRisk = report.risks.some(risk => {
+    const name = String(risk?.name || "").toLowerCase();
+    const level = String(risk?.level || "").toLowerCase();
+    return ["danger", "critical"].includes(level) ||
+      /honeypot|blacklist|freeze authority|mint authority|transfer fee|high tax/.test(name);
+  });
+  if (unsafeRisk) return null;
+
+  return {
+    top10HolderPercent,
+    mintAuthorityRevoked: true,
+    freezeAuthorityRevoked: true,
+    rugCheckPassed: true
+  };
+}
+
+function buildEntryTrigger(item, now) {
+  if (!item || item.state !== "BASE" || !item.latestData) return null;
+
+  const data = item.latestData;
+  const current = item.samples[item.samples.length - 1];
+  const e = CONFIG.entry;
+
+  if (!current || current.price <= 0 ||
+      !(item.pullbackPeak > 0) || !(item.pullbackLow > 0)) return null;
+
+  const pairCreatedAt = optionalNumber(data.pairCreatedAt);
+  const ageMinutes = pairCreatedAt === null
+    ? NaN
+    : (now - pairCreatedAt) / 60000;
+  const liquidity = optionalNumber(data.liquidityUsd);
+  const volume1h = optionalNumber(data.volume1h);
+  const buys1h = optionalNumber(data.buys1h);
+  const sells1h = optionalNumber(data.sells1h);
+
+  if (!Number.isFinite(ageMinutes) ||
+      ageMinutes < e.minimumAgeMinutes ||
+      ageMinutes > e.maximumAgeHours * 60 ||
+      liquidity === null || liquidity < e.minimumLiquidityUsd ||
+      volume1h === null || volume1h < e.minimumVolume1hUsd ||
+      buys1h === null || sells1h === null || buys1h <= sells1h) return null;
+
+  const pullbackDepthPercent =
+    (item.pullbackPeak - item.pullbackLow) / item.pullbackPeak * 100;
+  if (pullbackDepthPercent < e.pullbackMinPercent ||
+      pullbackDepthPercent > e.pullbackMaxPercent) return null;
+
+  const riseFromLowPercent =
+    (current.price - item.pullbackLow) / item.pullbackLow * 100;
+  if (riseFromLowPercent < e.triggerRisePercent) return null;
+
+  const fullDrop = item.pullbackPeak - item.pullbackLow;
+  if (!(fullDrop > 0)) return null;
+  const recoveryPercent =
+    (current.price - item.pullbackLow) / fullDrop * 100;
+  if (recoveryPercent > e.maximumRecoveryPercent) return null;
+
+  if (current.buys5m === null || current.sells5m === null ||
+      current.buys5m <= current.sells5m ||
+      current.volume5m === null || current.volume5m <= 0) return null;
+
+  const previousWindowAt = current.at - 5 * 60 * 1000;
+  const allowedSampleDriftMs =
+    e.watchlistPollIntervalSeconds * 2000;
+  const previousSample = item.samples
+    .filter(sample => sample.at < current.at &&
+      sample.volume5m !== null && sample.volume5m > 0)
+    .sort((a, b) =>
+      Math.abs(a.at - previousWindowAt) -
+      Math.abs(b.at - previousWindowAt)
+    )[0];
+
+  if (!previousSample ||
+      Math.abs(previousSample.at - previousWindowAt) > allowedSampleDriftMs ||
+      current.volume5m < previousSample.volume5m * e.volumeSurgeMultiplier) {
+    return null;
+  }
+
+  return {
+    ...data,
+    tokenAddress: item.tokenAddress,
+    priceUsd: current.price,
+    volume5m: current.volume5m,
+    buys5m: current.buys5m,
+    sells5m: current.sells5m,
+    signal: "BUY",
+    score: 1,
+    reasons: [
+      "v3.2-momentum pullback recovery confirmed",
+      "Price is " + riseFromLowPercent.toFixed(1) + "% above pullback low",
+      "5m volume is at least " + e.volumeSurgeMultiplier + "x the prior 5m window"
+    ],
+    pullbackLowUsd: item.pullbackLow,
+    pullbackPeakUsd: item.pullbackPeak,
+    triggerPriceUsd: current.price,
+    pullbackDepthPercent,
+    triggerRecoveryPercent: recoveryPercent
+  };
+}
+
+async function pollWatchlist({ signal } = {}) {
   if (watchlistPollBusy || watchlist.size === 0) return;
   watchlistPollBusy = true;
 
   try {
     const now = Date.now();
     const addresses = [...watchlist.keys()];
-    const dataByAddress = await market.getTokensData(addresses);
+    const dataByAddress = await market.getTokensData(addresses, { signal });
+    if (signal?.aborted) return;
 
     for (const tokenAddress of addresses) {
-      updateWatchedToken(tokenAddress, dataByAddress.get(tokenAddress), now);
+      const item = watchlist.get(tokenAddress);
+      if (!item) continue;
+
+      const data = dataByAddress.get(tokenAddress);
+      updateWatchedToken(tokenAddress, data, now);
+      const stillWatching = watchlist.get(tokenAddress);
+      if (!stillWatching) continue;
+
+      const trigger = buildEntryTrigger(stillWatching, now);
+      if (!trigger) {
+        stillWatching.triggerCandidate = null;
+        continue;
+      }
+
+      if (!stillWatching.triggerSafety ||
+          now - stillWatching.triggerSafetyCheckedAt >=
+            CONFIG.entry.safetyRecheckSeconds * 1000) {
+        const safety = await getSafetyMetadata(tokenAddress);
+        if (!safety) {
+          removeWatchedToken(tokenAddress, "entry_safety_recheck_failed", now);
+          continue;
+        }
+        stillWatching.triggerSafety = safety;
+        stillWatching.triggerSafetyCheckedAt = now;
+      }
+
+      stillWatching.triggerCandidate = {
+        ...trigger,
+        ...stillWatching.triggerSafety
+      };
     }
   } finally {
     watchlistPollBusy = false;
@@ -383,64 +538,80 @@ async function checkEntryFilters(data, token) {
       volume1h < CONFIG.entry.minimumVolume1hUsd ||
       buys1h <= sells1h) return false;
 
-  const report = await getTokenReport(tokenAddress);
-  if (!report || report.rugged !== false ||
-      !Array.isArray(report.risks) ||
-      !report.token || !Array.isArray(report.topHolders)) return false;
+  const safety = await getSafetyMetadata(tokenAddress);
+  if (!safety) return false;
 
-  const revoked = value => value === null || value === false || value === "";
-  if (!revoked(report.token.mintAuthority) ||
-      !revoked(report.token.freezeAuthority)) return false;
-
-  const holders = report.topHolders.slice(0, 10);
-  if (holders.length < 10 ||
-      holders.some(holder => optionalNumber(holder?.pct) === null)) return false;
-
-  const top10Percent = holders.reduce(
-    (sum, holder) => sum + Number(holder.pct),
-    0
-  );
-  if (top10Percent >= CONFIG.entry.maximumTop10HolderPercent) return false;
-
-  const unsafeRisk = report.risks.some(risk => {
-    const name = String(risk?.name || "").toLowerCase();
-    const level = String(risk?.level || "").toLowerCase();
-    return ["danger", "critical"].includes(level) ||
-      /honeypot|blacklist|freeze authority|mint authority|transfer fee|high tax/.test(name);
-  });
-  if (unsafeRisk) return false;
-
-  data.top10HolderPercent = top10Percent;
-  data.mintAuthorityRevoked = true;
-  data.freezeAuthorityRevoked = true;
-  data.rugCheckPassed = true;
-
+  Object.assign(data, safety);
   addWatchedToken(tokenAddress, data, now);
   return false;
 }
 
+let lastFullCandidateScanAt = 0;
+
 async function discoverBuyPriorityCandidates(options = {}) {
-  const candidates = await scanner.discoverCandidates({
-    ...options,
-    minimumLiquidityUsd: CONFIG.entry.minimumLiquidityUsd,
-    minimumVolume24hUsd: 0,
-    candidateFilter: checkEntryFilters,
-    analyzeCandidate: () => ({ score: 1, signal: "BUY", reasons: ["All configured New Claude Strategy filters passed"] })
-  });
+  await pollWatchlist(options);
+  const now = Date.now();
+  let candidates = [];
+
+  if (now - lastFullCandidateScanAt >=
+      CONFIG.entry.discoveryRefreshSeconds * 1000) {
+    lastFullCandidateScanAt = now;
+    candidates = await scanner.discoverCandidates({
+      ...options,
+      minimumLiquidityUsd: CONFIG.entry.minimumLiquidityUsd,
+      minimumVolume24hUsd: 0,
+      candidateFilter: checkEntryFilters,
+      analyzeCandidate: () => ({
+        score: 1,
+        signal: "BUY",
+        reasons: ["v3.2-momentum watchlist admission filters passed"]
+      })
+    });
+  }
+
   const portfolio = trader.getPortfolio();
-  return candidates.map(candidate => {
+  const openTokenAddresses = new Set(
+    (Array.isArray(portfolio.positions) ? portfolio.positions : [])
+      .map(position => position.tokenAddress)
+  );
+
+  for (const tokenAddress of openTokenAddresses) {
+    if (watchlist.has(tokenAddress)) {
+      removeWatchedToken(tokenAddress, "position_opened", now);
+    }
+  }
+
+  const readyCandidates = [...watchlist.values()]
+    .map(item => item.triggerCandidate)
+    .filter(candidate => candidate && !openTokenAddresses.has(candidate.tokenAddress));
+
+  const unique = new Map();
+  for (const candidate of [...candidates, ...readyCandidates]) {
+    if (candidate?.tokenAddress) unique.set(candidate.tokenAddress, candidate);
+  }
+
+  return [...unique.values()].map(candidate => {
     const sizing = getBuySizing(portfolio, candidate);
     return {
       ...candidate,
-      reasons: [...(Array.isArray(candidate.reasons) ? candidate.reasons : []), "New Claude Strategy filters passed"],
+      reasons: [
+        ...(Array.isArray(candidate.reasons) ? candidate.reasons : []),
+        "v3.2-momentum"
+      ],
       experimentEntry: {
-        strategy: "New Claude Strategy",
+        strategy: "v3.2-momentum",
+        pullbackLowUsd: Number(candidate.pullbackLowUsd),
+        pullbackPeakUsd: Number(candidate.pullbackPeakUsd),
+        triggerPriceUsd: Number(candidate.triggerPriceUsd),
+        pullbackDepthPercent: Number(candidate.pullbackDepthPercent),
+        triggerRecoveryPercent: Number(candidate.triggerRecoveryPercent),
         compoundRatePercent: sizing.compoundRate * 100,
         estimatedCostModel: {
           label: "Estimated paper execution costs",
           tradeSizeUsd: Number(sizing.amountInvested.toFixed(2)),
           entryLiquidityUsd: Number(candidate.liquidityUsd),
-          estimatedEntryImpactPercent: estimatedImpactPercent(sizing.amountInvested, candidate.liquidityUsd),
+          estimatedEntryImpactPercent:
+            estimatedImpactPercent(sizing.amountInvested, candidate.liquidityUsd),
           assumedPoolFeePercentPerSwap: CONFIG.estimatedCosts.poolFeePercentPerSwap,
           estimatedSolanaNetworkFeeUsdPerSwap: CONFIG.estimatedCosts.solanaFeeUsdPerSwap,
           estimatedPriorityFeeUsdPerSwap: CONFIG.estimatedCosts.priorityFeeUsdPerSwap
@@ -466,9 +637,24 @@ function evaluateExit({ position, currentPrice, now = Date.now() }) {
       profitPercent <= 0) {
     return { reason: "BREAKEVEN STOP", percent: 100 };
   }
-  if (profitPercent <= -CONFIG.exit.stopLossPercent) {
-    return { reason: "STOP LOSS -" + CONFIG.exit.stopLossPercent + "%", percent: 100 };
+
+  const pullbackLow = Number(position.experimentEntry?.pullbackLowUsd);
+  const pullbackStopPrice = pullbackLow > 0
+    ? pullbackLow * (1 - CONFIG.entry.pullbackStopBelowLowPercent / 100)
+    : NaN;
+  const hardStopPrice = entry * (1 - CONFIG.exit.stopLossPercent / 100);
+  const activeStopPrice = Number.isFinite(pullbackStopPrice)
+    ? Math.max(pullbackStopPrice, hardStopPrice)
+    : hardStopPrice;
+
+  if (currentPrice <= activeStopPrice) {
+    const reason = Number.isFinite(pullbackStopPrice) &&
+      pullbackStopPrice > hardStopPrice
+      ? "PULLBACK LOW STOP -" + CONFIG.entry.pullbackStopBelowLowPercent + "%"
+      : "STOP LOSS -" + CONFIG.exit.stopLossPercent + "%";
+    return { reason, percent: 100 };
   }
+
   if (holdMinutes >= CONFIG.exit.timeStopMinutes &&
       highProfitPercent < CONFIG.exit.minimumGainAtTimeStopPercent) {
     return { reason: "TIME STOP 15M", percent: 100 };
@@ -506,47 +692,13 @@ const bot = createBot({
   botLabel: BOT_LABEL,
   reentryStateFile: statePath("v31BuyPriorityTestReentryState.json"),
   maxOpenPositions: CONFIG.capital.maxOpenPositions,
+  scannerIntervalMs: CONFIG.entry.watchlistPollIntervalSeconds * 1000,
   requireLiquidityLock: false,
   useReentryGuards: true,
   exitDecision: evaluateExit,
   pauseEntriesAtBalance: CONFIG.capital.pauseAtBalanceUsd,
   entryPauseStateFile: statePath("v31BuyPriorityTestEntryPause.json")
 });
-
-function startWatchlistPolling() {
-  if (watchlistPollTimer) return;
-
-  watchlistPollTimer = setInterval(() => {
-    if (!bot.getBotStatus()) {
-      stopWatchlistPolling();
-      return;
-    }
-
-    void pollWatchlist().catch(error => {
-      console.error("BUY Priority watchlist poll failed:", error.message);
-    });
-  }, CONFIG.entry.watchlistPollIntervalSeconds * 1000);
-}
-
-function stopWatchlistPolling() {
-  if (!watchlistPollTimer) return;
-  clearInterval(watchlistPollTimer);
-  watchlistPollTimer = null;
-}
-
-const originalStartBot = bot.startBot.bind(bot);
-const originalStopBot = bot.stopBot.bind(bot);
-
-bot.startBot = (...args) => {
-  const result = originalStartBot(...args);
-  startWatchlistPolling();
-  return result;
-};
-
-bot.stopBot = (...args) => {
-  stopWatchlistPolling();
-  return originalStopBot(...args);
-};
 
 module.exports = {
   ...bot,
