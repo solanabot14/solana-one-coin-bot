@@ -193,10 +193,18 @@
   }
   function transactionDexScreenerAddress(trade) {
     var source=trade.sourceRecord||{}, base=trade.baseToken||source.baseToken||{}, token=trade.token&&typeof trade.token==='object'?trade.token:{};
-    return trade.pairAddress||source.pairAddress||trade.pairId||source.pairId||
-      trade.tokenAddress||source.tokenAddress||trade.mint||source.mint||trade.mintAddress||source.mintAddress||
-      trade.tokenMint||source.tokenMint||trade.baseTokenAddress||source.baseTokenAddress||
-      base.address||token.address||'';
+    var position=trade.position||source.position||{};
+    var candidates=[
+      trade.tokenAddress,source.tokenAddress,trade.mint,source.mint,trade.mintAddress,source.mintAddress,
+      trade.tokenMint,source.tokenMint,trade.baseTokenAddress,source.baseTokenAddress,base.address,token.address,
+      position.tokenAddress,position.mint,position.tokenMint,
+      trade.pairAddress,source.pairAddress,position.pairAddress
+    ];
+    for(var i=0;i<candidates.length;i++){
+      var address=String(candidates[i]||'').trim();
+      if(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return address;
+    }
+    return '';
   }
   function transactionDexScreenerLink(trade) {
     var address=transactionDexScreenerAddress(trade);
