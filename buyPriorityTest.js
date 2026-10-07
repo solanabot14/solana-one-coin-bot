@@ -19,13 +19,25 @@ const CONFIG = Object.freeze({
   },
   entry: {
     minimumAgeMinutes: 30,
-    maximumAgeHours: 24,
+    maximumAgeHours: 6,
     minimumLiquidityUsd: 20000,
     minimumVolume1hUsd: 10000,
-    maximumRise15mPercent: 100,
-    momentumLookbackMinutes: 15,
-    momentumObservationRetentionMinutes: 20,
-    maximumTop10HolderPercent: 30
+    maximumTop10HolderPercent: 30,
+
+    watchlistMaxTokens: 20,
+    watchlistPollIntervalSeconds: 15,
+    watchlistTimeoutMinutes: 90,
+    priceHistoryRetentionMinutes: 12,
+
+    pumpRisePercent: 40,
+    pullbackMinPercent: 20,
+    pullbackMaxPercent: 40,
+    removeAfterDropPercent: 50,
+    baseNoNewLowMinutes: 3,
+
+    triggerRisePercent: 8,
+    volumeSurgeMultiplier: 1.5,
+    maximumRecoveryPercent: 70
   },
   exit: {
     stopLossPercent: 15,
@@ -108,55 +120,288 @@ const trader = createPaperTrader(
   }
 );
 
-const recentPriceObservations = new Map();
+const watchlist = new Map();
+const watchlistRemovalEvents = [];
+const recentlyRemovedTokens = new Map();
+
+let watchlistPollTimer = null;
+let watchlistPollBusy = false;
+
+function optionalNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function recordWatchSample(item, data, now) {
+  const price = optionalNumber(data.priceUsd);
+  if (!(price > 0)) return false;
+
+  item.samples.push({
+    at: now,
+    price,
+    volume5m: optionalNumber(data.volume5m),
+    buys5m: optionalNumber(data.buys5m),
+    sells5m: optionalNumber(data.sells5m)
+  });
+
+  const cutoff = now - CONFIG.entry.priceHistoryRetentionMinutes * 60000;
+  item.samples = item.samples.filter(sample => sample.at >= cutoff);
+  item.lastPrice = price;
+  item.lastSampleAt = now;
+  return true;
+}
+
+function setWatchState(item, state, now) {
+  if (item.state === state) return;
+  item.state = state;
+  item.statesReached.push({ state, at: now });
+}
+
+function removeWatchedToken(tokenAddress, reason, now = Date.now()) {
+  const item = watchlist.get(tokenAddress);
+  if (!item) return;
+
+  watchlist.delete(tokenAddress);
+  recentlyRemovedTokens.set(
+    tokenAddress,
+    now + CONFIG.entry.watchlistTimeoutMinutes * 60000
+  );
+
+  watchlistRemovalEvents.push({
+    tokenAddress,
+    pairAddress: item.pairAddress,
+    reason,
+    removedAt: now,
+    statesReached: item.statesReached,
+    peakPrice: item.pumpPeak,
+    firstPullbackLow: item.firstPullbackLow,
+    secondPullbackLow: item.secondPullbackLow
+  });
+
+  if (watchlistRemovalEvents.length > 200) watchlistRemovalEvents.shift();
+}
+
+function addWatchedToken(tokenAddress, data, now = Date.now()) {
+  const blockedUntil = recentlyRemovedTokens.get(tokenAddress);
+  if (blockedUntil && blockedUntil > now) return false;
+  if (blockedUntil) recentlyRemovedTokens.delete(tokenAddress);
+  if (watchlist.has(tokenAddress)) return false;
+
+  if (watchlist.size >= CONFIG.entry.watchlistMaxTokens) {
+    const oldest = [...watchlist.entries()]
+      .sort((a, b) => a[1].admittedAt - b[1].admittedAt)[0];
+    if (oldest) {
+      removeWatchedToken(oldest[0], "watchlist_full_oldest_evicted", now);
+    }
+  }
+
+  const price = optionalNumber(data.priceUsd);
+  if (!(price > 0)) return false;
+
+  const item = {
+    tokenAddress,
+    pairAddress: data.pairAddress,
+    admittedAt: now,
+    state: "WATCH",
+    statesReached: [{ state: "WATCH", at: now }],
+    lowSinceWatching: price,
+    pumpPeak: null,
+    pullbackNumber: 0,
+    pullbackPeak: null,
+    pullbackLow: null,
+    firstPullbackLow: null,
+    secondPullbackLow: null,
+    noNewLowSince: null,
+    recoveryPeak: null,
+    samples: [],
+    lastPrice: price,
+    lastSampleAt: now
+  };
+
+  recordWatchSample(item, data, now);
+  watchlist.set(tokenAddress, item);
+  return true;
+}
+
+function updateWatchedToken(tokenAddress, data, now = Date.now()) {
+  const item = watchlist.get(tokenAddress);
+  if (!item) return;
+
+  if (now - item.admittedAt >=
+      CONFIG.entry.watchlistTimeoutMinutes * 60000) {
+    removeWatchedToken(tokenAddress, "no_trigger_within_90_minutes", now);
+    return;
+  }
+
+  if (!data || data.pairAddress !== item.pairAddress) {
+    if (data?.pairAddress && data.pairAddress !== item.pairAddress) {
+      removeWatchedToken(tokenAddress, "pair_changed", now);
+    }
+    return;
+  }
+
+  const price = optionalNumber(data.priceUsd);
+  if (!(price > 0) || !recordWatchSample(item, data, now)) return;
+
+  const e = CONFIG.entry;
+
+  if (item.state === "WATCH") {
+    item.lowSinceWatching = Math.min(item.lowSinceWatching, price);
+    if (price >= item.lowSinceWatching * (1 + e.pumpRisePercent / 100)) {
+      item.pumpPeak = price;
+      setWatchState(item, "PUMP", now);
+    }
+    return;
+  }
+
+  if (item.state === "PUMP") {
+    item.pumpPeak = Math.max(item.pumpPeak || price, price);
+    const dropPercent = (item.pumpPeak - price) / item.pumpPeak * 100;
+
+    if (dropPercent > e.removeAfterDropPercent) {
+      removeWatchedToken(tokenAddress, "drop_over_50_percent", now);
+      return;
+    }
+
+    if (dropPercent >= e.pullbackMinPercent &&
+        dropPercent <= e.pullbackMaxPercent) {
+      item.pullbackNumber = 1;
+      item.pullbackPeak = item.pumpPeak;
+      item.pullbackLow = price;
+      item.noNewLowSince = now;
+      setWatchState(item, "PULLBACK", now);
+    }
+    return;
+  }
+
+  if (item.state === "PULLBACK") {
+    const dropPercent = (item.pullbackPeak - price) / item.pullbackPeak * 100;
+
+    if (dropPercent > e.removeAfterDropPercent) {
+      removeWatchedToken(tokenAddress, "drop_over_50_percent", now);
+      return;
+    }
+
+    if (price < item.pullbackLow) {
+      if (item.pullbackNumber === 2 &&
+          price <= item.firstPullbackLow) {
+        removeWatchedToken(tokenAddress, "second_pullback_lower_low", now);
+        return;
+      }
+      item.pullbackLow = price;
+      item.noNewLowSince = now;
+    }
+
+    if (now - item.noNewLowSince >= e.baseNoNewLowMinutes * 60000) {
+      if (item.pullbackNumber === 1) {
+        item.firstPullbackLow = item.pullbackLow;
+      } else {
+        item.secondPullbackLow = item.pullbackLow;
+      }
+      item.recoveryPeak = price;
+      setWatchState(item, "BASE", now);
+    }
+    return;
+  }
+
+  if (item.state === "BASE") {
+    if (item.pullbackNumber === 1 &&
+        item.firstPullbackLow !== null &&
+        price < item.firstPullbackLow) {
+      removeWatchedToken(tokenAddress, "later_lower_low", now);
+      return;
+    }
+
+    item.recoveryPeak = Math.max(item.recoveryPeak || price, price);
+    const dropPercent = (item.recoveryPeak - price) / item.recoveryPeak * 100;
+
+    if (dropPercent > e.removeAfterDropPercent) {
+      removeWatchedToken(tokenAddress, "drop_over_50_percent", now);
+      return;
+    }
+
+    if (item.pullbackNumber === 1 &&
+        dropPercent >= e.pullbackMinPercent &&
+        dropPercent <= e.pullbackMaxPercent) {
+      if (price <= item.firstPullbackLow) {
+        removeWatchedToken(tokenAddress, "second_pullback_lower_low", now);
+        return;
+      }
+
+      item.pullbackNumber = 2;
+      item.pullbackPeak = item.recoveryPeak;
+      item.pullbackLow = price;
+      item.noNewLowSince = now;
+      setWatchState(item, "PULLBACK", now);
+    }
+  }
+}
+
+async function pollWatchlist() {
+  if (watchlistPollBusy || watchlist.size === 0) return;
+  watchlistPollBusy = true;
+
+  try {
+    const now = Date.now();
+    const addresses = [...watchlist.keys()];
+    const dataByAddress = await market.getTokensData(addresses);
+
+    for (const tokenAddress of addresses) {
+      updateWatchedToken(tokenAddress, dataByAddress.get(tokenAddress), now);
+    }
+  } finally {
+    watchlistPollBusy = false;
+  }
+}
+
 async function checkEntryFilters(data, token) {
   const now = Date.now();
-  const pairCreatedAt = Number(data.pairCreatedAt);
-  const ageMinutes = Number.isFinite(pairCreatedAt) ? (now - pairCreatedAt) / 60000 : NaN;
-  if (!Number.isFinite(ageMinutes) ||
+  const tokenAddress = token?.tokenAddress;
+  const pairAddress = data?.pairAddress;
+  const price = optionalNumber(data?.priceUsd);
+  const pairCreatedAt = optionalNumber(data?.pairCreatedAt);
+  const ageMinutes = pairCreatedAt === null
+    ? NaN
+    : (now - pairCreatedAt) / 60000;
+
+  if (!tokenAddress || !pairAddress || !(price > 0) ||
+      !Number.isFinite(ageMinutes) ||
       ageMinutes < CONFIG.entry.minimumAgeMinutes ||
       ageMinutes > CONFIG.entry.maximumAgeHours * 60) return false;
 
-  const liquidity = Number(data.liquidityUsd);
-  const volume1h = Number(data.volume1h);
-  const buys1h = Number(data.buys1h);
-  const sells1h = Number(data.sells1h);
-  if (![liquidity, volume1h, buys1h, sells1h].every(Number.isFinite) ||
+  if (watchlist.has(tokenAddress)) return false;
+
+  const liquidity = optionalNumber(data.liquidityUsd);
+  const volume1h = optionalNumber(data.volume1h);
+  const buys1h = optionalNumber(data.buys1h);
+  const sells1h = optionalNumber(data.sells1h);
+
+  if (liquidity === null || volume1h === null ||
+      buys1h === null || sells1h === null ||
       liquidity < CONFIG.entry.minimumLiquidityUsd ||
       volume1h < CONFIG.entry.minimumVolume1hUsd ||
       buys1h <= sells1h) return false;
 
-  const price = Number(data.priceUsd);
-  const tokenAddress = token?.tokenAddress;
-  if (!(price > 0) || !tokenAddress || !data.pairAddress) return false;
-  let observations = recentPriceObservations.get(tokenAddress);
-  if (!observations || observations.pairAddress !== data.pairAddress) {
-    observations = { pairAddress: data.pairAddress, points: [] };
-  }
-  observations.points = observations.points.filter(point =>
-    now - point.at <= CONFIG.entry.momentumObservationRetentionMinutes * 60000
-  );
-  observations.points.push({ at: now, price });
-  const thresholdAt = now - CONFIG.entry.momentumLookbackMinutes * 60000;
-  const before = observations.points.filter(point => point.at <= thresholdAt).sort((a, b) => b.at - a.at)[0];
-  const after = observations.points.filter(point => point.at >= thresholdAt).sort((a, b) => a.at - b.at)[0];
-  recentPriceObservations.set(tokenAddress, observations);
-  if (!before || !after || after.at === before.at) return false;
-  const baselinePrice = before.price + (after.price - before.price) *
-    ((thresholdAt - before.at) / (after.at - before.at));
-  const rise15m = (price - baselinePrice) / baselinePrice * 100;
-  if (!Number.isFinite(rise15m) || rise15m > CONFIG.entry.maximumRise15mPercent) return false;
-  data.priceChange15m = rise15m;
-
   const report = await getTokenReport(tokenAddress);
-  if (!report || report.rugged !== false || !Array.isArray(report.risks) ||
+  if (!report || report.rugged !== false ||
+      !Array.isArray(report.risks) ||
       !report.token || !Array.isArray(report.topHolders)) return false;
+
   const revoked = value => value === null || value === false || value === "";
-  if (!revoked(report.token.mintAuthority) || !revoked(report.token.freezeAuthority)) return false;
+  if (!revoked(report.token.mintAuthority) ||
+      !revoked(report.token.freezeAuthority)) return false;
+
   const holders = report.topHolders.slice(0, 10);
-  if (!holders.length || holders.some(holder => !Number.isFinite(Number(holder?.pct)))) return false;
-  const top10Percent = holders.reduce((sum, holder) => sum + Number(holder.pct), 0);
+  if (holders.length < 10 ||
+      holders.some(holder => optionalNumber(holder?.pct) === null)) return false;
+
+  const top10Percent = holders.reduce(
+    (sum, holder) => sum + Number(holder.pct),
+    0
+  );
   if (top10Percent >= CONFIG.entry.maximumTop10HolderPercent) return false;
+
   const unsafeRisk = report.risks.some(risk => {
     const name = String(risk?.name || "").toLowerCase();
     const level = String(risk?.level || "").toLowerCase();
@@ -164,11 +409,14 @@ async function checkEntryFilters(data, token) {
       /honeypot|blacklist|freeze authority|mint authority|transfer fee|high tax/.test(name);
   });
   if (unsafeRisk) return false;
+
   data.top10HolderPercent = top10Percent;
   data.mintAuthorityRevoked = true;
   data.freezeAuthorityRevoked = true;
   data.rugCheckPassed = true;
-  return true;
+
+  addWatchedToken(tokenAddress, data, now);
+  return false;
 }
 
 async function discoverBuyPriorityCandidates(options = {}) {
@@ -259,11 +507,46 @@ const bot = createBot({
   reentryStateFile: statePath("v31BuyPriorityTestReentryState.json"),
   maxOpenPositions: CONFIG.capital.maxOpenPositions,
   requireLiquidityLock: false,
-  useReentryGuards: false,
+  useReentryGuards: true,
   exitDecision: evaluateExit,
   pauseEntriesAtBalance: CONFIG.capital.pauseAtBalanceUsd,
   entryPauseStateFile: statePath("v31BuyPriorityTestEntryPause.json")
 });
+
+function startWatchlistPolling() {
+  if (watchlistPollTimer) return;
+
+  watchlistPollTimer = setInterval(() => {
+    if (!bot.getBotStatus()) {
+      stopWatchlistPolling();
+      return;
+    }
+
+    void pollWatchlist().catch(error => {
+      console.error("BUY Priority watchlist poll failed:", error.message);
+    });
+  }, CONFIG.entry.watchlistPollIntervalSeconds * 1000);
+}
+
+function stopWatchlistPolling() {
+  if (!watchlistPollTimer) return;
+  clearInterval(watchlistPollTimer);
+  watchlistPollTimer = null;
+}
+
+const originalStartBot = bot.startBot.bind(bot);
+const originalStopBot = bot.stopBot.bind(bot);
+
+bot.startBot = (...args) => {
+  const result = originalStartBot(...args);
+  startWatchlistPolling();
+  return result;
+};
+
+bot.stopBot = (...args) => {
+  stopWatchlistPolling();
+  return originalStopBot(...args);
+};
 
 module.exports = {
   ...bot,
