@@ -18,9 +18,8 @@ function defaultDataFile() {
 	return path.join(path.resolve(directory), "v31ThreeSlotTradingData.json");
 }
 
-function validateState(data) {
+function validateState(data, maxPositions = 3) {
 	const positive = value => Number.isFinite(value) && value > 0;
-
 	if (
 		!data ||
 		!positive(data.startingBalance) ||
@@ -29,51 +28,48 @@ function validateState(data) {
 		!Array.isArray(data.history) ||
 		data.history.some(t => !t || !["BUY", "SELL"].includes(t.type))
 	) {
-		throw new Error(
-			"Invalid trading account. Restore a verified backup; the file has not been reset."
-		);
+		throw new Error("Invalid trading account. Restore a verified backup; the file has not been reset.");
 	}
-
 	const positions = Array.isArray(data.positions) ? data.positions : (data.position ? [data.position] : []);
-	if (positions.length > 3) throw new Error("Invalid saved positions: maximum is 3.");
-	const p = positions.find(Boolean) || null;
-
-	if (
-		p !== null &&
-		(
-			!p ||
-			!positive(p.entryPrice) ||
-			!positive(p.quantity) ||
-			!positive(p.amountInvested) ||
-			!p.tokenAddress ||
-			!p.entryTime ||
-			(p.highestPrice !== undefined && !positive(p.highestPrice))
-		)
-	) {
-		throw new Error(
-			"Invalid saved position. The trading account has not been reset."
-		);
+	if (positions.length > maxPositions) throw new Error("Invalid saved positions: maximum is " + maxPositions + ".");
+	for (const position of positions) {
+		if (
+			!position ||
+			!positive(position.entryPrice) ||
+			!positive(position.quantity) ||
+			!positive(position.amountInvested) ||
+			!position.tokenAddress ||
+			!position.entryTime ||
+			(position.highestPrice !== undefined && !positive(position.highestPrice))
+		) {
+			throw new Error("Invalid saved position. The trading account has not been reset.");
+		}
 	}
 }
 
 function createPaperTrader(dataFile = defaultDataFile(), io = fs, {
 	strategyVersion = "V3.1-Original-2Slots",
-	getBuySizing = null
+	getBuySizing = null,
+	maxOpenPositions = null,
+	startingBalance = 100,
+	estimateExecutionCosts = null
 } = {}) {
+	const positionLimit = Number.isInteger(maxOpenPositions) && maxOpenPositions > 0 ? maxOpenPositions : 2;
+	const stateValidationLimit = Math.max(3, positionLimit);
 	let state = {
-		startingBalance: 100,
-		cashBalance: 100,
+		startingBalance,
+		cashBalance: startingBalance,
 		positions: [],
 		history: []
 	};
 
 	if (io.existsSync(dataFile)) {
 		state = JSON.parse(io.readFileSync(dataFile, "utf8"));
-		validateState(state);
+		validateState(state, stateValidationLimit);
 	}
 
 	function commit(next) {
-		validateState(next);
+		validateState(next, stateValidationLimit);
 
 		io.mkdirSync(path.dirname(dataFile), { recursive: true });
 
@@ -111,14 +107,14 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, {
 
 	function buy(coin) {
 		const positions = state.positions || [];
-		if (positions.length >= 2) return fail("Both slots are occupied.");
+		if (positions.length >= positionLimit) return fail("All " + positionLimit + " slots are occupied.");
 		const price = Number(coin.priceUsd);
 		if (!Number.isFinite(price) || price <= 0 || !coin.tokenAddress) return fail("Invalid token or price.");
 		if (positions.some(p => p.tokenAddress === coin.tokenAddress)) return fail("Token already has an open position.");
 		if (state.cashBalance < MINIMUM_BUY_USD) return fail("At least $10 cash is required for a new trade.");
 		const next = structuredClone(state);
 		const sizing = typeof getBuySizing === "function"
-			? getBuySizing(structuredClone(state))
+			? getBuySizing(structuredClone(state), structuredClone(coin))
 			: null;
 		const requestedAmount = sizing
 			? Number(sizing.amountInvested)
@@ -127,6 +123,13 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, {
 		if (!Number.isFinite(amountInvested) || amountInvested < MINIMUM_BUY_USD) {
 			return fail("At least $10 cash is required for a new trade.");
 		}
+		let entryCosts = { feesUsd: 0, slippageUsd: 0, poolFeeUsd: 0, solanaFeeUsd: 0, priorityFeeUsd: 0 };
+		if (typeof estimateExecutionCosts === "function") {
+			entryCosts = estimateExecutionCosts({ side: "BUY", amountUsd: amountInvested, liquidityUsd: coin.liquidityUsd, coin }) || null;
+			if (!entryCosts || !Number.isFinite(Number(entryCosts.feesUsd)) || !Number.isFinite(Number(entryCosts.slippageUsd))) {
+				return fail("Entry cost estimate unavailable.");
+			}
+		}
 		const buys5m = Number(coin.buys5m) || 0, sells5m = Number(coin.sells5m) || 0;
 		const totalTransactions5m = buys5m + sells5m;
 		const buyRatio5m = totalTransactions5m > 0 ? buys5m / totalTransactions5m : 0;
@@ -134,6 +137,8 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, {
 			pairAddress: coin.pairAddress || null, entryPrice: price, quantity: amountInvested / price, amountInvested,
 			...(sizing && Number.isFinite(Number(sizing.compoundRate)) ? { compoundRate: Number(sizing.compoundRate) } : {}),
 			...(coin.experimentEntry ? { experimentEntry: structuredClone(coin.experimentEntry) } : {}),
+			entryExecutionCosts: structuredClone(entryCosts),
+			remainingEntryCosts: { feesUsd: Number(entryCosts.feesUsd), slippageUsd: Number(entryCosts.slippageUsd) },
 			firstTakeProfitDone:false, secondTakeProfitDone:false, highestPrice:price, entryTime:new Date().toISOString(),
 			strategyVersion, entryScore:Number(coin.score)||0, entrySignal:coin.signal||null,
 			entryReasons:Array.isArray(coin.reasons)?[...coin.reasons]:[], entryPriceChange5m:Number(coin.priceChange5m)||0,
@@ -213,8 +218,33 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, {
 		const saleValue =
 			quantitySold * currentPrice;
 
-		const pnl =
-			saleValue - costBasisSold;
+		const soldShareOfRemaining = p.quantity > 0 ? quantitySold / p.quantity : 1;
+		const remainingEntryCosts = p.remainingEntryCosts ||
+			(typeof estimateExecutionCosts === "function"
+				? estimateExecutionCosts({ side: "BUY", amountUsd: p.amountInvested, liquidityUsd: p.entryLiquidityUsd, position: p })
+				: null) ||
+			{ feesUsd: 0, slippageUsd: 0 };
+		const entryFeeAllocated = (Number(remainingEntryCosts.feesUsd) || 0) * soldShareOfRemaining;
+		const entrySlippageAllocated = (Number(remainingEntryCosts.slippageUsd) || 0) * soldShareOfRemaining;
+		const entryCostAllocated = entryFeeAllocated + entrySlippageAllocated;
+		let exitCosts = { feesUsd: 0, slippageUsd: 0, poolFeeUsd: 0, solanaFeeUsd: 0, priorityFeeUsd: 0 };
+		if (typeof estimateExecutionCosts === "function") {
+			exitCosts = estimateExecutionCosts({
+				side: "SELL",
+				amountUsd: saleValue,
+				liquidityUsd: options.liquidityUsd || p.entryLiquidityUsd,
+				priceUsd: currentPrice,
+				position: p
+			}) || null;
+			if (!exitCosts || !Number.isFinite(Number(exitCosts.feesUsd)) || !Number.isFinite(Number(exitCosts.slippageUsd))) {
+				return fail("Exit cost estimate unavailable.");
+			}
+		}
+		const grossPnl = saleValue - costBasisSold;
+		const feesUsd = entryFeeAllocated + Number(exitCosts.feesUsd);
+		const slippageUsd = entrySlippageAllocated + Number(exitCosts.slippageUsd);
+		const totalCostsUsd = feesUsd + slippageUsd;
+		const pnl = grossPnl - totalCostsUsd;
 
 		const trade = {
 			type: "SELL",
@@ -281,10 +311,16 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, {
 			amountInvested: costBasisSold,
 
 			saleValue,
+			grossPnl,
 			pnl,
-
-			pnlPercent:
-				pnl / costBasisSold * 100,
+			netPnl: pnl,
+			estimatedFeesUsd: feesUsd,
+			estimatedSlippageUsd: slippageUsd,
+			estimatedCostUsd: totalCostsUsd,
+			exitFeeBreakdown: structuredClone(exitCosts),
+			entryCostsAllocatedUsd: entryCostAllocated,
+			
+			pnlPercent: costBasisSold > 0 ? pnl / costBasisSold * 100 : 0,
 
 			entryTime:
 				p.entryTime,
@@ -296,9 +332,13 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, {
 				options.reason || "MANUAL"
 		};
 
-		next.cashBalance += saleValue;
+		next.cashBalance += saleValue - Number(exitCosts.feesUsd) - Number(exitCosts.slippageUsd) - entryCostAllocated;
 		next.positions[index].quantity -= quantitySold;
 		next.positions[index].amountInvested -= costBasisSold;
+		next.positions[index].remainingEntryCosts = {
+			feesUsd: Math.max(0, (Number(remainingEntryCosts.feesUsd) || 0) - entryFeeAllocated),
+			slippageUsd: Math.max(0, (Number(remainingEntryCosts.slippageUsd) || 0) - entrySlippageAllocated)
+		};
 
 		if (options.takeProfit) {
 			next.positions[index][options.takeProfit] = true;
@@ -334,7 +374,11 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, {
 		sell,
 		updateHigh,
 		positionKey,
-		getPortfolio: () => structuredClone({...state, position: (state.positions || [])[0] || null})
+		getPortfolio: () => structuredClone({
+			...state,
+			...(Number.isInteger(maxOpenPositions) && maxOpenPositions > 0 ? { maxOpenPositions } : {}),
+			position: (state.positions || [])[0] || null
+		})
 	};
 }
 
