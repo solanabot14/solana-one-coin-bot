@@ -166,6 +166,9 @@ async function buildDashboardData(data, getTokenData) {
 	const holdTimes=completedTrades.map(t=>Number(t.holdTimeMs)).filter(Number.isFinite), maxGains=completedTrades.map(t=>Number(t.maxGainPercent)).filter(Number.isFinite);
 	const exitReasonCounts={}; for(const trade of completedTrades) for(const reason of trade.exitReasons) exitReasonCounts[reason]=(exitReasonCounts[reason]||0)+1;
 	const netPnl=grossProfit-grossLoss;
+	const realizedSellEvents=(data.history||[]).filter(row=>row.type==="SELL").slice().sort((a,b)=>new Date(a.exitTime||a.timestamp||0)-new Date(b.exitTime||b.timestamp||0));
+	let realizedEquity=Number(data.startingBalance)||0,realizedPeak=realizedEquity,maxDrawdownUsd=0;
+	for(const row of realizedSellEvents){realizedEquity+=Number(row.pnl)||0;realizedPeak=Math.max(realizedPeak,realizedEquity);maxDrawdownUsd=Math.max(maxDrawdownUsd,realizedPeak-realizedEquity);}
 	const entryAnalytics={
 		averageScore:average(completedTrades.map(t=>Number(t.entryScore))),
 		average5m:average(completedTrades.map(t=>Number(t.entryPriceChange5m))),
@@ -178,12 +181,17 @@ async function buildDashboardData(data, getTokenData) {
 		worstReturn:completedTrades.length?Math.min(...completedTrades.map(t=>Number(t.pnlPercent)||0)):null
 	};
 	return {...data, position:positions[0]||null, positions, live:livePositions[0]?.live||null, livePositions,
-		openSlots:positions.length,maxSlots:3,equity,totalPnl:equity===null?null:equity-data.startingBalance,
+		openSlots:positions.length,maxSlots:Number(data.maxOpenPositions)||3,equity,totalPnl:equity===null?null:equity-data.startingBalance,
 		totalPnlPercent:equity===null||!(Number(data.startingBalance)>0)?null:(equity-data.startingBalance)/data.startingBalance*100,
 		priceUnavailable:positions.length>0&&!pricesAvailable,completedTrades,scoreStats:buildScoreStats(completedTrades),exitReasonCounts,entryAnalytics,
 		stats:{completedTrades:completedTrades.length,winners,losers,winRate:completedTrades.length?winners/completedTrades.length*100:0,
-			netPnl,grossProfit,grossLoss,profitFactor:grossLoss>0?grossProfit/grossLoss:null,profitFactorLabel:grossLoss>0?(grossProfit/grossLoss).toFixed(2):grossProfit>0?"∞":"—",
-			averageWinnerPercent:average(winnerReturns),averageLoserPercent:average(loserReturns),averageHoldTimeMs:average(holdTimes),averageMaxGainPercent:average(maxGains)}};
+			netPnl,grossProfit,grossLoss,expectancyPerTrade:completedTrades.length?netPnl/completedTrades.length:null,
+			averageWinPnl:average(completedTrades.filter(t=>t.pnl>0).map(t=>Number(t.pnl))),
+			averageLossPnl:average(completedTrades.filter(t=>t.pnl<0).map(t=>Number(t.pnl))),
+			profitFactor:grossLoss>0?grossProfit/grossLoss:null,profitFactorLabel:grossLoss>0?(grossProfit/grossLoss).toFixed(2):grossProfit>0?"∞":"—",
+			averageWinnerPercent:average(winnerReturns),averageLoserPercent:average(loserReturns),averageHoldTimeMs:average(holdTimes),averageMaxGainPercent:average(maxGains),
+			totalFeesUsd:(data.history||[]).filter(row=>row.type==="SELL").reduce((sum,row)=>sum+(Number(row.estimatedFeesUsd)||0),0),
+			maxDrawdownUsd,maxDrawdownPercent:(Number(data.startingBalance)>0?maxDrawdownUsd/Number(data.startingBalance)*100:null)}};
 }
 
 module.exports = { groupCompletedTrades, buildDashboardData };
