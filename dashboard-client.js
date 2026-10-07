@@ -448,7 +448,7 @@
   function csvCell(value) {
     if(value===null||value===undefined)return '';
     var textValue=String(value);
-    if(typeof value==='string'&&/^\\s*[=+@-]/.test(textValue))textValue="'"+textValue;
+    if(typeof value==='string'&&/^\s*[=+@-]/.test(textValue))textValue="'"+textValue;
     return '"'+textValue.replace(/"/g,'""')+'"';
   }
   function exportCsv() {
@@ -476,7 +476,7 @@
         field(['returnPercent','pnlPercent']),field(['entryReason','entrySignal']),field(['exitReason','reason'])
       ];
     }));
-    var csv='\\uFEFF'+csvRows.map(function(row){return row.map(csvCell).join(',');}).join('\\r\\n');
+    var csv='\uFEFF'+csvRows.map(function(row){return row.map(csvCell).join(',');}).join('\r\n');
     var blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
     var url=URL.createObjectURL(blob),link=document.createElement('a');
     link.href=url;
