@@ -478,9 +478,20 @@ async function pollWatchlist({ signal } = {}) {
       if (!item) continue;
 
       const data = dataByAddress.get(tokenAddress);
+      if (!data || optionalNumber(data.priceUsd) === null) {
+        item.triggerCandidate = null;
+        continue;
+      }
+
       updateWatchedToken(tokenAddress, data, now);
       const stillWatching = watchlist.get(tokenAddress);
       if (!stillWatching) continue;
+
+      const latestSample = stillWatching.samples[stillWatching.samples.length - 1];
+      if (!latestSample || latestSample.at !== now) {
+        stillWatching.triggerCandidate = null;
+        continue;
+      }
 
       const trigger = buildEntryTrigger(stillWatching, now);
       if (!trigger) {
