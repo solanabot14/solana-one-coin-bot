@@ -116,7 +116,7 @@
       { id:'v31', name:'V3.1', label:'V3.1 Original', data:api.v31, status:state.status, mode:'PAPER' },
       { id:'candle', name:'Bit V 3.1 40% TP1', label:'Bit V 3.1 40% TP1', data:api.candleBreakout, status:api.candleBreakoutStatus, mode:'PAPER' },
       { id:'lab', name:'B3.1 Lab', label:'B3.1 Lab', data:api.profitabilityLab, status:{ running:api.profitabilityLab && api.profitabilityLab.running }, mode:'PAPER', limited:true },
-      { id:'buy-test', name:'V3.1 BUY Priority Test', label:'V3.1 BUY Priority Test', data:api.buyPriorityTest, status:api.buyPriorityTestStatus, mode:'PAPER' }
+      { id:'buy-test', name:'New Claude Strategy', label:'New Claude Strategy', data:api.buyPriorityTest, status:api.buyPriorityTestStatus, mode:'PAPER' }
     ];
     systems = input.map(function (s) {
       var d = s.data || {};
