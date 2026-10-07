@@ -249,9 +249,7 @@ function getRecentStopLossGuards(portfolio, now = Date.now()) {
 const decimalsCache = new Map();
 async function getTokenDecimals(tokenAddress) {
   if (decimalsCache.has(tokenAddress)) return decimalsCache.get(tokenAddress);
-  const rpcKey = process.env.HELIUS_API_KEY;
-  if (!rpcKey) return null;
-  const response = await fetch("https://mainnet.helius-rpc.com/?api-key=" + encodeURIComponent(rpcKey), {
+  const response = await fetch("https://api.mainnet-beta.solana.com", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
