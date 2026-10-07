@@ -7,51 +7,15 @@ const { createBot } = require("./bot");
 const { getLockStatus, getTokenReport } = require("./lpLockChecker");
 const telegram = require("./telegram");
 
-const BOT_LABEL = "V3.1 BUY Priority Test";
+const BOT_LABEL = "New Claude Strategy";
 const STRATEGY_VERSION = "v3.2-momentum";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const CONFIG = Object.freeze({
-  capital: {
-    startingUsd: 100,
-    maxOpenPositions: 4,
-    tradeFraction: 0.10,
-    minimumTradeUsd: 10,
-    maximumTradeUsd: 10,
-    maximumLiquidityFraction: 0.01,
-    pauseAtBalanceUsd: 70
-  },
-  entry: {
-    minimumAgeMinutes: 30,
-    maximumAgeHours: 24,
-    minimumLiquidityUsd: 20000,
-    minimumVolume1hUsd: 10000,
-    maximumRise15mPercent: 100,
-    momentumLookbackMinutes: 15,
-    momentumObservationRetentionMinutes: 20,
-    maximumTop10HolderPercent: 30,
-    minimumSellQuotePercent: 90
-  },
-  exit: {
-    stopLossPercent: 15,
-    firstTargetPercent: 15,
-    firstTargetOriginalPositionPercent: 30,
-    secondTargetPercent: 25,
-    secondTargetOriginalPositionPercent: 30,
-    thirdTargetPercent: 60,
-    thirdTargetOriginalPositionPercent: 20,
-    trailingStopPercent: 20,
-    profitStopCushionPercent: 3,
-    timeStopMinutes: 15,
-    minimumGainAtTimeStopPercent: 5,
-    maximumHoldMinutes: 60,
-    liquidityDropPercent: 30,
-    stalePriceDataMs: 30000
-  },
-  estimatedCosts: {
-    poolFeePercentPerSwap: 0.30,
-    solanaFeeUsdPerSwap: 0.01,
-    priorityFeeUsdPerSwap: 0.01
-  }
+ capital:{startingUsd:100,maxOpenPositions:4,tradeFraction:0.10,minimumTradeUsd:10,maximumLiquidityFraction:0.01,pauseAtBalanceUsd:70},
+ entry:{minimumAgeMinutes:30,maximumAgeHours:6,minimumLiquidityUsd:20000,minimumVolume1hUsd:10000,maximumTop10HolderPercent:30,minimumSellQuotePercent:90,watchlistMaxTokens:20,watchlistPollIntervalSeconds:15,watchlistTimeoutMinutes:90,priceHistoryRetentionMinutes:12,volumeWindowMinutes:5,sampleTimeDriftIntervals:2,discoveryRefreshSeconds:120,safetyRecheckSeconds:120,stopLossCooldownHours:24,permanentStopLossPercent:25,pumpRisePercent:40,pullbackMinPercent:20,pullbackMaxPercent:40,removeAfterDropPercent:50,baseNoNewLowMinutes:3,triggerRisePercent:8,volumeSurgeMultiplier:1.5,maximumRecoveryPercent:70,pullbackStopBelowLowPercent:3},
+ exit:{stopLossPercent:15,breakevenTriggerPercent:15,firstTargetPercent:25,firstTargetOriginalPositionPercent:40,secondTargetPercent:60,secondTargetOriginalPositionPercent:30,trailingStopPercent:20,timeStopMinutes:15,minimumGainAtTimeStopPercent:5,maximumHoldMinutes:60,liquidityDropPercent:30,stalePriceDataMs:30000},
+ estimatedCosts:{poolFeePercentPerSwap:0.30,solanaFeeUsdPerSwap:0.01,priorityFeeUsdPerSwap:0.01},
+ logging:{rejectedTokenCooldownSeconds:300,maxRejectedLogEntries:1000,maxWatchlistRemovalEvents:200}
 });
 
 function statePath(fileName) {
@@ -87,21 +51,13 @@ function estimateExecutionCosts({ amountUsd, liquidityUsd, position } = {}) {
   };
 }
 
-function getBuySizing(portfolio, coin = {}) {
-  const positions = Array.isArray(portfolio.positions) ? portfolio.positions : [];
-  const realizedBalance = Number(portfolio.cashBalance || 0) +
-    positions.reduce((sum, position) => sum + (Number(position.amountInvested) || 0), 0);
-  const cash = Number(portfolio.cashBalance) || 0;
-  const liquidityCap = Number(coin.liquidityUsd) * CONFIG.capital.maximumLiquidityFraction;
-  const requested = Math.min(
-    CONFIG.capital.maximumTradeUsd,
-    Math.max(realizedBalance * CONFIG.capital.tradeFraction, CONFIG.capital.minimumTradeUsd)
-  );
-  const amountInvested = Math.min(requested, cash, liquidityCap);
-  return {
-    compoundRate: CONFIG.capital.tradeFraction,
-    amountInvested: Number.isFinite(amountInvested) ? amountInvested : 0
-  };
+function nextCompoundRate(){return CONFIG.capital.tradeFraction}
+function getBuySizing(portfolio,coin={}){
+ const positions=Array.isArray(portfolio.positions)?portfolio.positions:[];
+ const realizedBalance=Number(portfolio.cashBalance||0)+positions.reduce((s,p)=>s+(Number(p.amountInvested)||0),0);
+ const cash=Number(portfolio.cashBalance)||0,liquidityCap=Number(coin.liquidityUsd)*CONFIG.capital.maximumLiquidityFraction;
+ const requested=Math.max(realizedBalance*nextCompoundRate(),CONFIG.capital.minimumTradeUsd),amountInvested=Math.min(requested,cash,liquidityCap);
+ return {compoundRate:nextCompoundRate(),amountInvested:Number.isFinite(amountInvested)?amountInvested:0};
 }
 
 const trader = createPaperTrader(
@@ -116,6 +72,493 @@ const trader = createPaperTrader(
   }
 );
 
+
+const watchlist = new Map();
+const watchlistRemovalEvents = [];
+const recentlyRemovedTokens = new Map();
+
+let watchlistPollBusy = false;
+
+function optionalNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+const rejectedTokenLogTimes = new Map();
+
+function logPrice(value) {
+  const number = optionalNumber(value);
+  return number === null ? "n/a" : number.toExponential(6);
+}
+
+function logUsd(value) {
+  const number = optionalNumber(value);
+  return number === null ? "n/a" : "$" + number.toFixed(2);
+}
+
+function logWatchEvent(item, event, now, details = {}) {
+  const peak = item.pullbackPeak ?? item.pumpPeak;
+  const low = item.pullbackLow ?? item.firstPullbackLow ?? item.secondPullbackLow;
+  const trigger = details.triggerPriceUsd ??
+    item.lastTriggerPriceUsd ??
+    item.triggerCandidate?.triggerPriceUsd;
+  const states = (item.statesReached || []).map(row => row.state).join(">");
+
+  console.info(
+    "V3.2-MOMENTUM | " + event +
+    " | token=" + item.tokenAddress +
+    " | state=" + (item.state || "REMOVED") +
+    " | states=" + (states || "none") +
+    " | peak=" + logPrice(peak) +
+    " | pullback_low=" + logPrice(low) +
+    " | trigger_price=" + logPrice(trigger) +
+    (details.reason ? " | reason=" + details.reason : "")
+  );
+}
+
+function rejectToken(tokenAddress, reason, now = Date.now()) {
+  const address = tokenAddress || "unknown";
+  const key = address + "|" + reason;
+  const previousAt = rejectedTokenLogTimes.get(key);
+
+  if (previousAt &&
+      now - previousAt <
+        CONFIG.logging.rejectedTokenCooldownSeconds * 1000) return false;
+
+  rejectedTokenLogTimes.set(key, now);
+  if (rejectedTokenLogTimes.size > CONFIG.logging.maxRejectedLogEntries) {
+    const oldestKey = rejectedTokenLogTimes.keys().next().value;
+    if (oldestKey) rejectedTokenLogTimes.delete(oldestKey);
+  }
+
+  console.info(
+    "V3.2-MOMENTUM | REJECTED | token=" + address +
+    " | reason=" + reason
+  );
+  return false;
+}
+
+function recordWatchSample(item, data, now) {
+  const price = optionalNumber(data.priceUsd);
+  if (!(price > 0)) return false;
+
+  item.samples.push({
+    at: now,
+    price,
+    volume5m: optionalNumber(data.volume5m),
+    buys5m: optionalNumber(data.buys5m),
+    sells5m: optionalNumber(data.sells5m)
+  });
+
+  const cutoff = now - CONFIG.entry.priceHistoryRetentionMinutes * 60000;
+  item.samples = item.samples.filter(sample => sample.at >= cutoff);
+  item.lastPrice = price;
+  item.lastSampleAt = now;
+  item.latestData = { ...data };
+  return true;
+}
+
+function setWatchState(item, state, now) {
+  if (item.state === state) return;
+  item.state = state;
+  item.statesReached.push({ state, at: now });
+  logWatchEvent(item, "STATE:" + state, now);
+}
+
+function removeWatchedToken(tokenAddress, reason, now = Date.now()) {
+  const item = watchlist.get(tokenAddress);
+  if (!item) return;
+
+  logWatchEvent(item, "REMOVED", now, {
+    reason,
+    triggerPriceUsd: item.triggerCandidate?.triggerPriceUsd
+  });
+  watchlist.delete(tokenAddress);
+  recentlyRemovedTokens.set(
+    tokenAddress,
+    now + CONFIG.entry.watchlistTimeoutMinutes * 60000
+  );
+
+  watchlistRemovalEvents.push({
+    tokenAddress,
+    pairAddress: item.pairAddress,
+    reason,
+    removedAt: now,
+    statesReached: item.statesReached,
+    peakPrice: item.pumpPeak,
+    firstPullbackLow: item.firstPullbackLow,
+    secondPullbackLow: item.secondPullbackLow
+  });
+
+  if (watchlistRemovalEvents.length > CONFIG.logging.maxWatchlistRemovalEvents) watchlistRemovalEvents.shift();
+}
+
+function addWatchedToken(tokenAddress, data, now = Date.now()) {
+  const blockedUntil = recentlyRemovedTokens.get(tokenAddress);
+  if (blockedUntil && blockedUntil > now) return false;
+  if (blockedUntil) recentlyRemovedTokens.delete(tokenAddress);
+  if (watchlist.has(tokenAddress)) return false;
+
+  if (watchlist.size >= CONFIG.entry.watchlistMaxTokens) {
+    const oldest = [...watchlist.entries()]
+      .sort((a, b) => a[1].admittedAt - b[1].admittedAt)[0];
+    if (oldest) {
+      removeWatchedToken(oldest[0], "watchlist_full_oldest_evicted", now);
+    }
+  }
+
+  const price = optionalNumber(data.priceUsd);
+  if (!(price > 0)) return false;
+
+  const item = {
+    tokenAddress,
+    pairAddress: data.pairAddress,
+    admittedAt: now,
+    state: "WATCH",
+    statesReached: [{ state: "WATCH", at: now }],
+    lowSinceWatching: price,
+    pumpPeak: null,
+    pullbackNumber: 0,
+    pullbackPeak: null,
+    pullbackLow: null,
+    firstPullbackLow: null,
+    secondPullbackLow: null,
+    noNewLowSince: null,
+    recoveryPeak: null,
+    samples: [],
+    lastPrice: price,
+    lastSampleAt: now,
+    triggerCandidate: null,
+    triggerSafety: null,
+    triggerSafetyCheckedAt: 0
+  };
+
+  recordWatchSample(item, data, now);
+  watchlist.set(tokenAddress, item);
+  logWatchEvent(item, "STATE:WATCH", now, { reason: "admitted" });
+  return true;
+}
+
+function updateWatchedToken(tokenAddress, data, now = Date.now()) {
+  const item = watchlist.get(tokenAddress);
+  if (!item) return;
+
+  if (now - item.admittedAt >=
+      CONFIG.entry.watchlistTimeoutMinutes * 60000) {
+    removeWatchedToken(tokenAddress, "no_trigger_within_90_minutes", now);
+    return;
+  }
+
+  if (!data || data.pairAddress !== item.pairAddress) {
+    if (data?.pairAddress && data.pairAddress !== item.pairAddress) {
+      removeWatchedToken(tokenAddress, "pair_changed", now);
+    }
+    return;
+  }
+
+  const price = optionalNumber(data.priceUsd);
+  if (!(price > 0) || !recordWatchSample(item, data, now)) return;
+
+  const e = CONFIG.entry;
+
+  if (item.state === "WATCH") {
+    item.lowSinceWatching = Math.min(item.lowSinceWatching, price);
+    if (price >= item.lowSinceWatching * (1 + e.pumpRisePercent / 100)) {
+      item.pumpPeak = price;
+      setWatchState(item, "PUMP", now);
+    }
+    return;
+  }
+
+  if (item.state === "PUMP") {
+    item.pumpPeak = Math.max(item.pumpPeak || price, price);
+    const dropPercent = (item.pumpPeak - price) / item.pumpPeak * 100;
+
+    if (dropPercent > e.removeAfterDropPercent) {
+      removeWatchedToken(tokenAddress, "drop_over_50_percent", now);
+      return;
+    }
+
+    if (dropPercent >= e.pullbackMinPercent &&
+        dropPercent <= e.pullbackMaxPercent) {
+      item.pullbackNumber = 1;
+      item.pullbackPeak = item.pumpPeak;
+      item.pullbackLow = price;
+      item.noNewLowSince = now;
+      setWatchState(item, "PULLBACK", now);
+    }
+    return;
+  }
+
+  if (item.state === "PULLBACK") {
+    const dropPercent = (item.pullbackPeak - price) / item.pullbackPeak * 100;
+
+    if (dropPercent > e.removeAfterDropPercent) {
+      removeWatchedToken(tokenAddress, "drop_over_50_percent", now);
+      return;
+    }
+
+    if (price < item.pullbackLow) {
+      if (item.pullbackNumber === 2 &&
+          price <= item.firstPullbackLow) {
+        removeWatchedToken(tokenAddress, "second_pullback_lower_low", now);
+        return;
+      }
+      item.pullbackLow = price;
+      item.noNewLowSince = now;
+    }
+
+    if (now - item.noNewLowSince >= e.baseNoNewLowMinutes * 60000) {
+      if (item.pullbackNumber === 1) {
+        item.firstPullbackLow = item.pullbackLow;
+      } else {
+        item.secondPullbackLow = item.pullbackLow;
+      }
+      item.recoveryPeak = price;
+      setWatchState(item, "BASE", now);
+    }
+    return;
+  }
+
+  if (item.state === "BASE") {
+    if (item.pullbackNumber === 1 &&
+        item.firstPullbackLow !== null &&
+        price < item.firstPullbackLow) {
+      removeWatchedToken(tokenAddress, "later_lower_low", now);
+      return;
+    }
+
+    item.recoveryPeak = Math.max(item.recoveryPeak || price, price);
+    const dropPercent = (item.recoveryPeak - price) / item.recoveryPeak * 100;
+
+    if (dropPercent > e.removeAfterDropPercent) {
+      removeWatchedToken(tokenAddress, "drop_over_50_percent", now);
+      return;
+    }
+
+    if (item.pullbackNumber === 1 &&
+        dropPercent >= e.pullbackMinPercent &&
+        dropPercent <= e.pullbackMaxPercent) {
+      if (price <= item.firstPullbackLow) {
+        removeWatchedToken(tokenAddress, "second_pullback_lower_low", now);
+        return;
+      }
+
+      item.pullbackNumber = 2;
+      item.pullbackPeak = item.recoveryPeak;
+      item.pullbackLow = price;
+      item.noNewLowSince = now;
+      setWatchState(item, "PULLBACK", now);
+    }
+  }
+}
+
+async function getSafetyMetadata(tokenAddress) {
+  const report = await getTokenReport(tokenAddress);
+  if (!report || report.rugged !== false ||
+      !Array.isArray(report.risks) ||
+      !report.token || !Array.isArray(report.topHolders)) {
+    return { passed: false, reason: "RUGCHECK_REPORT_MISSING_OR_FAILED" };
+  }
+
+  const revoked = value => value === null || value === false || value === "";
+  if (!revoked(report.token.mintAuthority) ||
+      !revoked(report.token.freezeAuthority)) {
+    return { passed: false, reason: "MINT_OR_FREEZE_AUTHORITY_NOT_REVOKED" };
+  }
+
+  const holders = report.topHolders.slice(0, 10);
+  if (holders.length < 10 ||
+      holders.some(holder => optionalNumber(holder?.pct) === null)) {
+    return { passed: false, reason: "TOP10_HOLDER_DATA_MISSING" };
+  }
+
+  const top10HolderPercent = holders.reduce(
+    (sum, holder) => sum + Number(holder.pct),
+    0
+  );
+  if (top10HolderPercent >= CONFIG.entry.maximumTop10HolderPercent) {
+    return { passed: false, reason: "TOP10_HOLDERS_AT_OR_ABOVE_LIMIT" };
+  }
+
+  const unsafeRisk = report.risks.some(risk => {
+    const name = String(risk?.name || "").toLowerCase();
+    const level = String(risk?.level || "").toLowerCase();
+    return ["danger", "critical"].includes(level) ||
+      /honeypot|blacklist|freeze authority|mint authority|transfer fee|high tax/.test(name);
+  });
+  if (unsafeRisk) {
+    return { passed: false, reason: "RUGCHECK_UNSAFE_RISK" };
+  }
+
+  return {
+    passed: true,
+    metadata: {
+      top10HolderPercent,
+      mintAuthorityRevoked: true,
+      freezeAuthorityRevoked: true,
+      rugCheckPassed: true
+    }
+  };
+}
+
+function buildEntryTrigger(item, now) {
+  if (!item || item.state !== "BASE" || !item.latestData) return null;
+
+  const data = item.latestData;
+  const current = item.samples[item.samples.length - 1];
+  const e = CONFIG.entry;
+
+  if (!current || current.price <= 0 ||
+      !(item.pullbackPeak > 0) || !(item.pullbackLow > 0)) return null;
+
+  const pairCreatedAt = optionalNumber(data.pairCreatedAt);
+  const ageMinutes = pairCreatedAt === null
+    ? NaN
+    : (now - pairCreatedAt) / 60000;
+  const liquidity = optionalNumber(data.liquidityUsd);
+  const volume1h = optionalNumber(data.volume1h);
+  const buys1h = optionalNumber(data.buys1h);
+  const sells1h = optionalNumber(data.sells1h);
+
+  if (!Number.isFinite(ageMinutes) ||
+      ageMinutes < e.minimumAgeMinutes ||
+      ageMinutes > e.maximumAgeHours * 60 ||
+      liquidity === null || liquidity < e.minimumLiquidityUsd ||
+      volume1h === null || volume1h < e.minimumVolume1hUsd ||
+      buys1h === null || sells1h === null || buys1h <= sells1h) return null;
+
+  const pullbackDepthPercent =
+    (item.pullbackPeak - item.pullbackLow) / item.pullbackPeak * 100;
+  if (pullbackDepthPercent < e.pullbackMinPercent ||
+      pullbackDepthPercent > e.pullbackMaxPercent) return null;
+
+  const riseFromLowPercent =
+    (current.price - item.pullbackLow) / item.pullbackLow * 100;
+  if (riseFromLowPercent < e.triggerRisePercent) return null;
+
+  const fullDrop = item.pullbackPeak - item.pullbackLow;
+  if (!(fullDrop > 0)) return null;
+  const recoveryPercent =
+    (current.price - item.pullbackLow) / fullDrop * 100;
+  if (recoveryPercent > e.maximumRecoveryPercent) return null;
+
+  if (current.buys5m === null || current.sells5m === null ||
+      current.buys5m <= current.sells5m ||
+      current.volume5m === null || current.volume5m <= 0) return null;
+
+  const previousWindowAt = current.at - e.volumeWindowMinutes * 60 * 1000;
+  const allowedSampleDriftMs =
+    e.watchlistPollIntervalSeconds * e.sampleTimeDriftIntervals * 1000;
+  const previousSample = item.samples
+    .filter(sample => sample.at < current.at &&
+      sample.volume5m !== null && sample.volume5m > 0)
+    .sort((a, b) =>
+      Math.abs(a.at - previousWindowAt) -
+      Math.abs(b.at - previousWindowAt)
+    )[0];
+
+  if (!previousSample ||
+      Math.abs(previousSample.at - previousWindowAt) > allowedSampleDriftMs ||
+      current.volume5m < previousSample.volume5m * e.volumeSurgeMultiplier) {
+    return null;
+  }
+
+  return {
+    ...data,
+    tokenAddress: item.tokenAddress,
+    priceUsd: current.price,
+    volume5m: current.volume5m,
+    buys5m: current.buys5m,
+    sells5m: current.sells5m,
+    signal: "BUY",
+    score: 1,
+    reasons: [
+      "v3.2-momentum pullback recovery confirmed",
+      "Price is " + riseFromLowPercent.toFixed(1) + "% above pullback low",
+      "5m volume is at least " + e.volumeSurgeMultiplier + "x the prior 5m window"
+    ],
+    pullbackLowUsd: item.pullbackLow,
+    pullbackPeakUsd: item.pullbackPeak,
+    triggerPriceUsd: current.price,
+    pullbackDepthPercent,
+    triggerRecoveryPercent: recoveryPercent
+  };
+}
+
+async function pollWatchlist({ signal } = {}) {
+  if (watchlistPollBusy || watchlist.size === 0) return;
+  watchlistPollBusy = true;
+
+  try {
+    const now = Date.now();
+    const addresses = [...watchlist.keys()];
+    const dataByAddress = await market.getTokensData(addresses, { signal });
+    if (signal?.aborted) return;
+
+    for (const tokenAddress of addresses) {
+      const item = watchlist.get(tokenAddress);
+      if (!item) continue;
+
+      const data = dataByAddress.get(tokenAddress);
+      if (!data || optionalNumber(data.priceUsd) === null) {
+        item.triggerCandidate = null;
+        continue;
+      }
+
+      updateWatchedToken(tokenAddress, data, now);
+      const stillWatching = watchlist.get(tokenAddress);
+      if (!stillWatching) continue;
+
+      const latestSample = stillWatching.samples[stillWatching.samples.length - 1];
+      if (!latestSample || latestSample.at !== now) {
+        stillWatching.triggerCandidate = null;
+        continue;
+      }
+
+      const trigger = buildEntryTrigger(stillWatching, now);
+      if (!trigger) {
+        stillWatching.triggerCandidate = null;
+        continue;
+      }
+
+      if (!stillWatching.triggerSafety ||
+          now - stillWatching.triggerSafetyCheckedAt >=
+            CONFIG.entry.safetyRecheckSeconds * 1000) {
+        const safety = await getSafetyMetadata(tokenAddress);
+        if (!safety?.passed) {
+          removeWatchedToken(
+            tokenAddress,
+            "entry_safety_recheck_failed:" + (safety?.reason || "unknown"),
+            now
+          );
+          continue;
+        }
+        stillWatching.triggerSafety = safety.metadata;
+        stillWatching.triggerSafetyCheckedAt = now;
+      }
+
+      if (!stillWatching.triggerCandidate) {
+        stillWatching.lastTriggerPriceUsd = trigger.triggerPriceUsd;
+        stillWatching.statesReached.push({
+          state: "TRIGGER",
+          at: now,
+          price: trigger.triggerPriceUsd
+        });
+        logWatchEvent(stillWatching, "TRIGGER", now, {
+          triggerPriceUsd: trigger.triggerPriceUsd
+        });
+      }
+      stillWatching.triggerCandidate = {
+        ...trigger,
+        ...stillWatching.triggerSafety
+      };
+    }
+  } finally {
+    watchlistPollBusy = false;
+  }
+}
 const stageFile = statePath("v31BuyPriorityTestProfitStages.json");
 const auditFile = statePath("v31BuyPriorityTestExitAudit.jsonl");
 function readStages() {
@@ -150,64 +593,55 @@ function getPositionStage(position) {
 const recentPriceObservations = new Map();
 async function checkEntryFilters(data, token) {
   const now = Date.now();
-  const pairCreatedAt = Number(data.pairCreatedAt);
-  const ageMinutes = Number.isFinite(pairCreatedAt) ? (now - pairCreatedAt) / 60000 : NaN;
-  if (!Number.isFinite(ageMinutes) ||
-      ageMinutes < CONFIG.entry.minimumAgeMinutes ||
-      ageMinutes > CONFIG.entry.maximumAgeHours * 60) return false;
-
-  const liquidity = Number(data.liquidityUsd);
-  const volume1h = Number(data.volume1h);
-  const buys1h = Number(data.buys1h);
-  const sells1h = Number(data.sells1h);
-  if (![liquidity, volume1h, buys1h, sells1h].every(Number.isFinite) ||
-      liquidity < CONFIG.entry.minimumLiquidityUsd ||
-      volume1h < CONFIG.entry.minimumVolume1hUsd ||
-      buys1h <= sells1h) return false;
-
-  const price = Number(data.priceUsd);
   const tokenAddress = token?.tokenAddress;
-  if (!(price > 0) || !tokenAddress || !data.pairAddress) return false;
-  let observations = recentPriceObservations.get(tokenAddress);
-  if (!observations || observations.pairAddress !== data.pairAddress) {
-    observations = { pairAddress: data.pairAddress, points: [] };
-  }
-  observations.points = observations.points.filter(point =>
-    now - point.at <= CONFIG.entry.momentumObservationRetentionMinutes * 60000
-  );
-  observations.points.push({ at: now, price });
-  const thresholdAt = now - CONFIG.entry.momentumLookbackMinutes * 60000;
-  const before = observations.points.filter(point => point.at <= thresholdAt).sort((a, b) => b.at - a.at)[0];
-  const after = observations.points.filter(point => point.at >= thresholdAt).sort((a, b) => a.at - b.at)[0];
-  recentPriceObservations.set(tokenAddress, observations);
-  if (!before || !after || after.at === before.at) return false;
-  const baselinePrice = before.price + (after.price - before.price) *
-    ((thresholdAt - before.at) / (after.at - before.at));
-  const rise15m = (price - baselinePrice) / baselinePrice * 100;
-  if (!Number.isFinite(rise15m) || rise15m > CONFIG.entry.maximumRise15mPercent) return false;
-  data.priceChange15m = rise15m;
+  const pairAddress = data?.pairAddress;
+  const price = optionalNumber(data?.priceUsd);
+  const pairCreatedAt = optionalNumber(data?.pairCreatedAt);
 
-  const report = await getTokenReport(tokenAddress);
-  if (!report || report.rugged !== false || !Array.isArray(report.risks) ||
-      !report.token || !Array.isArray(report.topHolders)) return false;
-  const revoked = value => value === null || value === false || value === "";
-  if (!revoked(report.token.mintAuthority) || !revoked(report.token.freezeAuthority)) return false;
-  const holders = report.topHolders.slice(0, 10);
-  if (!holders.length || holders.some(holder => !Number.isFinite(Number(holder?.pct)))) return false;
-  const top10Percent = holders.reduce((sum, holder) => sum + Number(holder.pct), 0);
-  if (top10Percent >= CONFIG.entry.maximumTop10HolderPercent) return false;
-  const unsafeRisk = report.risks.some(risk => {
-    const name = String(risk?.name || "").toLowerCase();
-    const level = String(risk?.level || "").toLowerCase();
-    return ["danger", "critical"].includes(level) ||
-      /honeypot|blacklist|freeze authority|mint authority|transfer fee|high tax/.test(name);
-  });
-  if (unsafeRisk) return false;
-  data.top10HolderPercent = top10Percent;
-  data.mintAuthorityRevoked = true;
-  data.freezeAuthorityRevoked = true;
-  data.rugCheckPassed = true;
-  return true;
+  if (!tokenAddress || !pairAddress || price === null || !(price > 0)) {
+    return rejectToken(tokenAddress, "MISSING_PRICE_OR_PAIR_DATA", now);
+  }
+  if (pairCreatedAt === null) {
+    return rejectToken(tokenAddress, "PAIR_AGE_DATA_MISSING", now);
+  }
+
+  const ageMinutes = (now - pairCreatedAt) / 60000;
+  if (ageMinutes < CONFIG.entry.minimumAgeMinutes ||
+      ageMinutes > CONFIG.entry.maximumAgeHours * 60) {
+    return rejectToken(tokenAddress, "PAIR_AGE_OUTSIDE_30M_TO_6H", now);
+  }
+
+  if (watchlist.has(tokenAddress)) return false;
+
+  const liquidity = optionalNumber(data.liquidityUsd);
+  const volume1h = optionalNumber(data.volume1h);
+  const buys1h = optionalNumber(data.buys1h);
+  const sells1h = optionalNumber(data.sells1h);
+
+  if (liquidity === null || volume1h === null ||
+      buys1h === null || sells1h === null) {
+    return rejectToken(tokenAddress, "REQUIRED_MARKET_DATA_MISSING", now);
+  }
+  if (liquidity < CONFIG.entry.minimumLiquidityUsd) {
+    return rejectToken(tokenAddress, "LIQUIDITY_BELOW_MINIMUM", now);
+  }
+  if (volume1h < CONFIG.entry.minimumVolume1hUsd) {
+    return rejectToken(tokenAddress, "ONE_HOUR_VOLUME_BELOW_MINIMUM", now);
+  }
+  if (buys1h <= sells1h) {
+    return rejectToken(tokenAddress, "ONE_HOUR_BUYS_NOT_ABOVE_SELLS", now);
+  }
+
+  const safety = await getSafetyMetadata(tokenAddress);
+  if (!safety?.passed) {
+    return rejectToken(tokenAddress, safety?.reason || "SAFETY_CHECK_FAILED", now);
+  }
+
+  Object.assign(data, safety.metadata);
+  if (!addWatchedToken(tokenAddress, data, now)) {
+    return rejectToken(tokenAddress, "RECENTLY_REMOVED_FROM_WATCHLIST", now);
+  }
+  return false;
 }
 
 function getRecentStopLossGuards(portfolio, now = Date.now()) {
@@ -227,18 +661,18 @@ function getRecentStopLossGuards(portfolio, now = Date.now()) {
   for (const [positionId, rows] of sells) {
     if (openIds.has(positionId)) continue;
     const final = [...rows].reverse().find(row => Number(row.percentSold) === 100);
-    if (!final || !String(final.reason || "").toUpperCase().includes("STOP LOSS")) continue;
+    if (!final || !/STOP LOSS|PULLBACK LOW STOP/i.test(String(final.reason || ""))) continue;
     const closedAt = Date.parse(final.exitTime || final.timestamp || final.createdAt);
     if (!Number.isFinite(closedAt)) continue;
     const entry = entries.get(positionId);
     const initialAmount = Number(entry?.amountInvested) || 0;
     const netPnl = rows.reduce((sum, row) => sum + Number(row.netPnl ?? row.pnl ?? 0), 0);
     const lossPercent = initialAmount > 0 ? netPnl / initialAmount * 100 : 0;
-    if (lossPercent < -25 || now - closedAt < 24 * 60 * 60 * 1000) {
+    if (lossPercent < -CONFIG.entry.permanentStopLossPercent || now - closedAt < CONFIG.entry.stopLossCooldownHours * 60 * 60 * 1000) {
       const prior = guards.get(final.tokenAddress);
       guards.set(final.tokenAddress, {
-        permanent: lossPercent < -25 || Boolean(prior?.permanent),
-        until: Math.max(Number(prior?.until) || 0, closedAt + 24 * 60 * 60 * 1000),
+        permanent: lossPercent < -CONFIG.entry.permanentStopLossPercent || Boolean(prior?.permanent),
+        until: Math.max(Number(prior?.until) || 0, closedAt + CONFIG.entry.stopLossCooldownHours * 60 * 60 * 1000),
         lossPercent
       });
     }
@@ -314,46 +748,65 @@ async function getSellRouteQuote(tokenAddress, amountUsd, tokenPriceUsd) {
   }
 }
 
+let lastFullCandidateScanAt = 0;
+
 async function discoverBuyPriorityCandidates(options = {}) {
-  const candidates = await scanner.discoverCandidates({
-    ...options,
-    minimumLiquidityUsd: CONFIG.entry.minimumLiquidityUsd,
-    minimumVolume24hUsd: 0,
-    candidateFilter: checkEntryFilters,
-    analyzeCandidate: () => ({ score: 1, signal: "BUY", reasons: [STRATEGY_VERSION + " filters passed"] })
-  });
+  await pollWatchlist(options);
+  const now = Date.now();
+  if (now - lastFullCandidateScanAt >= CONFIG.entry.discoveryRefreshSeconds * 1000) {
+    lastFullCandidateScanAt = now;
+    await scanner.discoverCandidates({
+      ...options,
+      minimumLiquidityUsd: CONFIG.entry.minimumLiquidityUsd,
+      minimumVolume24hUsd: 0,
+      candidateFilter: checkEntryFilters,
+      analyzeCandidate: () => ({ score: 1, signal: "BUY", reasons: ["v3.2-momentum watchlist admission filters passed"] })
+    });
+  }
   const portfolio = trader.getPortfolio();
-  const guards = getRecentStopLossGuards(portfolio);
   const openAddresses = new Set((portfolio.positions || []).map(position => position.tokenAddress));
-  const currentGuards = [];
-  for (const candidate of candidates) {
+  const guards = getRecentStopLossGuards(portfolio, now);
+  for (const address of openAddresses) if (watchlist.has(address)) removeWatchedToken(address, "position_opened", now);
+
+  const ready = [];
+  for (const item of watchlist.values()) {
+    const candidate = item.triggerCandidate;
+    if (!candidate || openAddresses.has(candidate.tokenAddress)) continue;
     const guard = guards.get(candidate.tokenAddress);
-    if (guard && (guard.permanent || guard.until > Date.now())) {
-      console.log("REENTRY BLOCK | " + candidate.symbol + " | " +
-        (guard.permanent ? "permanent ban after loss over 25%" : "24-hour stop-loss cooldown"));
+    if (guard && (guard.permanent || guard.until > now)) {
+      console.log("REENTRY BLOCK | " + candidate.symbol + " | " + (guard.permanent ? "permanent ban after loss over " + CONFIG.entry.permanentStopLossPercent + "%" : CONFIG.entry.stopLossCooldownHours + "-hour stop-loss cooldown"));
+      removeWatchedToken(candidate.tokenAddress, "do_not_reenter_stop_loss_guard", now);
       continue;
     }
-    if (openAddresses.has(candidate.tokenAddress)) continue;
     const sizing = getBuySizing(portfolio, candidate);
     if (sizing.amountInvested < CONFIG.capital.minimumTradeUsd) continue;
-    const quote = await getSellRouteQuote(candidate.tokenAddress, sizing.amountInvested, candidate.priceUsd);
-    if (!quote.allowed) {
-      console.log("SELL ROUTE GATE | " + candidate.symbol + " | skipped | " + quote.reason);
-      continue;
+    let quote = item.triggerSellQuote;
+    if (!quote || item.triggerSellQuoteAmountUsd !== sizing.amountInvested) {
+      quote = await getSellRouteQuote(candidate.tokenAddress, sizing.amountInvested, candidate.priceUsd);
+      if (!quote.allowed) {
+        console.log("SELL ROUTE GATE | " + candidate.symbol + " | skipped | " + quote.reason);
+        removeWatchedToken(candidate.tokenAddress, "sell_route_check_failed:" + quote.reason, now);
+        continue;
+      }
+      item.triggerSellQuote = quote;
+      item.triggerSellQuoteAmountUsd = sizing.amountInvested;
     }
-    currentGuards.push({
+    ready.push({
       ...candidate,
       reasons: [...(Array.isArray(candidate.reasons) ? candidate.reasons : []), STRATEGY_VERSION + " sell route passed"],
       experimentEntry: {
         strategy: STRATEGY_VERSION,
+        pullbackLowUsd: Number(candidate.pullbackLowUsd),
+        pullbackPeakUsd: Number(candidate.pullbackPeakUsd),
+        triggerPriceUsd: Number(candidate.triggerPriceUsd),
+        pullbackDepthPercent: Number(candidate.pullbackDepthPercent),
+        triggerRecoveryPercent: Number(candidate.triggerRecoveryPercent),
         compoundRatePercent: sizing.compoundRate * 100,
         entryMetrics: {
-          pairAgeMinutes: Math.max(0, (Date.now() - Number(candidate.pairCreatedAt)) / 60000),
+          pairAgeMinutes: Math.max(0, (now - Number(candidate.pairCreatedAt)) / 60000),
           liquidityUsd: Number(candidate.liquidityUsd),
           volume5mUsd: Number(candidate.volume5m) || 0,
           volume1hUsd: Number(candidate.volume1h) || 0,
-          priceChange5mPercent: Number(candidate.priceChange5m) || 0,
-          priceChange1hPercent: Number(candidate.priceChange1h) || 0,
           buys5m: Number(candidate.buys5m) || 0,
           sells5m: Number(candidate.sells5m) || 0,
           buys1h: Number(candidate.buys1h) || 0,
@@ -373,7 +826,7 @@ async function discoverBuyPriorityCandidates(options = {}) {
       }
     });
   }
-  return currentGuards;
+  return ready;
 }
 
 const lastMarketData = new Map();
@@ -481,9 +934,7 @@ function evaluateExit({ position, freshData, currentPrice, now = Date.now() }) {
   }
   staleRiskLogAt.delete(position.id);
   const pool = getPoolLiquidity(position, freshData);
-  if (pool.mismatch) {
-    return { reason: "liquidity_drop", percent: 100 };
-  }
+  if (pool.mismatch) return { reason: "liquidity_drop", percent: 100 };
   const entryLiquidity = Number(position.entryLiquidityUsd);
   if (entryLiquidity > 0 && Number.isFinite(pool.liquidityUsd) &&
       pool.liquidityUsd < entryLiquidity * (1 - CONFIG.exit.liquidityDropPercent / 100)) {
@@ -498,45 +949,79 @@ function evaluateExit({ position, freshData, currentPrice, now = Date.now() }) {
   const dropFromHigh = high > 0 ? (high - currentPrice) / high * 100 : 0;
   const stage = getPositionStage(position);
 
-  if (profitPercent <= -CONFIG.exit.stopLossPercent) {
-    return { reason: "STOP LOSS -" + CONFIG.exit.stopLossPercent + "%", percent: 100 };
+  const pullbackLow = Number(position.experimentEntry?.pullbackLowUsd);
+  const pullbackStopPrice = pullbackLow > 0
+    ? pullbackLow * (1 - CONFIG.entry.pullbackStopBelowLowPercent / 100) : NaN;
+  const hardStopPrice = entry * (1 - CONFIG.exit.stopLossPercent / 100);
+  let activeStopPrice = Number.isFinite(pullbackStopPrice)
+    ? Math.max(pullbackStopPrice, hardStopPrice) : hardStopPrice;
+  if (highProfitPercent >= CONFIG.exit.breakevenTriggerPercent) {
+    activeStopPrice = Math.max(activeStopPrice, entry);
   }
-  if (stage >= 1 && profitPercent <= CONFIG.exit.profitStopCushionPercent) {
-    return { reason: "PROFIT STOP ENTRY +" + CONFIG.exit.profitStopCushionPercent + "%", percent: 100 };
+  if (currentPrice <= activeStopPrice) {
+    if (highProfitPercent >= CONFIG.exit.breakevenTriggerPercent && activeStopPrice === entry) {
+      return { reason: "BREAKEVEN STOP", percent: 100 };
+    }
+    const isPullbackStop = Number.isFinite(pullbackStopPrice) && pullbackStopPrice >= hardStopPrice;
+    return {
+      reason: isPullbackStop ? "PULLBACK LOW STOP -" + CONFIG.entry.pullbackStopBelowLowPercent + "%" : "STOP LOSS -" + CONFIG.exit.stopLossPercent + "%",
+      percent: 100
+    };
   }
-  if (holdMinutes >= CONFIG.exit.maximumHoldMinutes) {
-    return { reason: "MAX HOLD 60M", percent: 100 };
+  if (holdMinutes >= CONFIG.exit.maximumHoldMinutes) return { reason: "MAX HOLD " + CONFIG.exit.maximumHoldMinutes + "M", percent: 100 };
+  if (holdMinutes >= CONFIG.exit.timeStopMinutes && highProfitPercent < CONFIG.exit.minimumGainAtTimeStopPercent) {
+    return { reason: "TIME STOP " + CONFIG.exit.timeStopMinutes + "M", percent: 100 };
   }
-  if (holdMinutes >= CONFIG.exit.timeStopMinutes &&
-      highProfitPercent < CONFIG.exit.minimumGainAtTimeStopPercent) {
-    return { reason: "TIME STOP 15M", percent: 100 };
-  }
-  if (stage >= 3 && dropFromHigh >= CONFIG.exit.trailingStopPercent) {
+  if (stage >= 2 && dropFromHigh >= CONFIG.exit.trailingStopPercent) {
     return { reason: "TRAILING STOP -" + CONFIG.exit.trailingStopPercent + "%", percent: 100 };
   }
   if (stage === 0 && profitPercent >= CONFIG.exit.firstTargetPercent) {
     return {
-      reason: "TAKE PROFIT +" + CONFIG.exit.firstTargetPercent + "% SELL 30% ORIGINAL",
+      reason: "TAKE PROFIT +" + CONFIG.exit.firstTargetPercent + "% SELL " + CONFIG.exit.firstTargetOriginalPositionPercent + "% ORIGINAL",
       percent: CONFIG.exit.firstTargetOriginalPositionPercent
     };
   }
   if (stage === 1 && profitPercent >= CONFIG.exit.secondTargetPercent) {
     return {
-      reason: "TAKE PROFIT +" + CONFIG.exit.secondTargetPercent + "% SELL 30% ORIGINAL",
-      percent: CONFIG.exit.secondTargetOriginalPositionPercent / 70 * 100
-    };
-  }
-  if (stage === 2 && profitPercent >= CONFIG.exit.thirdTargetPercent) {
-    return {
-      reason: "TAKE PROFIT +" + CONFIG.exit.thirdTargetPercent + "% SELL 20% ORIGINAL",
-      percent: 50
+      reason: "TAKE PROFIT +" + CONFIG.exit.secondTargetPercent + "% SELL " + CONFIG.exit.secondTargetOriginalPositionPercent + "% ORIGINAL",
+      percent: CONFIG.exit.secondTargetOriginalPositionPercent / (100 - CONFIG.exit.firstTargetOriginalPositionPercent) * 100
     };
   }
   return null;
 }
 
+function logTradeSummary(event, trade = {}) {
+  const entryPrice = optionalNumber(trade.entryPrice);
+  const exitPrice = optionalNumber(trade.exitPrice);
+  const entryCosts = trade.entryExecutionCosts || {};
+  const estimatedFees = optionalNumber(trade.estimatedFeesUsd) ??
+    optionalNumber(entryCosts.feesUsd) ?? 0;
+  const estimatedSlippage = optionalNumber(trade.estimatedSlippageUsd) ??
+    optionalNumber(entryCosts.slippageUsd) ?? 0;
+  const netPnl = optionalNumber(trade.netPnl ?? trade.pnl);
+  const startedAt = Date.parse(trade.entryTime || "");
+  const endedAt = Date.parse(trade.exitTime || "");
+  const holdMinutes = Number.isFinite(startedAt)
+    ? Math.max(0, ((Number.isFinite(endedAt) ? endedAt : Date.now()) - startedAt) / 60000)
+    : null;
+  const reason = trade.reason || event || "UNKNOWN";
+
+  console.info(
+    "TRADE | strategy=v3.2-momentum" +
+    " | event=" + (event || trade.type || "UNKNOWN") +
+    " | token=" + (trade.tokenAddress || "unknown") +
+    " | entry=" + logPrice(entryPrice) +
+    " | exit=" + (exitPrice === null ? "open" : logPrice(exitPrice)) +
+    " | reason=" + reason +
+    " | pnl_after_costs=" + (netPnl === null ? "pending" : logUsd(netPnl)) +
+    " | fees=" + logUsd(estimatedFees) +
+    " | slippage=" + logUsd(estimatedSlippage) +
+    " | hold_minutes=" + (holdMinutes === null ? "n/a" : holdMinutes.toFixed(2))
+  );
+}
+
 const quietNotifier = {
-  notifyTrade: async () => {},
+  notifyTrade: async (event, trade) => logTradeSummary(event, trade),
   notifyCritical: message => telegram.notifyCritical(message)
 };
 
@@ -549,6 +1034,7 @@ const bot = createBot({
   botLabel: BOT_LABEL + " | " + STRATEGY_VERSION,
   reentryStateFile: statePath("v31BuyPriorityTestReentryState.json"),
   maxOpenPositions: CONFIG.capital.maxOpenPositions,
+  scannerIntervalMs: CONFIG.entry.watchlistPollIntervalSeconds * 1000,
   requireLiquidityLock: false,
   useReentryGuards: false,
   exitDecision: args => {
