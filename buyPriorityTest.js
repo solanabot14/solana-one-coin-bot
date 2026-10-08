@@ -1175,6 +1175,8 @@ const bot = createBot({
   scannerIntervalMs: CONFIG.entry.watchlistPollIntervalSeconds * 1000,
   requireLiquidityLock: false,
   useReentryGuards: false,
+  useSimpleCooldown: false,
+  acceptedSignals: ["BUY", "STRONG BUY"],
   exitDecision: args => {
     currentExitContext = {
       ageMs: Number(args.freshData?._priceDataAgeMs) || 0,

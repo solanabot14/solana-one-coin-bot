@@ -22,7 +22,7 @@ const TAKE_PROFIT_1_PERCENT = 15;
 const TAKE_PROFIT_1_SELL_PERCENT = 25;
 const TAKE_PROFIT_2_PERCENT = 30;
 const TAKE_PROFIT_2_SELL_PERCENT = 35;
-const TRAILING_STOP_PERCENT = 15;
+const TRAILING_STOP_PERCENT = 8;
 const PROFIT_LOCK_TRIGGER_PERCENT = 10;
 const PROFIT_LOCK_FLOOR_PERCENT = 4;
 const MOMENTUM_EXIT_MIN_LOSS = -2;
@@ -74,8 +74,12 @@ function createBot({
   reentryStateFile = defaultReentryStateFile(),
   maxOpenPositions = MAX_OPEN_POSITIONS,
   maxCandidateAgeMinutes = null,
+  minimumLiquidityUsd = 25000,
+  minimumVolume24hUsd = 100000,
+  acceptedSignals = ["STRONG BUY"],
   requireLiquidityLock = true,
-  useReentryGuards = true,
+  useReentryGuards = false,
+  useSimpleCooldown = true,
   exitDecision = null,
   pauseEntriesAtBalance = null,
   entryPauseStateFile = null
@@ -98,6 +102,7 @@ function createBot({
     }
   }
   const tokenCooldowns = loadReentryGuards(reentryStateFile);
+  const simpleCooldowns = new Map();
   const isActive = session => activeSession === session && !session.signal.aborted;
   const getPositions = () => {
     const portfolio = getPortfolio();
@@ -134,6 +139,11 @@ function createBot({
     }
     return entriesPaused;
   };
+
+  function startCooldown(tokenAddress, symbol, reason) {
+    simpleCooldowns.set(tokenAddress, Date.now());
+    console.log(`COOLDOWN STARTED | ${symbol} | 60 minutes | ${reason}`);
+  }
 
   function syncClosedTokenGuards() {
     const portfolio = getPortfolio();
@@ -209,7 +219,11 @@ function createBot({
       return;
     }
 
-    const discoveredCandidates = await discoverCandidates({ signal: session.signal });
+    const discoveredCandidates = await discoverCandidates({
+      signal: session.signal,
+      minimumLiquidityUsd,
+      minimumVolume24hUsd
+    });
     const maxAgeMinutes = Number(maxCandidateAgeMinutes);
     const candidates = Number.isFinite(maxAgeMinutes) && maxAgeMinutes > 0
       ? discoveredCandidates.filter(coin => {
@@ -223,17 +237,27 @@ function createBot({
       console.log(`NEW TOKEN AGE FILTER | max ${maxAgeMinutes}m | ${candidates.length}/${discoveredCandidates.length} candidates kept`);
     }
     if (!isActive(session) || entriesPausedByBalance() || getPositions().length >= maxOpenPositions) return;
-    syncClosedTokenGuards();
+    if (useReentryGuards) syncClosedTokenGuards();
     if (!candidates.length) {
       console.log("No candidates passed the filters.");
       return;
     }
 
     const openTokens = new Set(getPositions().map(position => position.tokenAddress));
-    const availableCandidates = candidates.filter(coin => !openTokens.has(coin.tokenAddress));
+    const availableCandidates = candidates.filter(coin => {
+      if (openTokens.has(coin.tokenAddress)) return false;
+      if (!useSimpleCooldown || useReentryGuards) return true;
+      const closedAt = simpleCooldowns.get(coin.tokenAddress);
+      if (!closedAt) return true;
+      if (Date.now() - closedAt >= TOKEN_COOLDOWN_MS) {
+        simpleCooldowns.delete(coin.tokenAddress);
+        return true;
+      }
+      return false;
+    });
     const freeSlots = Math.max(0, maxOpenPositions - getPositions().length);
     const buyCandidates = availableCandidates.filter(
-      coin => (coin.signal === "BUY" || coin.signal === "STRONG BUY") && !openTokens.has(coin.tokenAddress)
+      coin => acceptedSignals.includes(coin.signal) && !openTokens.has(coin.tokenAddress)
     );
     const selected = [];
 
@@ -326,7 +350,10 @@ function createBot({
         console.log(`EXIT | ${position.symbol} | ${reason}`);
         const result = sell(currentPrice, percent, { expectedPosition, reason, liquidityUsd: freshData.liquidityUsd });
         if (result.success) {
-          if (percent === 100) syncClosedTokenGuards();
+          if (percent === 100) {
+            if (useReentryGuards) syncClosedTokenGuards();
+            if (useSimpleCooldown) startCooldown(tokenAddress, position.symbol, reason);
+          }
           void notifier.notifyTrade(reason, result.trade);
         }
         return result;
@@ -342,7 +369,7 @@ function createBot({
             liquidityUsd: freshData.liquidityUsd
           });
           if (result.success) {
-            if ((action.percent ?? 100) === 100) syncClosedTokenGuards();
+            if ((action.percent ?? 100) === 100 && useReentryGuards) syncClosedTokenGuards();
             void notifier.notifyTrade(action.reason, result.trade);
           }
         }
@@ -452,4 +479,4 @@ function createBot({
   };
 }
 
-module.exports = { createBot, ...createBot({ maxCandidateAgeMinutes: 10 }) };
+module.exports = { createBot, ...createBot() };
