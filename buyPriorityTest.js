@@ -407,10 +407,11 @@ async function getSafetyMetadata(tokenAddress) {
 
 function classifyHybridEntry(data) {
   const analysis = analyzeToken(data);
+  const sourceSignal = String(analysis.signal || "NO DATA").toUpperCase();
   return {
     score: Number(analysis.score) || 0,
-    signal: analysis.signal === "STRONG BUY" ? "STRONG BUY" : "BUY",
-    sourceSignal: analysis.signal,
+    signal: sourceSignal,
+    sourceSignal,
     reasons: Array.isArray(analysis.reasons) ? analysis.reasons : []
   };
 }
@@ -490,6 +491,16 @@ function buildEntryTrigger(item, now) {
     buys5m: current.buys5m,
     sells5m: current.sells5m
   });
+  if (!["STRONG BUY", "BUY"].includes(entryAnalysis.signal)) {
+    const rejectedSignal = entryAnalysis.signal.replace(/[^A-Z0-9]+/g, "_");
+    rejectToken(
+      item.tokenAddress,
+      "ENTRY_SIGNAL_" + rejectedSignal,
+      now,
+      "score=" + entryAnalysis.score
+    );
+    return null;
+  }
   return {
     ...data,
     tokenAddress: item.tokenAddress,
