@@ -8,12 +8,15 @@ const POSITION_MONITOR_MS = 2000;
 const SCANNER_INTERVAL_MS = 30000;
 const TOKEN_COOLDOWN_MS = 60 * 60 * 1000;
 const HARD_STOP_PERCENT = -8;
+const PROFIT_PROTECTION_ARM_PERCENT = 10;
+const PROFIT_PROTECTION_FLOOR_NET_PERCENT = 1.5;
 const TAKE_PROFIT_1_PERCENT = 15;
 const TAKE_PROFIT_1_SELL_PERCENT = 30;
 const TAKE_PROFIT_2_PERCENT = 30;
 // Sell 30% of the original position from the 70% remaining after TP1.
 const TAKE_PROFIT_2_SELL_PERCENT = (30 / 70) * 100;
-const TRAILING_STOP_PERCENT = 20;
+const TRAILING_STOP_PERCENT = 15;
+const MOMENTUM_EXIT_CONFIRM_MS = SCANNER_INTERVAL_MS;
 const MOMENTUM_EXIT_MIN_LOSS = -2;
 const MOMENTUM_EXIT_5M = -3;
 const MOMENTUM_EXIT_STRONG_LOSS = -5;
@@ -31,6 +34,8 @@ function createBot({
   checkLiquidityLock = getLockStatus,
   positionMonitorMs = POSITION_MONITOR_MS,
   scannerIntervalMs = SCANNER_INTERVAL_MS,
+  momentumExitConfirmMs = MOMENTUM_EXIT_CONFIRM_MS,
+  now = () => Date.now(),
   botLabel = "B3.1 Profitability Lab - Paper Only"
 } = {}) {
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
@@ -42,6 +47,7 @@ function createBot({
   let lastError = null;
   const tokenCooldowns = new Map();
   const labObservations = new Map();
+  const momentumExitObservations = new Map();
   const isActive = session => activeSession === session && !session.signal.aborted;
   const getPositions = () => {
     const portfolio = getPortfolio();
@@ -49,6 +55,13 @@ function createBot({
       ? portfolio.positions
       : (portfolio.position ? [portfolio.position] : []);
   };
+
+  function getOriginalPositionInvestment(position) {
+    const history = getPortfolio().history;
+    const entryTrade = (Array.isArray(history) ? history : [])
+      .find(trade => trade.type === "BUY" && trade.positionId === position.id);
+    return Number(entryTrade?.amountInvested) || Number(position.amountInvested) || 0;
+  }
 
   function getNetTradePnl(position, currentPrice) {
     const portfolio = getPortfolio();
@@ -77,6 +90,23 @@ function createBot({
     }
     labObservations.set(coin.tokenAddress, current);
     return false;
+  }
+
+  function confirmMomentumExit(positionId, shouldExit, nowMs) {
+    if (!shouldExit) {
+      momentumExitObservations.delete(positionId);
+      return false;
+    }
+    const observation = momentumExitObservations.get(positionId);
+    if (!observation) {
+      momentumExitObservations.set(positionId, { confirmations: 1, lastConfirmedAt: nowMs });
+      return false;
+    }
+    if (nowMs - observation.lastConfirmedAt >= momentumExitConfirmMs) {
+      observation.confirmations += 1;
+      observation.lastConfirmedAt = nowMs;
+    }
+    return observation.confirmations >= 2;
   }
 
   function startCooldown(tokenAddress, symbol, reason) {
@@ -190,6 +220,7 @@ function createBot({
       if (!position) continue;
 
       const entryPrice = Number(position.entryPrice);
+      const nowMs = now();
       const profitPercent = ((currentPrice - entryPrice) / entryPrice) * 100;
       const dropFromHigh = ((position.highestPrice - currentPrice) / position.highestPrice) * 100;
       const momentum5m = Number(freshData.priceChange5m) || 0;
@@ -203,19 +234,29 @@ function createBot({
         console.log(`EXIT | ${position.symbol} | ${reason}`);
         const result = sell(currentPrice, percent, { expectedPosition, reason });
         if (result.success) {
-          if (percent === 100) startCooldown(tokenAddress, position.symbol, reason);
+          if (percent === 100) {
+            momentumExitObservations.delete(expectedPosition);
+            startCooldown(tokenAddress, position.symbol, reason);
+          }
           void notifier.notifyTrade(reason, result.trade);
         }
         return result;
       };
 
-      if (profitPercent <= HARD_STOP_PERCENT) {
+      if (profitPercent <= HARD_STOP_PERCENT + 1e-9) {
         exit("HARD STOP");
         continue;
       }
 
-      if (position.firstTakeProfitDone && getNetTradePnl(position, currentPrice) <= 0) {
-        exit("POST-TP1 BREAK-EVEN PROTECTION");
+      const profitProtectionArmed =
+        position.highestPrice >= entryPrice * (1 + PROFIT_PROTECTION_ARM_PERCENT / 100);
+      const profitProtectionFloorUsd =
+        getOriginalPositionInvestment(position) * PROFIT_PROTECTION_FLOOR_NET_PERCENT / 100;
+      if (
+        profitProtectionArmed &&
+        getNetTradePnl(position, currentPrice) <= profitProtectionFloorUsd
+      ) {
+        exit("PROFIT PROTECTION +1.5% NET FLOOR");
         continue;
       }
 
@@ -225,12 +266,17 @@ function createBot({
         momentum5m <= MOMENTUM_EXIT_5M && sellPressure;
       const momentumExitB = profitPercent <= MOMENTUM_EXIT_STRONG_LOSS &&
         momentum5m <= MOMENTUM_EXIT_STRONG_5M;
-      if (momentumExitA || momentumExitB) {
+      const momentumExitConfirmed = confirmMomentumExit(
+        expectedPosition,
+        momentumExitA || momentumExitB,
+        nowMs
+      );
+      if (momentumExitConfirmed) {
         exit("MOMENTUM EXIT");
         continue;
       }
 
-      if (profitPercent >= TAKE_PROFIT_1_PERCENT && !position.firstTakeProfitDone) {
+      if (profitPercent >= TAKE_PROFIT_1_PERCENT - 1e-9 && !position.firstTakeProfitDone) {
         const result = sell(currentPrice, TAKE_PROFIT_1_SELL_PERCENT, {
           expectedPosition,
           takeProfit: "firstTakeProfitDone",
@@ -239,7 +285,7 @@ function createBot({
         if (result.success) void notifier.notifyTrade("TAKE PROFIT 1", result.trade);
         continue;
       }
-      if (profitPercent >= TAKE_PROFIT_2_PERCENT &&
+      if (profitPercent >= TAKE_PROFIT_2_PERCENT - 1e-9 &&
           position.firstTakeProfitDone && !position.secondTakeProfitDone) {
         const result = sell(currentPrice, TAKE_PROFIT_2_SELL_PERCENT, {
           expectedPosition,
@@ -249,7 +295,7 @@ function createBot({
         if (result.success) void notifier.notifyTrade("TAKE PROFIT 2", result.trade);
         continue;
       }
-      if (position.secondTakeProfitDone && dropFromHigh >= TRAILING_STOP_PERCENT) {
+      if (position.secondTakeProfitDone && dropFromHigh + 1e-9 >= TRAILING_STOP_PERCENT) {
         exit("TRAILING STOP");
       }
     }

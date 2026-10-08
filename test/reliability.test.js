@@ -131,6 +131,26 @@ test("delayed monitoring cannot sell after Stop or sell a replacement position",
   assert.equal(trader.getPortfolio().history.length, 3);
 });
 
+test("profit floor remains 1.5% of the original investment after TP1", async t => {
+  const { trader } = account(t);
+  trader.buy(coin);
+  const timers = fakeTimers();
+  let quote = 1.15;
+  let clock = 0;
+  const bot = createBot({ trader, timers, now: () => clock,
+    discoverCandidates: async () => [], getTokenData: async () => ({ priceUsd: quote }) });
+  t.after(() => bot.stopBot());
+  bot.startBot();
+  await settle();
+  assert.equal(trader.getPortfolio().position.firstTakeProfitDone, true);
+  assert.equal(trader.getPortfolio().position.amountInvested, 7);
+  quote = 0.98;
+  clock += 2000;
+  await timers.run(2000);
+  assert.equal(trader.getPortfolio().position, null);
+  assert.equal(trader.getPortfolio().history.at(-1).reason, "PROFIT PROTECTION +1.5% NET FLOOR");
+});
+
 test("unchanged profit targets and trailing exit execute once and restore across restart", async t => {
   const { trader, file } = account(t);
   trader.buy(coin);
@@ -147,7 +167,7 @@ test("unchanged profit targets and trailing exit execute once and restore across
   bot.stopBot();
   const restarted = createPaperTrader(file);
   const bot2 = createBot({ trader: restarted, timers, discoverCandidates: async () => [],
-    getTokenData: async () => ({ priceUsd: 1.2 }) });
+    getTokenData: async () => ({ priceUsd: 1.10 }) });
   t.after(() => bot2.stopBot());
   bot2.startBot();
   await settle();
@@ -181,21 +201,50 @@ test("network configuration requires credentials and respects Railway port", () 
   assert.equal(config.host, "0.0.0.0");
 });
 
-test("hard stop and both momentum exits keep their original behavior", async t => {
-  for (const [quote, reason] of [
+test("hard stop stays immediate and momentum exits confirm twice 30 seconds apart", async t => {
+  const cases = [
     [{ priceUsd: 0.89 }, "HARD STOP"],
     [{ priceUsd: 0.97, priceChange5m: -3, buys5m: 4, sells5m: 8 }, "MOMENTUM EXIT"],
     [{ priceUsd: 0.94, priceChange5m: -1 }, "MOMENTUM EXIT"]
-  ]) {
+  ];
+  for (const [quote, reason] of cases) {
     const { trader } = account(t);
     trader.buy(coin);
-    const bot = createBot({ trader, timers: fakeTimers(), getTokenData: async () => quote });
+    const timers = fakeTimers();
+    let clock = 0;
+    const bot = createBot({ trader, timers, now: () => clock,
+      discoverCandidates: async () => [], getTokenData: async () => quote });
     bot.startBot();
     await settle();
+    if (reason === "MOMENTUM EXIT") {
+      assert.ok(trader.getPortfolio().position);
+      clock += 30000;
+      await timers.run(2000);
+    }
     bot.stopBot();
     assert.equal(trader.getPortfolio().position, null);
     assert.equal(trader.getPortfolio().history.at(-1).reason, reason);
   }
+});
+
+test("profit protection arms at +10% high and exits at the +1.5% net floor", async t => {
+  const { trader } = account(t);
+  trader.buy(coin);
+  const timers = fakeTimers();
+  let quote = 1.10;
+  let clock = 0;
+  const bot = createBot({ trader, timers, now: () => clock,
+    discoverCandidates: async () => [], getTokenData: async () => ({ priceUsd: quote }) });
+  t.after(() => bot.stopBot());
+  bot.startBot();
+  await settle();
+  assert.ok(trader.getPortfolio().position);
+  assert.equal(trader.getPortfolio().history.length, 1);
+  quote = 1.02;
+  clock += 2000;
+  await timers.run(2000);
+  assert.equal(trader.getPortfolio().position, null);
+  assert.equal(trader.getPortfolio().history.at(-1).reason, "PROFIT PROTECTION +1.5% NET FLOOR");
 });
 
 test("storage errors pause the bot and remove timers", async t => {
