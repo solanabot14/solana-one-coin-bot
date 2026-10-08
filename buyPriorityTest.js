@@ -13,7 +13,7 @@ const STRATEGY_VERSION = "v3.2-momentum";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const CONFIG = Object.freeze({
  capital:{startingUsd:100,maxOpenPositions:4,compoundRates:[0.10,0.125,0.15],minimumTradeUsd:10,maximumLiquidityFraction:0.01,pauseAtBalanceUsd:70},
- entry:{minimumAgeMinutes:10,maximumAgeHours:48,minimumLiquidityUsd:20000,minimumVolume1hUsd:10000,maximumTop10HolderPercent:30,minimumSellQuotePercent:90,watchlistMaxTokens:20,watchlistPollIntervalSeconds:15,watchlistTimeoutMinutes:90,priceHistoryRetentionMinutes:12,volumeWindowMinutes:5,sampleTimeDriftIntervals:2,discoveryRefreshSeconds:120,safetyRecheckSeconds:120,stopLossCooldownHours:24,permanentStopLossPercent:25,initialBreakoutRisePercent:8,baseBreakdownPercent:3,baseNoNewLowMinutes:3,reentryMinGivebackPercent:25,reentryMaxGivebackPercent:50,reentryTriggerRisePercent:4,volumeSurgeMultiplier:1.5,maximumRecoveryPercent:70,baseStopBelowLowPercent:3},
+ entry:{minimumAgeMinutes:10,maximumAgeHours:48,minimumLiquidityUsd:20000,minimumVolume1hUsd:10000,maximumTop10HolderPercent:30,minimumSellQuotePercent:90,watchlistMaxTokens:20,watchlistPollIntervalSeconds:15,watchlistTimeoutMinutes:90,priceHistoryRetentionMinutes:12,volumeWindowMinutes:5,sampleTimeDriftIntervals:2,discoveryRefreshSeconds:60,safetyRecheckSeconds:120,stopLossCooldownHours:24,permanentStopLossPercent:25,initialBreakoutRisePercent:8,baseBreakdownPercent:3,baseNoNewLowMinutes:3,reentryMinGivebackPercent:25,reentryMaxGivebackPercent:50,reentryTriggerRisePercent:4,volumeSurgeMultiplier:1.5,maximumRecoveryPercent:70,baseStopBelowLowPercent:3},
  exit:{stopLossPercent:15,breakevenTriggerPercent:15,firstTargetPercent:25,firstTargetOriginalPositionPercent:40,secondTargetPercent:60,secondTargetOriginalPositionPercent:30,trailingStopPercent:20,timeStopMinutes:15,minimumGainAtTimeStopPercent:5,maximumHoldMinutes:60,liquidityDropPercent:30,stalePriceDataMs:30000},
  estimatedCosts:{poolFeePercentPerSwap:0.30,solanaFeeUsdPerSwap:0.01,priorityFeeUsdPerSwap:0.01},
  logging:{rejectedTokenCooldownSeconds:300,maxRejectedLogEntries:1000,maxWatchlistRemovalEvents:200}
@@ -479,9 +479,18 @@ function buildEntryTrigger(item, now) {
       Math.abs(a.at - previousWindowAt) - Math.abs(b.at - previousWindowAt)
     )[0];
 
-  if (!previousSample ||
-      Math.abs(previousSample.at - previousWindowAt) > allowedSampleDriftMs ||
-      current.volume5m < previousSample.volume5m * e.volumeSurgeMultiplier) return null;
+  const priorWindowSampleIsUsable = Boolean(previousSample) &&
+    Math.abs(previousSample.at - previousWindowAt) <= allowedSampleDriftMs;
+  const volumeSurgeBaselineUsd = priorWindowSampleIsUsable
+    ? previousSample.volume5m
+    : volume1h / (60 / e.volumeWindowMinutes);
+  const volumeSurgeBaselineSource = priorWindowSampleIsUsable
+    ? "prior_5m_window"
+    : "rolling_1h_average";
+
+  if (!(volumeSurgeBaselineUsd > 0) ||
+      !Number.isFinite(volumeSurgeBaselineUsd) ||
+      current.volume5m < volumeSurgeBaselineUsd * e.volumeSurgeMultiplier) return null;
 
   const entryAnalysis = classifyHybridEntry({
     ...data,
@@ -506,6 +515,8 @@ function buildEntryTrigger(item, now) {
     tokenAddress: item.tokenAddress,
     priceUsd: current.price,
     volume5m: current.volume5m,
+    volumeSurgeBaselineUsd,
+    volumeSurgeBaselineSource,
     buys5m: current.buys5m,
     sells5m: current.sells5m,
     signal: entryAnalysis.signal,
@@ -518,7 +529,10 @@ function buildEntryTrigger(item, now) {
       ...entryAnalysis.reasons,
       "Price is " + riseFromBasePercent.toFixed(1) + "% above the " +
         (isReentry ? "higher pullback low" : "watched base low"),
-      "5m volume is at least " + e.volumeSurgeMultiplier + "x the prior 5m window"
+      "5m volume is at least " + e.volumeSurgeMultiplier + "x the " +
+        (volumeSurgeBaselineSource === "prior_5m_window"
+          ? "prior 5m window"
+          : "rolling 1h average per 5m")
     ],
     entryMode: isReentry ? "PROFITABLE_REENTRY" : "EARLY_BREAKOUT",
     baseLowUsd: baseLow,
@@ -925,6 +939,8 @@ async function discoverBuyPriorityCandidates(options = {}) {
           liquidityUsd: Number(candidate.liquidityUsd),
           volume5mUsd: Number(candidate.volume5m) || 0,
           volume1hUsd: Number(candidate.volume1h) || 0,
+          volumeSurgeBaselineUsd: Number(candidate.volumeSurgeBaselineUsd) || 0,
+          volumeSurgeBaselineSource: candidate.volumeSurgeBaselineSource || null,
           buys5m: Number(candidate.buys5m) || 0,
           sells5m: Number(candidate.sells5m) || 0,
           buys1h: Number(candidate.buys1h) || 0,
