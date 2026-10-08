@@ -8,6 +8,7 @@ const { getLockStatus } = require("./lpLockChecker");
 
 const POSITION_MONITOR_MS = 2000;
 const SCANNER_INTERVAL_MS = 120000;
+const TOKEN_COOLDOWN_MS = 60 * 60 * 1000;
 const REENTRY_MIN_VOLUME_5M = 3000;
 const REENTRY_MIN_VOLUME_ACCELERATION = 1.25;
 const REENTRY_MIN_MOMENTUM_5M = 0.25;
