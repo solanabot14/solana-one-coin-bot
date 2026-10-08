@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const market = require("./dexscreener");
 const scanner = require("./scanner");
+const { analyzeToken } = require("./strategy");
 const { createPaperTrader } = require("./paperTrader");
 const { createBot } = require("./bot");
 const { getLockStatus, getTokenReport } = require("./lpLockChecker");
@@ -403,6 +404,16 @@ async function getSafetyMetadata(tokenAddress) {
   };
 }
 
+function classifyHybridEntry(data) {
+  const analysis = analyzeToken(data);
+  return {
+    score: Number(analysis.score) || 0,
+    signal: analysis.signal === "STRONG BUY" ? "STRONG BUY" : "BUY",
+    sourceSignal: analysis.signal,
+    reasons: Array.isArray(analysis.reasons) ? analysis.reasons : []
+  };
+}
+
 function buildEntryTrigger(item, now) {
   if (!item || !["BREAKOUT", "REENTRY_BASE"].includes(item.state) ||
       !item.latestData) return null;
@@ -470,6 +481,14 @@ function buildEntryTrigger(item, now) {
       Math.abs(previousSample.at - previousWindowAt) > allowedSampleDriftMs ||
       current.volume5m < previousSample.volume5m * e.volumeSurgeMultiplier) return null;
 
+  const entryAnalysis = classifyHybridEntry({
+    ...data,
+    priceChange5m: optionalNumber(data.priceChange5m),
+    priceChange1h: optionalNumber(data.priceChange1h),
+    priceChange24h: optionalNumber(data.priceChange24h),
+    buys5m: current.buys5m,
+    sells5m: current.sells5m
+  });
   return {
     ...data,
     tokenAddress: item.tokenAddress,
@@ -477,10 +496,14 @@ function buildEntryTrigger(item, now) {
     volume5m: current.volume5m,
     buys5m: current.buys5m,
     sells5m: current.sells5m,
-    signal: "BUY",
-    score: 1,
+    signal: entryAnalysis.signal,
+    score: entryAnalysis.score,
     reasons: [
       STRATEGY_VERSION + (isReentry ? " profitable re-entry confirmed" : " early momentum breakout confirmed"),
+      entryAnalysis.signal === "STRONG BUY"
+        ? "STRONG BUY priority: existing V3.1 score and confirmation rules passed"
+        : "BUY fallback: current entry and safety filters passed; Strong Buy was not required",
+      ...entryAnalysis.reasons,
       "Price is " + riseFromBasePercent.toFixed(1) + "% above the " +
         (isReentry ? "higher pullback low" : "watched base low"),
       "5m volume is at least " + e.volumeSurgeMultiplier + "x the prior 5m window"
@@ -894,6 +917,10 @@ async function discoverBuyPriorityCandidates(options = {}) {
       }
     });
   }
+  ready.sort((a, b) => {
+    const priority = Number(b.signal === "STRONG BUY") - Number(a.signal === "STRONG BUY");
+    return priority || (Number(b.score) || 0) - (Number(a.score) || 0);
+  });
   return ready;
 }
 
@@ -1122,7 +1149,8 @@ module.exports = {
   buildDashboardAccount,
   evaluateExit,
   getBuySizing,
-  getRecentStopLossGuards
+  getRecentStopLossGuards,
+  classifyHybridEntry
 };
 
 function buildDashboardAccount() {
