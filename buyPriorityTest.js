@@ -63,7 +63,7 @@ function getSizingCycleStartedAt() {
  }
  const startedAt=new Date().toISOString();
  fs.mkdirSync(path.dirname(file),{recursive:true});
- fs.writeFileSync(file,JSON.stringify({startedAt})+"\\n");
+ fs.writeFileSync(file,JSON.stringify({startedAt})+"\n");
  return Date.parse(startedAt);
 }
 function nextCompoundRate(portfolio) {
