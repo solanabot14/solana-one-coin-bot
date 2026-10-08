@@ -13,7 +13,7 @@ const STRATEGY_VERSION = "v3.2-momentum";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const CONFIG = Object.freeze({
  capital:{startingUsd:100,maxOpenPositions:4,compoundRates:[0.10,0.125,0.15],minimumTradeUsd:10,maximumLiquidityFraction:0.01,pauseAtBalanceUsd:70},
- entry:{minimumAgeMinutes:30,maximumAgeHours:48,minimumLiquidityUsd:20000,minimumVolume1hUsd:10000,maximumTop10HolderPercent:30,minimumSellQuotePercent:90,watchlistMaxTokens:20,watchlistPollIntervalSeconds:15,watchlistTimeoutMinutes:90,priceHistoryRetentionMinutes:12,volumeWindowMinutes:5,sampleTimeDriftIntervals:2,discoveryRefreshSeconds:120,safetyRecheckSeconds:120,stopLossCooldownHours:24,permanentStopLossPercent:25,initialBreakoutRisePercent:8,baseBreakdownPercent:3,baseNoNewLowMinutes:3,reentryMinGivebackPercent:25,reentryMaxGivebackPercent:50,reentryTriggerRisePercent:4,volumeSurgeMultiplier:1.5,maximumRecoveryPercent:70,baseStopBelowLowPercent:3},
+ entry:{minimumAgeMinutes:20,maximumAgeHours:48,minimumLiquidityUsd:20000,minimumVolume1hUsd:10000,maximumTop10HolderPercent:30,minimumSellQuotePercent:90,watchlistMaxTokens:20,watchlistPollIntervalSeconds:15,watchlistTimeoutMinutes:90,priceHistoryRetentionMinutes:12,volumeWindowMinutes:5,sampleTimeDriftIntervals:2,discoveryRefreshSeconds:120,safetyRecheckSeconds:120,stopLossCooldownHours:24,permanentStopLossPercent:25,initialBreakoutRisePercent:8,baseBreakdownPercent:3,baseNoNewLowMinutes:3,reentryMinGivebackPercent:25,reentryMaxGivebackPercent:50,reentryTriggerRisePercent:4,volumeSurgeMultiplier:1.5,maximumRecoveryPercent:70,baseStopBelowLowPercent:3},
  exit:{stopLossPercent:15,breakevenTriggerPercent:15,firstTargetPercent:25,firstTargetOriginalPositionPercent:40,secondTargetPercent:60,secondTargetOriginalPositionPercent:30,trailingStopPercent:20,timeStopMinutes:15,minimumGainAtTimeStopPercent:5,maximumHoldMinutes:60,liquidityDropPercent:30,stalePriceDataMs:30000},
  estimatedCosts:{poolFeePercentPerSwap:0.30,solanaFeeUsdPerSwap:0.01,priorityFeeUsdPerSwap:0.01},
  logging:{rejectedTokenCooldownSeconds:300,maxRejectedLogEntries:1000,maxWatchlistRemovalEvents:200}
@@ -143,7 +143,7 @@ function logWatchEvent(item, event, now, details = {}) {
   );
 }
 
-function rejectToken(tokenAddress, reason, now = Date.now()) {
+function rejectToken(tokenAddress, reason, now = Date.now(), detail = "") {
   const address = tokenAddress || "unknown";
   const key = address + "|" + reason;
   const previousAt = rejectedTokenLogTimes.get(key);
@@ -160,7 +160,8 @@ function rejectToken(tokenAddress, reason, now = Date.now()) {
 
   console.info(
     "V3.2-MOMENTUM | REJECTED | token=" + address +
-    " | reason=" + reason
+    " | reason=" + reason +
+    (detail ? " | " + detail : "")
   );
   return false;
 }
@@ -640,9 +641,24 @@ async function checkEntryFilters(data, token) {
   }
 
   const ageMinutes = (now - pairCreatedAt) / 60000;
-  if (ageMinutes < CONFIG.entry.minimumAgeMinutes ||
-      ageMinutes > CONFIG.entry.maximumAgeHours * 60) {
-    return rejectToken(tokenAddress, "PAIR_AGE_OUTSIDE_30M_TO_48H", now);
+  if (ageMinutes < CONFIG.entry.minimumAgeMinutes) {
+    return rejectToken(
+      tokenAddress,
+      "PAIR_AGE_TOO_YOUNG",
+      now,
+      "age_minutes=" + ageMinutes.toFixed(1) +
+        " | minimum_age_minutes=" + CONFIG.entry.minimumAgeMinutes
+    );
+  }
+  const maximumAgeMinutes = CONFIG.entry.maximumAgeHours * 60;
+  if (ageMinutes > maximumAgeMinutes) {
+    return rejectToken(
+      tokenAddress,
+      "PAIR_AGE_TOO_OLD",
+      now,
+      "age_hours=" + (ageMinutes / 60).toFixed(1) +
+        " | maximum_age_hours=" + CONFIG.entry.maximumAgeHours
+    );
   }
   if (watchlist.has(tokenAddress)) return false;
 
