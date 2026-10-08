@@ -73,6 +73,7 @@ function createBot({
   botLabel = "V3.1 Original - 2 Slots",
   reentryStateFile = defaultReentryStateFile(),
   maxOpenPositions = MAX_OPEN_POSITIONS,
+  maxCandidateAgeMinutes = null,
   requireLiquidityLock = true,
   useReentryGuards = true,
   exitDecision = null,
@@ -208,7 +209,19 @@ function createBot({
       return;
     }
 
-    const candidates = await discoverCandidates({ signal: session.signal });
+    const discoveredCandidates = await discoverCandidates({ signal: session.signal });
+    const maxAgeMinutes = Number(maxCandidateAgeMinutes);
+    const candidates = Number.isFinite(maxAgeMinutes) && maxAgeMinutes > 0
+      ? discoveredCandidates.filter(coin => {
+        const createdAt = Number(coin.pairCreatedAt);
+        const ageMs = Date.now() - createdAt;
+        return Number.isFinite(createdAt) && createdAt > 0 &&
+          ageMs >= 0 && ageMs <= maxAgeMinutes * 60 * 1000;
+      })
+      : discoveredCandidates;
+    if (Number.isFinite(maxAgeMinutes) && maxAgeMinutes > 0) {
+      console.log(`NEW TOKEN AGE FILTER | max ${maxAgeMinutes}m | ${candidates.length}/${discoveredCandidates.length} candidates kept`);
+    }
     if (!isActive(session) || entriesPausedByBalance() || getPositions().length >= maxOpenPositions) return;
     syncClosedTokenGuards();
     if (!candidates.length) {
@@ -439,4 +452,4 @@ function createBot({
   };
 }
 
-module.exports = { createBot, ...createBot() };
+module.exports = { createBot, ...createBot({ maxCandidateAgeMinutes: 10 }) };
