@@ -11,7 +11,7 @@ const BOT_LABEL = "New Claude Strategy";
 const STRATEGY_VERSION = "v3.2-momentum";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const CONFIG = Object.freeze({
- capital:{startingUsd:100,maxOpenPositions:4,tradeFraction:0.10,minimumTradeUsd:10,maximumLiquidityFraction:0.01,pauseAtBalanceUsd:70},
+ capital:{startingUsd:100,maxOpenPositions:4,compoundRates:[0.10,0.125,0.15],minimumTradeUsd:10,maximumLiquidityFraction:0.01,pauseAtBalanceUsd:70},
  entry:{minimumAgeMinutes:30,maximumAgeHours:48,minimumLiquidityUsd:20000,minimumVolume1hUsd:10000,maximumTop10HolderPercent:30,minimumSellQuotePercent:90,watchlistMaxTokens:20,watchlistPollIntervalSeconds:15,watchlistTimeoutMinutes:90,priceHistoryRetentionMinutes:12,volumeWindowMinutes:5,sampleTimeDriftIntervals:2,discoveryRefreshSeconds:120,safetyRecheckSeconds:120,stopLossCooldownHours:24,permanentStopLossPercent:25,initialBreakoutRisePercent:8,baseBreakdownPercent:3,baseNoNewLowMinutes:3,reentryMinGivebackPercent:25,reentryMaxGivebackPercent:50,reentryTriggerRisePercent:4,volumeSurgeMultiplier:1.5,maximumRecoveryPercent:70,baseStopBelowLowPercent:3},
  exit:{stopLossPercent:15,breakevenTriggerPercent:15,firstTargetPercent:25,firstTargetOriginalPositionPercent:40,secondTargetPercent:60,secondTargetOriginalPositionPercent:30,trailingStopPercent:20,timeStopMinutes:15,minimumGainAtTimeStopPercent:5,maximumHoldMinutes:60,liquidityDropPercent:30,stalePriceDataMs:30000},
  estimatedCosts:{poolFeePercentPerSwap:0.30,solanaFeeUsdPerSwap:0.01,priorityFeeUsdPerSwap:0.01},
@@ -51,13 +51,38 @@ function estimateExecutionCosts({ amountUsd, liquidityUsd, position } = {}) {
   };
 }
 
-function nextCompoundRate(){return CONFIG.capital.tradeFraction}
+function getSizingCycleStartedAt() {
+ const file=statePath("v31BuyPriorityTestSizingCycle.json");
+ try {
+  const saved=JSON.parse(fs.readFileSync(file,"utf8"));
+  const startedAt=Date.parse(saved.startedAt);
+  if(Number.isFinite(startedAt)) return startedAt;
+  throw new Error("Sizing cycle state has no valid start time.");
+ } catch(error) {
+  if(error.code!=="ENOENT") throw error;
+ }
+ const startedAt=new Date().toISOString();
+ fs.mkdirSync(path.dirname(file),{recursive:true});
+ fs.writeFileSync(file,JSON.stringify({startedAt})+"\\n");
+ return Date.parse(startedAt);
+}
+function nextCompoundRate(portfolio) {
+ const rates=CONFIG.capital.compoundRates;
+ const startedAt=getSizingCycleStartedAt();
+ const successfulBuys=(Array.isArray(portfolio.history)?portfolio.history:[]).filter(row=>
+  row?.type==="BUY" &&
+  row?.strategyVersion===STRATEGY_VERSION &&
+  Date.parse(row.entryTime||row.timestamp||row.time||"")>=startedAt
+ );
+ return rates[successfulBuys.length%rates.length];
+}
 function getBuySizing(portfolio,coin={}){
  const positions=Array.isArray(portfolio.positions)?portfolio.positions:[];
  const realizedBalance=Number(portfolio.cashBalance||0)+positions.reduce((s,p)=>s+(Number(p.amountInvested)||0),0);
  const cash=Number(portfolio.cashBalance)||0,liquidityCap=Number(coin.liquidityUsd)*CONFIG.capital.maximumLiquidityFraction;
- const requested=Math.max(realizedBalance*nextCompoundRate(),CONFIG.capital.minimumTradeUsd),amountInvested=Math.min(requested,cash,liquidityCap);
- return {compoundRate:nextCompoundRate(),amountInvested:Number.isFinite(amountInvested)?amountInvested:0};
+ const compoundRate=nextCompoundRate(portfolio);
+ const requested=Math.max(realizedBalance*compoundRate,CONFIG.capital.minimumTradeUsd),amountInvested=Math.min(requested,cash,liquidityCap);
+ return {compoundRate,amountInvested:Number.isFinite(amountInvested)?amountInvested:0};
 }
 
 const trader = createPaperTrader(
