@@ -8,13 +8,12 @@ const POSITION_MONITOR_MS = 2000;
 const SCANNER_INTERVAL_MS = 30000;
 const TOKEN_COOLDOWN_MS = 60 * 60 * 1000;
 const HARD_STOP_PERCENT = -8;
-const TAKE_PROFIT_1_PERCENT = 10;
-const TAKE_PROFIT_1_SELL_PERCENT = 50;
+const TAKE_PROFIT_1_PERCENT = 15;
+const TAKE_PROFIT_1_SELL_PERCENT = 30;
 const TAKE_PROFIT_2_PERCENT = 30;
-const TAKE_PROFIT_2_SELL_PERCENT = 35;
-const TRAILING_STOP_PERCENT = 5;
-const PROFIT_LOCK_TRIGGER_PERCENT = 10;
-const PROFIT_LOCK_FLOOR_PERCENT = 4;
+// Sell 30% of the original position from the 70% remaining after TP1.
+const TAKE_PROFIT_2_SELL_PERCENT = (30 / 70) * 100;
+const TRAILING_STOP_PERCENT = 20;
 const MOMENTUM_EXIT_MIN_LOSS = -2;
 const MOMENTUM_EXIT_5M = -3;
 const MOMENTUM_EXIT_STRONG_LOSS = -5;
@@ -50,6 +49,17 @@ function createBot({
       ? portfolio.positions
       : (portfolio.position ? [portfolio.position] : []);
   };
+
+  function getNetTradePnl(position, currentPrice) {
+    const portfolio = getPortfolio();
+    const realizedPnl = (Array.isArray(portfolio.history) ? portfolio.history : [])
+      .filter(trade => trade.type === "SELL" && trade.positionId === position.id)
+      .reduce((sum, trade) => sum + (Number(trade.pnl) || 0), 0);
+    const executionCostBps = Math.max(0, Math.min(500, Number(position.executionCostBps) || 80));
+    const estimatedNetExitValue =
+      Number(position.quantity) * currentPrice * (1 - executionCostBps / 10000);
+    return realizedPnl + estimatedNetExitValue - (Number(position.amountInvested) || 0);
+  }
 
   function confirmLabSignal(coin, now) {
     if (coin.labSignal !== "FAST MOMENTUM WATCH" || !coin.tokenAddress) {
@@ -204,11 +214,8 @@ function createBot({
         continue;
       }
 
-      const highestProfitPercent = ((Number(position.highestPrice) - entryPrice) / entryPrice) * 100;
-      const profitLockActive = highestProfitPercent >= PROFIT_LOCK_TRIGGER_PERCENT &&
-        !position.secondTakeProfitDone;
-      if (profitLockActive && profitPercent <= PROFIT_LOCK_FLOOR_PERCENT) {
-        exit("PROFIT LOCK");
+      if (position.firstTakeProfitDone && getNetTradePnl(position, currentPrice) <= 0) {
+        exit("POST-TP1 BREAK-EVEN PROTECTION");
         continue;
       }
 
