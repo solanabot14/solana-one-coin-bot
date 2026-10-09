@@ -17,6 +17,9 @@ const PUMP_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
 const PUMP_AMM_PROGRAM_ID = "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA";
 const PUMP_BONDING_CURVE_DISCRIMINATOR = crypto.createHash("sha256")
   .update("account:BondingCurve").digest().subarray(0, 8);
+const PUMP_AMM_POOL_DISCRIMINATOR = crypto.createHash("sha256")
+  .update("account:Pool").digest().subarray(0, 8);
+const PUMP_CANONICAL_POOL_INDEX = 0;
 const migrationCheckCache = new Map();
 const migrationChecksPending = new Map();
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -113,6 +116,26 @@ function getPumpBondingCurveAddress(tokenAddress) {
   return deriveProgramAddress([Buffer.from("bonding-curve"), mint], PUMP_PROGRAM_ID);
 }
 
+function getPumpPoolAuthorityAddress(baseMintAddress) {
+  const baseMint = decodeBase58PublicKey(baseMintAddress);
+  if (!baseMint) return null;
+  return deriveProgramAddress([Buffer.from("pool-authority"), baseMint], PUMP_PROGRAM_ID);
+}
+
+function getCanonicalPumpSwapPoolAddress(baseMintAddress, quoteMintAddress) {
+  const baseMint = decodeBase58PublicKey(baseMintAddress);
+  const quoteMint = decodeBase58PublicKey(quoteMintAddress);
+  const creatorAddress = getPumpPoolAuthorityAddress(baseMintAddress);
+  const creator = decodeBase58PublicKey(creatorAddress);
+  if (!baseMint || !quoteMint || !creator) return null;
+  const index = Buffer.alloc(2);
+  index.writeUInt16LE(PUMP_CANONICAL_POOL_INDEX);
+  return deriveProgramAddress(
+    [Buffer.from("pool"), index, creator, baseMint, quoteMint],
+    PUMP_AMM_PROGRAM_ID
+  );
+}
+
 async function rpcGetAccounts(addresses) {
   const response = await fetch("https://api.mainnet-beta.solana.com", {
     method: "POST",
@@ -154,8 +177,18 @@ async function verifyPumpSwapMigration(tokenAddress, pairAddress) {
         const pairContainsToken =
           [pair?.baseToken?.address, pair?.quoteToken?.address]
             .some(address => String(address || "").toLowerCase() === tokenAddress.toLowerCase());
+        const baseMintAddress = pair?.baseToken?.address;
+        const quoteMintAddress = pair?.quoteToken?.address;
+        const expectedCanonicalPool = pairContainsToken &&
+          String(baseMintAddress || "").toLowerCase() === tokenAddress.toLowerCase()
+          ? getCanonicalPumpSwapPoolAddress(baseMintAddress, quoteMintAddress)
+          : null;
+
         if (!pair || String(pair.dexId || "").toLowerCase() !== "pumpswap" || !pairContainsToken) {
           result = { allowed: false, reason: "NOT_A_VERIFIED_PUMPSWAP_PAIR" };
+        } else if (!expectedCanonicalPool ||
+            expectedCanonicalPool.toLowerCase() !== pairAddress.toLowerCase()) {
+          result = { allowed: false, reason: "NOT_CANONICAL_PUMPSWAP_MIGRATION_POOL" };
         } else if (!(Number(pair.liquidity?.usd) >= CONFIG.entry.minimumLiquidityUsd)) {
           result = { allowed: false, reason: "MIGRATED_POOL_LIQUIDITY_BELOW_MINIMUM" };
         } else {
@@ -166,19 +199,37 @@ async function verifyPumpSwapMigration(tokenAddress, pairAddress) {
             const accounts = await rpcGetAccounts([pairAddress, bondingCurveAddress]);
             const poolAccount = accounts?.[0];
             const curveAccount = accounts?.[1];
+            const poolData = Array.isArray(poolAccount?.data)
+              ? Buffer.from(poolAccount.data[0] || "", "base64") : null;
             const curveData = Array.isArray(curveAccount?.data)
               ? Buffer.from(curveAccount.data[0] || "", "base64") : null;
+            const expectedCreator = getPumpPoolAuthorityAddress(tokenAddress);
+            const poolIndex = poolData?.length >= 11 ? poolData.readUInt16LE(9) : null;
+            const poolCreator = poolData?.length >= 43
+              ? encodeBase58PublicKey(poolData.subarray(11, 43)) : null;
+            const poolBaseMint = poolData?.length >= 75
+              ? encodeBase58PublicKey(poolData.subarray(43, 75)) : null;
+            const poolQuoteMint = poolData?.length >= 107
+              ? encodeBase58PublicKey(poolData.subarray(75, 107)) : null;
+            const validCanonicalPool = poolAccount?.owner === PUMP_AMM_PROGRAM_ID &&
+              poolData?.length >= 107 &&
+              poolData.subarray(0, 8).equals(PUMP_AMM_POOL_DISCRIMINATOR) &&
+              poolIndex === PUMP_CANONICAL_POOL_INDEX &&
+              poolCreator === expectedCreator &&
+              String(poolBaseMint || "").toLowerCase() === tokenAddress.toLowerCase() &&
+              String(poolQuoteMint || "").toLowerCase() === String(quoteMintAddress || "").toLowerCase();
             const validCurveAccount = curveAccount?.owner === PUMP_PROGRAM_ID &&
               curveData?.length >= 49 &&
               curveData.subarray(0, 8).equals(PUMP_BONDING_CURVE_DISCRIMINATOR) &&
+              curveData.readBigUInt64LE(24) === 0n &&
               curveData[48] === 1;
-            if (poolAccount?.owner !== PUMP_AMM_PROGRAM_ID || !validCurveAccount) {
-              result = { allowed: false, reason: "ONCHAIN_MIGRATION_PROOF_MISSING" };
+            if (!validCanonicalPool || !validCurveAccount) {
+              result = { allowed: false, reason: "ONCHAIN_CANONICAL_MIGRATION_PROOF_MISSING" };
             } else {
               result = {
                 allowed: true,
-                reason: "PUMPSWAP_MIGRATION_VERIFIED",
-                mode: "verified-pumpswap-migration"
+                reason: "CANONICAL_PUMPSWAP_MIGRATION_VERIFIED",
+                mode: "verified-canonical-pumpswap-migration"
               };
             }
           }
@@ -201,7 +252,6 @@ async function verifyPumpSwapMigration(tokenAddress, pairAddress) {
   migrationChecksPending.set(cacheKey, request);
   return request;
 }
-
 async function getLiquidityProtection(tokenAddress, pairAddress) {
   const lock = await getLockStatus(tokenAddress);
   if (lock?.allowed && Number(lock.lockedPercent) >= 90) {
@@ -215,7 +265,7 @@ async function getLiquidityProtection(tokenAddress, pairAddress) {
 }
 const CONFIG = Object.freeze({
  capital:{startingUsd:100,maxOpenPositions:4,compoundRates:[0.10,0.125,0.15],minimumTradeUsd:10,maximumLiquidityFraction:0.01,pauseAtBalanceUsd:70},
- entry:{minimumAgeMinutes:5,maximumAgeHours:120,minimumLiquidityUsd:15000,minimumVolume1hUsd:5000,maximumTop10HolderPercent:40,minimumSellQuotePercent:90,watchlistMaxTokens:20,watchlistPollIntervalSeconds:15,watchlistTimeoutMinutes:90,priceHistoryRetentionMinutes:12,volumeWindowMinutes:5,sampleTimeDriftIntervals:2,discoveryRefreshSeconds:60,safetyRecheckSeconds:120,stopLossCooldownHours:24,permanentStopLossPercent:25,initialBreakoutRisePercent:8,baseBreakdownPercent:3,baseNoNewLowMinutes:3,reentryMinGivebackPercent:25,reentryMaxGivebackPercent:50,reentryTriggerRisePercent:4,volumeSurgeMultiplier:1.5,maximumRecoveryPercent:70,baseStopBelowLowPercent:3},
+ entry:{minimumAgeMinutes:5,maximumAgeHours:120,minimumLiquidityUsd:15000,minimumVolume1hUsd:5000,minimumSellQuotePercent:90,watchlistMaxTokens:20,watchlistPollIntervalSeconds:15,watchlistTimeoutMinutes:90,priceHistoryRetentionMinutes:12,volumeWindowMinutes:5,sampleTimeDriftIntervals:2,discoveryRefreshSeconds:60,safetyRecheckSeconds:120,stopLossCooldownHours:24,permanentStopLossPercent:25,initialBreakoutRisePercent:8,baseBreakdownPercent:3,baseNoNewLowMinutes:3,reentryMinGivebackPercent:25,reentryMaxGivebackPercent:50,reentryTriggerRisePercent:4,volumeSurgeMultiplier:1.5,maximumRecoveryPercent:70,baseStopBelowLowPercent:3},
  exit:{stopLossPercent:12,breakevenTriggerPercent:10,profitFloorNetPercent:4,firstTargetPercent:15,firstTargetOriginalPositionPercent:50,secondTargetPercent:30,secondTargetOriginalPositionPercent:15,trailingStopPercent:12,timeStopMinutes:15,minimumGainAtTimeStopPercent:5,maximumHoldMinutes:45,liquidityDropPercent:25,stalePriceDataMs:30000},
  estimatedCosts:{poolFeePercentPerSwap:0.30,solanaFeeUsdPerSwap:0.01,priorityFeeUsdPerSwap:0.01},
  logging:{rejectedTokenCooldownSeconds:300,maxRejectedLogEntries:1000,maxWatchlistRemovalEvents:200}
@@ -562,7 +612,7 @@ async function getSafetyMetadata(tokenAddress) {
   const report = await getTokenReport(tokenAddress);
   if (!report || report.rugged !== false ||
       !Array.isArray(report.risks) ||
-      !report.token || !Array.isArray(report.topHolders)) {
+      !report.token) {
     return { passed: false, reason: "RUGCHECK_REPORT_MISSING_OR_FAILED" };
   }
 
@@ -572,7 +622,7 @@ async function getSafetyMetadata(tokenAddress) {
     return { passed: false, reason: "MINT_OR_FREEZE_AUTHORITY_NOT_REVOKED" };
   }
 
-  const holders = report.topHolders.slice(0, 10);
+  const holders = Array.isArray(report.topHolders) ? report.topHolders.slice(0, 10) : [];
   if (holders.length < 10 ||
       holders.some(holder => optionalNumber(holder?.pct) === null)) {
     return { passed: false, reason: "TOP10_HOLDER_DATA_MISSING" };
@@ -582,9 +632,6 @@ async function getSafetyMetadata(tokenAddress) {
     (sum, holder) => sum + Number(holder.pct),
     0
   );
-  if (top10HolderPercent >= CONFIG.entry.maximumTop10HolderPercent) {
-    return { passed: false, reason: "TOP10_HOLDERS_AT_OR_ABOVE_LIMIT" };
-  }
 
   const unsafeRisk = report.risks.some(risk => {
     const name = String(risk?.name || "").toLowerCase();
@@ -933,6 +980,11 @@ async function checkEntryFilters(data, token) {
   }
 
   Object.assign(data, safety.metadata);
+  console.info(
+    "V3.2-MOMENTUM | HOLDER DISTRIBUTION | token=" + tokenAddress +
+    " | top10_percent=" + Number(safety.metadata.top10HolderPercent).toFixed(2) +
+    " | hard_limit=none"
+  );
   if (!addWatchedToken(tokenAddress, data, now, reentryContext)) {
     return rejectToken(tokenAddress, "RECENTLY_REMOVED_FROM_WATCHLIST", now);
   }
@@ -1158,6 +1210,7 @@ async function discoverBuyPriorityCandidates(options = {}) {
           sells5m: Number(candidate.sells5m) || 0,
           buys1h: Number(candidate.buys1h) || 0,
           sells1h: Number(candidate.sells1h) || 0,
+          top10HolderPercent: Number(candidate.top10HolderPercent),
           sellQuoteReturnPercent: Number(quote.returnPercent.toFixed(2)),
           sellQuoteRouter: quote.router
         },
