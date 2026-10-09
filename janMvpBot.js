@@ -204,7 +204,7 @@ function createJanMvpBot({
         if (occupied.has(candidate.tokenAddress)) continue;
         if (!tokenLossGuard.allows(candidate)) continue;
         const lock = await checkLiquidityLock(candidate.tokenAddress);
-        if (!lock?.allowed || Number(lock.lockedPercent) < 90) {
+        if (!lock?.allowed || Number(lock.lockedPercent) < 85) {
           console.log("SWARM LP LOCK GATE | " + candidate.symbol + " | skipped | " + (lock?.reason || "LOCK_STATUS_UNAVAILABLE"));
           continue;
         }
