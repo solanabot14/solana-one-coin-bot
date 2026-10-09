@@ -49,6 +49,7 @@ function createJanMvpBot({
     getHistory: () => trader.getState().executions,
     scannerIntervalMs: SWARM_DISCOVERY_INTERVAL_MS
   });
+  const blockedMirrorNotices = new Set();
   let candidateCache = [];
   let candidateCacheAt = 0;
   const livePositionSnapshots = new Map();
@@ -107,9 +108,13 @@ function createJanMvpBot({
     const position = og?.position;
     if (!position || !isActive(session)) return;
     if (tokenLossGuard.lossStreak(position.tokenAddress) >= 2) {
-      console.log(`SWARM TOKEN LOSS LOCK | ${position.symbol} | refusing mirror after two consecutive losses`);
+      if (!blockedMirrorNotices.has(position.tokenAddress)) {
+        blockedMirrorNotices.add(position.tokenAddress);
+        console.log(`SWARM TOKEN LOSS LOCK | ${position.symbol} | refusing mirror after two consecutive losses`);
+      }
       return;
     }
+    blockedMirrorNotices.delete(position.tokenAddress);
 
     const sourceOgPositionId = ogPositionId(position);
     if (alreadyMirrored(sourceOgPositionId)) return;
