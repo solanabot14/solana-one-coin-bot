@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const market = require("./dexscreener");
 const scanner = require("./scanner");
 const { analyzeToken } = require("./strategy");
@@ -11,6 +12,207 @@ const telegram = require("./telegram");
 const BOT_LABEL = "New Claude Strategy";
 const STRATEGY_VERSION = "v3.2-momentum";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
+// Only exempt confirmed PumpSwap graduations: verify the Pump curve is complete and the live pool is owned by Pump AMM.
+const PUMP_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
+const PUMP_AMM_PROGRAM_ID = "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA";
+const PUMP_BONDING_CURVE_DISCRIMINATOR = crypto.createHash("sha256")
+  .update("account:BondingCurve").digest().subarray(0, 8);
+const migrationCheckCache = new Map();
+const migrationChecksPending = new Map();
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const ED25519_P = (1n << 255n) - 19n;
+const ED25519_D = ((-121665n % ED25519_P) + ED25519_P) % ED25519_P *
+  modPow(121666n, ED25519_P - 2n, ED25519_P) % ED25519_P;
+const ED25519_SQRT_M1 = modPow(2n, (ED25519_P - 1n) / 4n, ED25519_P);
+
+function modPow(base, exponent, modulus) {
+  let value = ((base % modulus) + modulus) % modulus;
+  let power = exponent;
+  let result = 1n;
+  while (power > 0n) {
+    if (power & 1n) result = result * value % modulus;
+    value = value * value % modulus;
+    power >>= 1n;
+  }
+  return result;
+}
+
+function decodeBase58PublicKey(value) {
+  if (typeof value !== "string" || !value) return null;
+  let number = 0n;
+  for (const character of value) {
+    const digit = BASE58_ALPHABET.indexOf(character);
+    if (digit < 0) return null;
+    number = number * 58n + BigInt(digit);
+  }
+  const decoded = [];
+  while (number > 0n) {
+    decoded.push(Number(number & 255n));
+    number >>= 8n;
+  }
+  decoded.reverse();
+  const leadingZeros = (value.match(/^1*/) || [""])[0].length;
+  const bytes = [...new Array(leadingZeros).fill(0), ...decoded];
+  if (bytes.length !== 32) return null;
+  return Buffer.from(bytes);
+}
+
+function isEd25519Point(bytes) {
+  if (!Buffer.isBuffer(bytes) || bytes.length !== 32) return false;
+  const encoded = Buffer.from(bytes);
+  const sign = encoded[31] >> 7;
+  encoded[31] &= 0x7f;
+  let y = 0n;
+  for (let i = encoded.length - 1; i >= 0; i--) y = (y << 8n) | BigInt(encoded[i]);
+  if (y >= ED25519_P) return false;
+  const ySquared = y * y % ED25519_P;
+  const numerator = (ySquared - 1n + ED25519_P) % ED25519_P;
+  const denominator = (ED25519_D * ySquared + 1n) % ED25519_P;
+  if (denominator === 0n) return false;
+  const xSquared = numerator * modPow(denominator, ED25519_P - 2n, ED25519_P) % ED25519_P;
+  let x = modPow(xSquared, (ED25519_P + 3n) / 8n, ED25519_P);
+  if (x * x % ED25519_P !== xSquared) x = x * ED25519_SQRT_M1 % ED25519_P;
+  if (x * x % ED25519_P !== xSquared) return false;
+  return x !== 0n || sign === 0;
+}
+
+function deriveProgramAddress(seeds, programId) {
+  const programBytes = decodeBase58PublicKey(programId);
+  if (!programBytes) return null;
+  for (let bump = 255; bump >= 0; bump--) {
+    const digest = crypto.createHash("sha256").update(Buffer.concat([
+      ...seeds,
+      Buffer.from([bump]),
+      programBytes,
+      Buffer.from("ProgramDerivedAddress")
+    ])).digest();
+    if (!isEd25519Point(digest)) return encodeBase58PublicKey(digest);
+  }
+  return null;
+}
+
+function encodeBase58PublicKey(bytes) {
+  let number = 0n;
+  for (const byte of bytes) number = number * 256n + BigInt(byte);
+  let encoded = "";
+  while (number > 0n) {
+    const digit = Number(number % 58n);
+    encoded = BASE58_ALPHABET[digit] + encoded;
+    number /= 58n;
+  }
+  for (const byte of bytes) {
+    if (byte !== 0) break;
+    encoded = "1" + encoded;
+  }
+  return encoded || "1";
+}
+
+function getPumpBondingCurveAddress(tokenAddress) {
+  const mint = decodeBase58PublicKey(tokenAddress);
+  if (!mint) return null;
+  return deriveProgramAddress([Buffer.from("bonding-curve"), mint], PUMP_PROGRAM_ID);
+}
+
+async function rpcGetAccounts(addresses) {
+  const response = await fetch("https://api.mainnet-beta.solana.com", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: "new-claude-lp-migration-check",
+      method: "getMultipleAccounts",
+      params: [addresses, { encoding: "base64", commitment: "confirmed" }]
+    }),
+    signal: AbortSignal.timeout(8000)
+  });
+  if (!response.ok) return null;
+  const body = await response.json();
+  return Array.isArray(body?.result?.value) ? body.result.value : null;
+}
+
+async function verifyPumpSwapMigration(tokenAddress, pairAddress) {
+  const cacheKey = tokenAddress + "|" + pairAddress;
+  const cached = migrationCheckCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  if (migrationChecksPending.has(cacheKey)) return migrationChecksPending.get(cacheKey);
+
+  const request = (async () => {
+    let result = { allowed: false, reason: "MIGRATION_NOT_VERIFIED" };
+    try {
+      const pairResponse = await fetch(
+        "https://api.dexscreener.com/latest/dex/pairs/solana/" + encodeURIComponent(pairAddress),
+        { signal: AbortSignal.timeout(8000) }
+      );
+      if (!pairResponse.ok) {
+        result = { allowed: false, reason: "PAIR_VERIFICATION_UNAVAILABLE" };
+      } else {
+        const pairBody = await pairResponse.json();
+        const pair = (Array.isArray(pairBody?.pairs) ? pairBody.pairs : []).find(item =>
+          String(item.chainId || "").toLowerCase() === "solana" &&
+          String(item.pairAddress || "").toLowerCase() === pairAddress.toLowerCase()
+        );
+        const pairContainsToken =
+          [pair?.baseToken?.address, pair?.quoteToken?.address]
+            .some(address => String(address || "").toLowerCase() === tokenAddress.toLowerCase());
+        if (!pair || String(pair.dexId || "").toLowerCase() !== "pumpswap" || !pairContainsToken) {
+          result = { allowed: false, reason: "NOT_A_VERIFIED_PUMPSWAP_PAIR" };
+        } else if (!(Number(pair.liquidity?.usd) >= CONFIG.entry.minimumLiquidityUsd)) {
+          result = { allowed: false, reason: "MIGRATED_POOL_LIQUIDITY_BELOW_MINIMUM" };
+        } else {
+          const bondingCurveAddress = getPumpBondingCurveAddress(tokenAddress);
+          if (!bondingCurveAddress) {
+            result = { allowed: false, reason: "BONDING_CURVE_ADDRESS_UNAVAILABLE" };
+          } else {
+            const accounts = await rpcGetAccounts([pairAddress, bondingCurveAddress]);
+            const poolAccount = accounts?.[0];
+            const curveAccount = accounts?.[1];
+            const curveData = Array.isArray(curveAccount?.data)
+              ? Buffer.from(curveAccount.data[0] || "", "base64") : null;
+            const validCurveAccount = curveAccount?.owner === PUMP_PROGRAM_ID &&
+              curveData?.length >= 49 &&
+              curveData.subarray(0, 8).equals(PUMP_BONDING_CURVE_DISCRIMINATOR) &&
+              curveData[48] === 1;
+            if (poolAccount?.owner !== PUMP_AMM_PROGRAM_ID || !validCurveAccount) {
+              result = { allowed: false, reason: "ONCHAIN_MIGRATION_PROOF_MISSING" };
+            } else {
+              result = {
+                allowed: true,
+                reason: "PUMPSWAP_MIGRATION_VERIFIED",
+                mode: "verified-pumpswap-migration"
+              };
+            }
+          }
+        }
+      }
+    } catch (_) {
+      result = { allowed: false, reason: "MIGRATION_VERIFICATION_ERROR" };
+    }
+    if (migrationCheckCache.size >= 1000) {
+      const oldestKey = migrationCheckCache.keys().next().value;
+      if (oldestKey) migrationCheckCache.delete(oldestKey);
+    }
+    migrationCheckCache.set(cacheKey, {
+      value: result,
+      expiresAt: Date.now() + (result.allowed ? 60000 : 15000)
+    });
+    return result;
+  })().finally(() => migrationChecksPending.delete(cacheKey));
+
+  migrationChecksPending.set(cacheKey, request);
+  return request;
+}
+
+async function getLiquidityProtection(tokenAddress, pairAddress) {
+  const lock = await getLockStatus(tokenAddress);
+  if (lock?.allowed && Number(lock.lockedPercent) >= 90) {
+    return {
+      allowed: true,
+      mode: "verified-lp-lock",
+      lockedPercent: Number(lock.lockedPercent)
+    };
+  }
+  return verifyPumpSwapMigration(tokenAddress, pairAddress);
+}
 const CONFIG = Object.freeze({
  capital:{startingUsd:100,maxOpenPositions:4,compoundRates:[0.10,0.125,0.15],minimumTradeUsd:10,maximumLiquidityFraction:0.01,pauseAtBalanceUsd:70},
  entry:{minimumAgeMinutes:5,maximumAgeHours:72,minimumLiquidityUsd:15000,minimumVolume1hUsd:5000,maximumTop10HolderPercent:35,minimumSellQuotePercent:90,watchlistMaxTokens:20,watchlistPollIntervalSeconds:15,watchlistTimeoutMinutes:90,priceHistoryRetentionMinutes:12,volumeWindowMinutes:5,sampleTimeDriftIntervals:2,discoveryRefreshSeconds:60,safetyRecheckSeconds:120,stopLossCooldownHours:24,permanentStopLossPercent:25,initialBreakoutRisePercent:8,baseBreakdownPercent:3,baseNoNewLowMinutes:3,reentryMinGivebackPercent:25,reentryMaxGivebackPercent:50,reentryTriggerRisePercent:4,volumeSurgeMultiplier:1.5,maximumRecoveryPercent:70,baseStopBelowLowPercent:3},
@@ -705,6 +907,11 @@ async function checkEntryFilters(data, token) {
     return rejectToken(tokenAddress, "ONE_HOUR_BUYS_NOT_ABOVE_SELLS", now);
   }
 
+  const liquidityProtection = await getLiquidityProtection(tokenAddress, pairAddress);
+  if (!liquidityProtection.allowed) {
+    return rejectToken(tokenAddress, "LP_PROTECTION_NOT_VERIFIED", now, liquidityProtection.reason);
+  }
+
   const reentryContext = getEligibleReentryContext(tokenAddress);
   if (!reentryContext) {
     return rejectToken(tokenAddress, "DO_NOT_REENTER_UNPROFITABLE_OR_REENTERED_TOKEN", now);
@@ -911,6 +1118,12 @@ async function discoverBuyPriorityCandidates(options = {}) {
     }
     const sizing = getBuySizing(portfolio, candidate);
     if (sizing.amountInvested < CONFIG.capital.minimumTradeUsd) continue;
+    const liquidityProtection = await getLiquidityProtection(candidate.tokenAddress, candidate.pairAddress);
+    if (!liquidityProtection.allowed) {
+      console.log("LP PROTECTION GATE | " + candidate.symbol + " | skipped | " + liquidityProtection.reason);
+      removeWatchedToken(candidate.tokenAddress, "lp_protection_check_failed:" + liquidityProtection.reason, now);
+      continue;
+    }
     let quote = item.triggerSellQuote;
     if (!quote || item.triggerSellQuoteAmountUsd !== sizing.amountInvested) {
       quote = await getSellRouteQuote(candidate.tokenAddress, sizing.amountInvested, candidate.priceUsd);
@@ -924,7 +1137,7 @@ async function discoverBuyPriorityCandidates(options = {}) {
     }
     ready.push({
       ...candidate,
-      reasons: [...(Array.isArray(candidate.reasons) ? candidate.reasons : []), STRATEGY_VERSION + " sell route passed"],
+      reasons: [...(Array.isArray(candidate.reasons) ? candidate.reasons : []), STRATEGY_VERSION + " sell route passed", "LP protection: " + liquidityProtection.mode],
       experimentEntry: {
         strategy: STRATEGY_VERSION,
         entryMode: candidate.entryMode,
@@ -1223,7 +1436,7 @@ const bot = createBot({
   reentryStateFile: statePath("v31BuyPriorityTestReentryState.json"),
   maxOpenPositions: CONFIG.capital.maxOpenPositions,
   scannerIntervalMs: CONFIG.entry.watchlistPollIntervalSeconds * 1000,
-  requireLiquidityLock: true,
+  requireLiquidityLock: false,
   useReentryGuards: false,
   useSimpleCooldown: false,
   acceptedSignals: ["BUY", "STRONG BUY"],
