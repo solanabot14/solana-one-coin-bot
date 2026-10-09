@@ -950,6 +950,8 @@ function buildEntryTrigger(item, now) {
     baseLowUsd: baseLow,
     previousPeakUsd: isReentry ? item.reentryContext.previousPeakUsd : null,
     reentryGivebackPercent,
+    breakoutRisePercent: riseFromBasePercent,
+    triggerPriceUsd: current.price,
     pullbackLowUsd: isReentry ? item.pullbackLow : null,
     pullbackPeakUsd: isReentry ? item.reentryContext.previousPeakUsd : null,
     pullbackDepthPercent: isReentry ? reentryGivebackPercent : null,
