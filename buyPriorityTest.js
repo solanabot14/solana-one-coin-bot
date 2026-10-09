@@ -657,11 +657,61 @@ async function getSafetyMetadata(tokenAddress) {
 function classifyHybridEntry(data) {
   const analysis = analyzeToken(data);
   const sourceSignal = String(analysis.signal || "NO DATA").toUpperCase();
+  const sourceReasons = Array.isArray(analysis.reasons) ? analysis.reasons : [];
+
+  const change5m = optionalNumber(data.priceChange5m) ?? 0;
+  const change1h = optionalNumber(data.priceChange1h) ?? 0;
+  const change24h = optionalNumber(data.priceChange24h) ?? 0;
+  const buys5m = optionalNumber(data.buys5m);
+  const sells5m = optionalNumber(data.sells5m);
+  const buys1h = optionalNumber(data.buys1h);
+  const sells1h = optionalNumber(data.sells1h);
+  const totalTransactions = (buys5m || 0) + (sells5m || 0);
+  const buyRatio = totalTransactions > 0
+    ? (buys5m || 0) / totalTransactions
+    : 0;
+
+  const hardAntiChase =
+    change5m > 8 ||
+    change1h > 40 ||
+    change24h > 250;
+  const possibleBuyingFrenzy =
+    totalTransactions >= 20 &&
+    buyRatio > 0.80 &&
+    change5m > 4;
+  const localMomentumConfirmed =
+    !hardAntiChase &&
+    !possibleBuyingFrenzy &&
+    change5m >= 0.25 &&
+    change5m <= 6 &&
+    change1h > 0 &&
+    change1h <= 30 &&
+    buyRatio >= 0.52 &&
+    totalTransactions >= 20 &&
+    buys5m !== null &&
+    sells5m !== null &&
+    buys5m > sells5m &&
+    buys1h !== null &&
+    sells1h !== null &&
+    buys1h > sells1h;
+
+  const sourceSignalAccepted =
+    sourceSignal === "BUY" || sourceSignal === "STRONG BUY";
+  const localOverride = !sourceSignalAccepted && localMomentumConfirmed;
+  const signal = sourceSignalAccepted
+    ? sourceSignal
+    : localOverride
+      ? "BUY"
+      : sourceSignal;
+
   return {
     score: Number(analysis.score) || 0,
-    signal: sourceSignal,
+    signal,
     sourceSignal,
-    reasons: Array.isArray(analysis.reasons) ? analysis.reasons : []
+    localConfirmation: localOverride,
+    reasons: localOverride
+      ? [...sourceReasons, "New Claude local momentum confirmation passed"]
+      : sourceReasons
   };
 }
 
@@ -755,7 +805,9 @@ function buildEntryTrigger(item, now) {
       item.tokenAddress,
       "ENTRY_SIGNAL_" + rejectedSignal,
       now,
-      "score=" + entryAnalysis.score
+      "source_signal=" + entryAnalysis.sourceSignal +
+        " | score=" + entryAnalysis.score +
+        " | reasons=" + JSON.stringify(entryAnalysis.reasons)
     );
     return null;
   }
