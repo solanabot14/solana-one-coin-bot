@@ -13,8 +13,8 @@ const STRATEGY_VERSION = "v3.2-momentum";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const CONFIG = Object.freeze({
  capital:{startingUsd:100,maxOpenPositions:4,compoundRates:[0.10,0.125,0.15],minimumTradeUsd:10,maximumLiquidityFraction:0.01,pauseAtBalanceUsd:70},
- entry:{minimumAgeMinutes:10,maximumAgeHours:48,minimumLiquidityUsd:20000,minimumVolume1hUsd:10000,maximumTop10HolderPercent:30,minimumSellQuotePercent:90,watchlistMaxTokens:20,watchlistPollIntervalSeconds:15,watchlistTimeoutMinutes:90,priceHistoryRetentionMinutes:12,volumeWindowMinutes:5,sampleTimeDriftIntervals:2,discoveryRefreshSeconds:60,safetyRecheckSeconds:120,stopLossCooldownHours:24,permanentStopLossPercent:25,initialBreakoutRisePercent:8,baseBreakdownPercent:3,baseNoNewLowMinutes:3,reentryMinGivebackPercent:25,reentryMaxGivebackPercent:50,reentryTriggerRisePercent:4,volumeSurgeMultiplier:1.5,maximumRecoveryPercent:70,baseStopBelowLowPercent:3},
- exit:{stopLossPercent:15,breakevenTriggerPercent:15,firstTargetPercent:25,firstTargetOriginalPositionPercent:40,secondTargetPercent:60,secondTargetOriginalPositionPercent:30,trailingStopPercent:20,timeStopMinutes:15,minimumGainAtTimeStopPercent:5,maximumHoldMinutes:60,liquidityDropPercent:30,stalePriceDataMs:30000},
+ entry:{minimumAgeMinutes:5,maximumAgeHours:72,minimumLiquidityUsd:15000,minimumVolume1hUsd:5000,maximumTop10HolderPercent:35,minimumSellQuotePercent:90,watchlistMaxTokens:20,watchlistPollIntervalSeconds:15,watchlistTimeoutMinutes:90,priceHistoryRetentionMinutes:12,volumeWindowMinutes:5,sampleTimeDriftIntervals:2,discoveryRefreshSeconds:60,safetyRecheckSeconds:120,stopLossCooldownHours:24,permanentStopLossPercent:25,initialBreakoutRisePercent:8,baseBreakdownPercent:3,baseNoNewLowMinutes:3,reentryMinGivebackPercent:25,reentryMaxGivebackPercent:50,reentryTriggerRisePercent:4,volumeSurgeMultiplier:1.5,maximumRecoveryPercent:70,baseStopBelowLowPercent:3},
+ exit:{stopLossPercent:12,breakevenTriggerPercent:10,profitFloorNetPercent:4,firstTargetPercent:15,firstTargetOriginalPositionPercent:50,secondTargetPercent:30,secondTargetOriginalPositionPercent:15,trailingStopPercent:12,timeStopMinutes:15,minimumGainAtTimeStopPercent:5,maximumHoldMinutes:45,liquidityDropPercent:25,stalePriceDataMs:30000},
  estimatedCosts:{poolFeePercentPerSwap:0.30,solanaFeeUsdPerSwap:0.01,priorityFeeUsdPerSwap:0.01},
  logging:{rejectedTokenCooldownSeconds:300,maxRejectedLogEntries:1000,maxWatchlistRemovalEvents:200}
 });
@@ -1093,25 +1093,76 @@ function evaluateExit({ position, freshData, currentPrice, now = Date.now() }) {
   const hardStopPrice = entry * (1 - CONFIG.exit.stopLossPercent / 100);
   let activeStopPrice = Number.isFinite(baseStopPrice)
     ? Math.max(baseStopPrice, hardStopPrice) : hardStopPrice;
+  let activeStopReason = Number.isFinite(baseStopPrice) && baseStopPrice >= hardStopPrice
+    ? "BASE LOW STOP -" + CONFIG.entry.baseStopBelowLowPercent + "%"
+    : "STOP LOSS -" + CONFIG.exit.stopLossPercent + "%";
+
   if (highProfitPercent >= CONFIG.exit.breakevenTriggerPercent) {
-    activeStopPrice = Math.max(activeStopPrice, entry);
-  }
-  if (currentPrice <= activeStopPrice) {
-    if (highProfitPercent >= CONFIG.exit.breakevenTriggerPercent && activeStopPrice === entry) {
-      return { reason: "BREAKEVEN STOP", percent: 100 };
+    if (entry > activeStopPrice) {
+      activeStopPrice = entry;
+      activeStopReason = "BREAKEVEN STOP";
     }
-    const isBaseStop = Number.isFinite(baseStopPrice) && baseStopPrice >= hardStopPrice;
-    return {
-      reason: isBaseStop ? "BASE LOW STOP -" + CONFIG.entry.baseStopBelowLowPercent + "%" : "STOP LOSS -" + CONFIG.exit.stopLossPercent + "%",
-      percent: 100
-    };
+
+    const quantity = Number(position.quantity);
+    const basis = Number(position.amountInvested);
+    const remainingEntryCosts = position.remainingEntryCosts || {};
+    if (quantity > 0 && basis > 0 && Number.isFinite(pool.liquidityUsd) &&
+        pool.liquidityUsd > 0 && typeof estimateExecutionCosts === "function") {
+      const targetNetPnl = basis * CONFIG.exit.profitFloorNetPercent / 100;
+      const netPnlAtPrice = price => {
+        const saleValue = quantity * price;
+        const exitCosts = estimateExecutionCosts({
+          side: "SELL",
+          amountUsd: saleValue,
+          liquidityUsd: pool.liquidityUsd,
+          priceUsd: price,
+          position
+        });
+        if (!exitCosts) return NaN;
+        const entryCost = (Number(remainingEntryCosts.feesUsd) || 0) +
+          (Number(remainingEntryCosts.slippageUsd) || 0);
+        return saleValue - basis - entryCost -
+          (Number(exitCosts.feesUsd) || 0) -
+          (Number(exitCosts.slippageUsd) || 0);
+      };
+
+      let lower = 0;
+      let upper = entry;
+      let upperNetPnl = netPnlAtPrice(upper);
+      for (let i = 0; i < 24 && Number.isFinite(upperNetPnl) &&
+          upperNetPnl < targetNetPnl; i++) {
+        upper *= 1.5;
+        upperNetPnl = netPnlAtPrice(upper);
+      }
+      if (Number.isFinite(upperNetPnl) && upperNetPnl >= targetNetPnl) {
+        for (let i = 0; i < 40; i++) {
+          const middle = (lower + upper) / 2;
+          const middleNetPnl = netPnlAtPrice(middle);
+          if (!Number.isFinite(middleNetPnl) || middleNetPnl >= targetNetPnl) upper = middle;
+          else lower = middle;
+        }
+        if (upper > activeStopPrice) {
+          activeStopPrice = upper;
+          activeStopReason = "NET PROFIT FLOOR +" + CONFIG.exit.profitFloorNetPercent + "%";
+        }
+      }
+    }
+  }
+
+  if (stage >= 1) {
+    const trailingStopPrice = high * (1 - CONFIG.exit.trailingStopPercent / 100);
+    if (trailingStopPrice > activeStopPrice) {
+      activeStopPrice = trailingStopPrice;
+      activeStopReason = "TRAILING STOP -" + CONFIG.exit.trailingStopPercent + "%";
+    }
+  }
+
+  if (currentPrice <= activeStopPrice) {
+    return { reason: activeStopReason, percent: 100 };
   }
   if (holdMinutes >= CONFIG.exit.maximumHoldMinutes) return { reason: "MAX HOLD " + CONFIG.exit.maximumHoldMinutes + "M", percent: 100 };
   if (holdMinutes >= CONFIG.exit.timeStopMinutes && highProfitPercent < CONFIG.exit.minimumGainAtTimeStopPercent) {
     return { reason: "TIME STOP " + CONFIG.exit.timeStopMinutes + "M", percent: 100 };
-  }
-  if (stage >= 2 && dropFromHigh >= CONFIG.exit.trailingStopPercent) {
-    return { reason: "TRAILING STOP -" + CONFIG.exit.trailingStopPercent + "%", percent: 100 };
   }
   if (stage === 0 && profitPercent >= CONFIG.exit.firstTargetPercent) {
     return {
@@ -1127,7 +1178,6 @@ function evaluateExit({ position, freshData, currentPrice, now = Date.now() }) {
   }
   return null;
 }
-
 function logTradeSummary(event, trade = {}) {
   const entryPrice = optionalNumber(trade.entryPrice);
   const exitPrice = optionalNumber(trade.exitPrice);
@@ -1173,7 +1223,7 @@ const bot = createBot({
   reentryStateFile: statePath("v31BuyPriorityTestReentryState.json"),
   maxOpenPositions: CONFIG.capital.maxOpenPositions,
   scannerIntervalMs: CONFIG.entry.watchlistPollIntervalSeconds * 1000,
-  requireLiquidityLock: false,
+  requireLiquidityLock: true,
   useReentryGuards: false,
   useSimpleCooldown: false,
   acceptedSignals: ["BUY", "STRONG BUY"],
