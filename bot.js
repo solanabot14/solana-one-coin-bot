@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const market = require("./dexscreener");
 const scanner = require("./scanner");
+const { createTokenLossGuard } = require("./tokenLossGuard");
 const paperTrader = require("./paperTrader");
 const telegram = require("./telegram");
 const { getLockStatus } = require("./lpLockChecker");
@@ -86,6 +87,10 @@ function createBot({
   entryPauseStateFile = null
 } = {}) {
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
+  const tokenLossGuard = createTokenLossGuard({
+    getHistory: () => getPortfolio().history,
+    scannerIntervalMs
+  });
   let activeSession = null;
   let scannerInterval = null;
   let positionInterval = null;
@@ -263,6 +268,7 @@ function createBot({
     const selected = [];
 
     for (const coin of buyCandidates) {
+      if (!tokenLossGuard.allows(coin)) continue;
       let lock = null;
       if (requireLiquidityLock) {
         lock = await checkLiquidityLock(coin.tokenAddress);

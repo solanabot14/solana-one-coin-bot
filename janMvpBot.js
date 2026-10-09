@@ -2,6 +2,7 @@ const market = require("./dexscreener");
 const telegram = require("./telegram");
 const scanner = require("./scanner");
 const { createJanMvpTrader } = require("./janMvpTrader");
+const { createTokenLossGuard } = require("./tokenLossGuard");
 const paperTrader = require("./paperTrader");
 const { getLockStatus } = require("./lpLockChecker");
 
@@ -44,6 +45,10 @@ function createJanMvpBot({
   let fillBusy = false;
   let monitorBusy = false;
   let lastError = null;
+  const tokenLossGuard = createTokenLossGuard({
+    getHistory: () => trader.getState().executions,
+    scannerIntervalMs: SWARM_DISCOVERY_INTERVAL_MS
+  });
   let candidateCache = [];
   let candidateCacheAt = 0;
   const livePositionSnapshots = new Map();
@@ -101,6 +106,10 @@ function createJanMvpBot({
     const og = getOgPortfolio();
     const position = og?.position;
     if (!position || !isActive(session)) return;
+    if (tokenLossGuard.lossStreak(position.tokenAddress) >= 2) {
+      console.log(`SWARM TOKEN LOSS LOCK | ${position.symbol} | refusing mirror after two consecutive losses`);
+      return;
+    }
 
     const sourceOgPositionId = ogPositionId(position);
     if (alreadyMirrored(sourceOgPositionId)) return;
@@ -188,6 +197,7 @@ function createJanMvpBot({
       while (candidateIndex < usable.length) {
         const candidate = usable[candidateIndex++];
         if (occupied.has(candidate.tokenAddress)) continue;
+        if (!tokenLossGuard.allows(candidate)) continue;
         const lock = await checkLiquidityLock(candidate.tokenAddress);
         if (!lock?.allowed || Number(lock.lockedPercent) < 90) {
           console.log("SWARM LP LOCK GATE | " + candidate.symbol + " | skipped | " + (lock?.reason || "LOCK_STATUS_UNAVAILABLE"));
