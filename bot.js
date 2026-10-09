@@ -1,5 +1,6 @@
 const market = require("./dexscreener");
 const scanner = require("./scanner");
+const { createTokenLossGuard } = require("./tokenLossGuard");
 const paperTrader = require("./paperTrader");
 const telegram = require("./telegram");
 const { getLockStatus } = require("./lpLockChecker");
@@ -39,6 +40,10 @@ function createBot({
   botLabel = "B3.1 Profitability Lab - Paper Only"
 } = {}) {
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
+  const tokenLossGuard = createTokenLossGuard({
+    getHistory: () => getPortfolio().history,
+    scannerIntervalMs
+  });
   let activeSession = null;
   let scannerInterval = null;
   let positionInterval = null;
@@ -146,6 +151,7 @@ function createBot({
     const selected = [];
 
     for (const coin of buyCandidates) {
+      if (!tokenLossGuard.allows(coin)) continue;
       const lock = await checkLiquidityLock(coin.tokenAddress);
       if (!isActive(session)) return;
       if (!lock?.allowed || Number(lock.lockedPercent) < 90) {
