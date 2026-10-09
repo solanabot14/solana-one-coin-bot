@@ -16,7 +16,7 @@ const REENTRY_MAX_MOMENTUM_5M = 4;
 const REENTRY_MIN_TRANSACTIONS_5M = 20;
 const REENTRY_MIN_BUY_RATIO = 0.52;
 const REENTRY_MAX_BUY_RATIO = 0.80;
-const REENTRY_MIN_LP_LOCK_PERCENT = 90;
+const REENTRY_MIN_LP_LOCK_PERCENT = 85;
 const REENTRY_MAX_LIQUIDITY_DRAWDOWN = 0.12;
 const HARD_STOP_PERCENT = -10;
 const TAKE_PROFIT_1_PERCENT = 15;
@@ -202,7 +202,7 @@ function createBot({
     }
 
     if (!selected.length) {
-      console.log("No BUY or STRONG BUY candidate with confirmed LP lock >=90% available.");
+      console.log("No BUY or STRONG BUY candidate with confirmed LP lock >=85% available.");
       return;
     }
 
