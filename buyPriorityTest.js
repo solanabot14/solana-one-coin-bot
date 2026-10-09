@@ -265,7 +265,7 @@ async function getLiquidityProtection(tokenAddress, pairAddress) {
 }
 const CONFIG = Object.freeze({
  capital:{startingUsd:100,maxOpenPositions:4,compoundRates:[0.10,0.125,0.15],minimumTradeUsd:10,maximumLiquidityFraction:0.01,pauseAtBalanceUsd:70},
- entry:{minimumAgeMinutes:3,maximumAgeHours:120,minimumLiquidityUsd:15000,minimumVolume1hUsd:3000,minimumSellQuotePercent:90,watchlistMaxTokens:20,watchlistPollIntervalSeconds:15,watchlistTimeoutMinutes:90,priceHistoryRetentionMinutes:12,volumeWindowMinutes:5,sampleTimeDriftIntervals:2,discoveryRefreshSeconds:60,safetyRecheckSeconds:120,stopLossCooldownHours:24,permanentStopLossPercent:25,initialBreakoutRisePercent:5,baseBreakdownPercent:3,baseNoNewLowMinutes:3,reentryMinGivebackPercent:25,reentryMaxGivebackPercent:50,reentryTriggerRisePercent:4,volumeSurgeMultiplier:1.25,maximumRecoveryPercent:70,baseStopBelowLowPercent:3},
+ entry:{minimumAgeMinutes:3,maximumAgeHours:120,minimumLiquidityUsd:15000,minimumVolume1hUsd:3000,minimumSellQuotePercent:90,watchlistMaxTokens:20,watchlistPollIntervalSeconds:15,watchlistTimeoutMinutes:90,priceHistoryRetentionMinutes:12,volumeWindowMinutes:5,sampleTimeDriftIntervals:2,discoveryRefreshSeconds:60,safetyRecheckSeconds:120,stopLossCooldownHours:24,permanentStopLossPercent:25,initialBreakoutRisePercent:3,baseBreakdownPercent:3,baseNoNewLowMinutes:3,reentryMinGivebackPercent:25,reentryMaxGivebackPercent:50,reentryTriggerRisePercent:4,volumeSurgeMultiplier:1.25,maximumRecoveryPercent:70,baseStopBelowLowPercent:3},
  exit:{stopLossPercent:12,breakevenTriggerPercent:10,profitFloorNetPercent:4,firstTargetPercent:15,firstTargetOriginalPositionPercent:50,secondTargetPercent:30,secondTargetOriginalPositionPercent:15,trailingStopPercent:12,timeStopMinutes:15,minimumGainAtTimeStopPercent:5,maximumHoldMinutes:45,liquidityDropPercent:25,stalePriceDataMs:30000},
  estimatedCosts:{poolFeePercentPerSwap:0.30,solanaFeeUsdPerSwap:0.01,priorityFeeUsdPerSwap:0.01},
  logging:{rejectedTokenCooldownSeconds:300,maxRejectedLogEntries:1000,maxWatchlistRemovalEvents:200}
@@ -727,8 +727,17 @@ function buildEntryTrigger(item, now) {
   const requiredRisePercent = isReentry
     ? e.reentryTriggerRisePercent
     : e.initialBreakoutRisePercent;
+  const rejectTrigger = (reason, detail) => {
+    rejectToken(item.tokenAddress, reason, now, detail);
+    return null;
+  };
 
-  if (!current || current.price <= 0 || !(baseLow > 0)) return null;
+  if (!current || !(current.price > 0) || !(baseLow > 0)) {
+    return rejectTrigger(
+      "TRIGGER_PRICE_OR_BASE_UNAVAILABLE",
+      "price=" + logPrice(current?.price) + " | base_low=" + logPrice(baseLow)
+    );
+  }
 
   const pairCreatedAt = optionalNumber(data.pairCreatedAt);
   const ageMinutes = pairCreatedAt === null
@@ -738,35 +747,123 @@ function buildEntryTrigger(item, now) {
   const volume1h = optionalNumber(data.volume1h);
   const buys1h = optionalNumber(data.buys1h);
   const sells1h = optionalNumber(data.sells1h);
-  if (!Number.isFinite(ageMinutes) ||
-      ageMinutes < e.minimumAgeMinutes ||
-      ageMinutes > e.maximumAgeHours * 60 ||
-      liquidity === null || liquidity < e.minimumLiquidityUsd ||
-      volume1h === null || volume1h < e.minimumVolume1hUsd ||
-      buys1h === null || sells1h === null || buys1h <= sells1h) return null;
+
+  if (!Number.isFinite(ageMinutes)) {
+    return rejectTrigger("TRIGGER_PAIR_AGE_DATA_MISSING");
+  }
+  if (ageMinutes < e.minimumAgeMinutes) {
+    return rejectTrigger(
+      "TRIGGER_PAIR_TOO_YOUNG",
+      "age_minutes=" + ageMinutes.toFixed(1) +
+        " | minimum_age_minutes=" + e.minimumAgeMinutes
+    );
+  }
+  if (ageMinutes > e.maximumAgeHours * 60) {
+    return rejectTrigger(
+      "TRIGGER_PAIR_TOO_OLD",
+      "age_hours=" + (ageMinutes / 60).toFixed(1) +
+        " | maximum_age_hours=" + e.maximumAgeHours
+    );
+  }
+  if (liquidity === null) {
+    return rejectTrigger("TRIGGER_LIQUIDITY_DATA_MISSING");
+  }
+  if (liquidity < e.minimumLiquidityUsd) {
+    return rejectTrigger(
+      "TRIGGER_LIQUIDITY_BELOW_MINIMUM",
+      "liquidity_usd=" + logUsd(liquidity) +
+        " | minimum_liquidity_usd=" + logUsd(e.minimumLiquidityUsd)
+    );
+  }
+  if (volume1h === null) {
+    return rejectTrigger("TRIGGER_ONE_HOUR_VOLUME_DATA_MISSING");
+  }
+  if (volume1h < e.minimumVolume1hUsd) {
+    return rejectTrigger(
+      "TRIGGER_ONE_HOUR_VOLUME_BELOW_MINIMUM",
+      "volume_1h_usd=" + logUsd(volume1h) +
+        " | minimum_volume_1h_usd=" + logUsd(e.minimumVolume1hUsd)
+    );
+  }
+  if (buys1h === null || sells1h === null) {
+    return rejectTrigger(
+      "TRIGGER_ONE_HOUR_TRADE_COUNTS_MISSING",
+      "buys_1h=" + (buys1h ?? "n/a") + " | sells_1h=" + (sells1h ?? "n/a")
+    );
+  }
+  if (buys1h <= sells1h) {
+    return rejectTrigger(
+      "TRIGGER_ONE_HOUR_BUYS_NOT_ABOVE_SELLS",
+      "buys_1h=" + buys1h + " | sells_1h=" + sells1h
+    );
+  }
 
   const riseFromBasePercent = (current.price - baseLow) / baseLow * 100;
-  if (riseFromBasePercent < requiredRisePercent) return null;
+  if (riseFromBasePercent < requiredRisePercent) {
+    return rejectTrigger(
+      "BREAKOUT_RISE_BELOW_MINIMUM",
+      "rise_percent=" + riseFromBasePercent.toFixed(2) +
+        " | required_percent=" + requiredRisePercent
+    );
+  }
 
   let reentryGivebackPercent = null;
   let recoveryPercent = null;
   if (isReentry) {
     const context = item.reentryContext;
+    if (!context || !(Number(context.previousGainUsd) > 0)) {
+      return rejectTrigger("REENTRY_CONTEXT_MISSING_OR_INVALID");
+    }
     const fullDrop = context.previousPeakUsd - item.pullbackLow;
-    if (!(fullDrop > 0)) return null;
+    if (!(fullDrop > 0)) {
+      return rejectTrigger(
+        "REENTRY_PULLBACK_RANGE_INVALID",
+        "previous_peak=" + logPrice(context.previousPeakUsd) +
+          " | pullback_low=" + logPrice(item.pullbackLow)
+      );
+    }
     reentryGivebackPercent =
       (context.previousPeakUsd - item.pullbackLow) /
       context.previousGainUsd * 100;
     if (reentryGivebackPercent < e.reentryMinGivebackPercent ||
-        reentryGivebackPercent > e.reentryMaxGivebackPercent) return null;
+        reentryGivebackPercent > e.reentryMaxGivebackPercent) {
+      return rejectTrigger(
+        "REENTRY_GIVEBACK_OUTSIDE_RANGE",
+        "giveback_percent=" + reentryGivebackPercent.toFixed(2) +
+          " | min_percent=" + e.reentryMinGivebackPercent +
+          " | max_percent=" + e.reentryMaxGivebackPercent
+      );
+    }
     recoveryPercent =
       (current.price - item.pullbackLow) / fullDrop * 100;
-    if (recoveryPercent > e.maximumRecoveryPercent) return null;
+    if (recoveryPercent > e.maximumRecoveryPercent) {
+      return rejectTrigger(
+        "REENTRY_RECOVERY_TOO_EXTENDED",
+        "recovery_percent=" + recoveryPercent.toFixed(2) +
+          " | maximum_percent=" + e.maximumRecoveryPercent
+      );
+    }
   }
 
-  if (current.buys5m === null || current.sells5m === null ||
-      current.buys5m <= current.sells5m ||
-      current.volume5m === null || current.volume5m <= 0) return null;
+  if (current.buys5m === null || current.sells5m === null) {
+    return rejectTrigger(
+      "TRIGGER_FIVE_MINUTE_TRADE_COUNTS_MISSING",
+      "buys_5m=" + (current.buys5m ?? "n/a") +
+        " | sells_5m=" + (current.sells5m ?? "n/a")
+    );
+  }
+  if (current.buys5m <= current.sells5m) {
+    return rejectTrigger(
+      "TRIGGER_FIVE_MINUTE_BUYS_NOT_ABOVE_SELLS",
+      "buys_5m=" + current.buys5m + " | sells_5m=" + current.sells5m
+    );
+  }
+  if (current.volume5m === null || !(current.volume5m > 0)) {
+    return rejectTrigger(
+      "TRIGGER_FIVE_MINUTE_VOLUME_MISSING_OR_ZERO",
+      "volume_5m_usd=" + logUsd(current.volume5m)
+    );
+  }
 
   const previousWindowAt = current.at - e.volumeWindowMinutes * 60000;
   const allowedSampleDriftMs =
@@ -788,8 +885,22 @@ function buildEntryTrigger(item, now) {
     : "rolling_1h_average";
 
   if (!(volumeSurgeBaselineUsd > 0) ||
-      !Number.isFinite(volumeSurgeBaselineUsd) ||
-      current.volume5m < volumeSurgeBaselineUsd * e.volumeSurgeMultiplier) return null;
+      !Number.isFinite(volumeSurgeBaselineUsd)) {
+    return rejectTrigger(
+      "FIVE_MINUTE_VOLUME_BASELINE_UNAVAILABLE",
+      "baseline_usd=" + logUsd(volumeSurgeBaselineUsd) +
+        " | source=" + volumeSurgeBaselineSource
+    );
+  }
+  if (current.volume5m < volumeSurgeBaselineUsd * e.volumeSurgeMultiplier) {
+    return rejectTrigger(
+      "FIVE_MINUTE_VOLUME_SURGE_BELOW_MINIMUM",
+      "volume_5m_usd=" + logUsd(current.volume5m) +
+        " | baseline_usd=" + logUsd(volumeSurgeBaselineUsd) +
+        " | required_multiplier=" + e.volumeSurgeMultiplier +
+        " | source=" + volumeSurgeBaselineSource
+    );
+  }
 
   const entryAnalysis = classifyHybridEntry({
     ...data,
@@ -839,15 +950,12 @@ function buildEntryTrigger(item, now) {
     baseLowUsd: baseLow,
     previousPeakUsd: isReentry ? item.reentryContext.previousPeakUsd : null,
     reentryGivebackPercent,
-    breakoutRisePercent: riseFromBasePercent,
-    triggerPriceUsd: current.price,
     pullbackLowUsd: isReentry ? item.pullbackLow : null,
     pullbackPeakUsd: isReentry ? item.reentryContext.previousPeakUsd : null,
     pullbackDepthPercent: isReentry ? reentryGivebackPercent : null,
     triggerRecoveryPercent: recoveryPercent
   };
 }
-
 async function pollWatchlist({ signal } = {}) {
   if (watchlistPollBusy || watchlist.size === 0) return;
   watchlistPollBusy = true;
