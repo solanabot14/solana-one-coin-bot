@@ -253,6 +253,7 @@ const bot = createBot({
   trader,
   getTokenData: market.getTokenData,
   discoverCandidates: discoverBuyPriorityCandidates,
+  acceptedSignals: ["BUY"],
   notifier: quietNotifier,
   checkLiquidityLock: getLockStatus,
   botLabel: BOT_LABEL,
