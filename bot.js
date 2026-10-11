@@ -121,6 +121,35 @@ function createBot({
     if (changed) persistReentryGuards(tokenCooldowns, reentryStateFile);
   }
 
+  const momentumEntryObservations = new Map();
+
+  function confirmMomentumEntry(coin, now) {
+    const tokenAddress = coin.tokenAddress;
+    const momentum5m = Number(coin.priceChange5m);
+    const volume5m = Number(coin.volume5m);
+    const buys5m = Number(coin.buys5m) || 0;
+    const sells5m = Number(coin.sells5m) || 0;
+    const transactions5m = buys5m + sells5m;
+    const buyRatio = transactions5m ? buys5m / transactions5m : 0;
+    const qualifies = tokenAddress && Number.isFinite(momentum5m) &&
+      momentum5m >= 0.5 && momentum5m <= 8 && volume5m >= 3000 &&
+      transactions5m >= 15 && buyRatio >= 0.55;
+    if (!qualifies) {
+      if (tokenAddress) momentumEntryObservations.delete(tokenAddress);
+      return false;
+    }
+    const current = { at: now, momentum5m, volume5m };
+    const previous = momentumEntryObservations.get(tokenAddress);
+    if (previous && now - previous.at <= scannerIntervalMs * 2 &&
+        momentum5m >= previous.momentum5m - 1 &&
+        volume5m >= previous.volume5m * 0.75) {
+      momentumEntryObservations.delete(tokenAddress);
+      return true;
+    }
+    momentumEntryObservations.set(tokenAddress, current);
+    return false;
+  }
+
   function observeReentry(coin, lock) {
     const guard = tokenCooldowns.get(coin.tokenAddress);
     if (!guard || guard.released) return true;
@@ -178,9 +207,14 @@ function createBot({
     const openTokens = new Set(getPositions().map(position => position.tokenAddress));
     const availableCandidates = candidates.filter(coin => !openTokens.has(coin.tokenAddress));
     const freeSlots = Math.max(0, MAX_OPEN_POSITIONS - getPositions().length);
-    const buyCandidates = availableCandidates.filter(
-      coin => (coin.signal === "BUY" || coin.signal === "STRONG BUY") && !openTokens.has(coin.tokenAddress)
-    );
+    const buyCandidates = availableCandidates.filter(coin => {
+      if (openTokens.has(coin.tokenAddress)) return false;
+      if (coin.signal === "BUY" || coin.signal === "STRONG BUY") {
+        momentumEntryObservations.delete(coin.tokenAddress);
+        return true;
+      }
+      return coin.signal === "WAIT" && confirmMomentumEntry(coin, Date.now());
+    });
     const selected = [];
 
     for (const coin of buyCandidates) {
@@ -194,6 +228,13 @@ function createBot({
       }
       const guard = tokenCooldowns.get(coin.tokenAddress);
       if (guard && !guard.released && !observeReentry(coin, lock)) continue;
+      if (coin.signal === "WAIT") {
+        coin.signal = "CONFIRMED MOMENTUM PAPER BUY";
+        coin.reasons = [
+          ...(Array.isArray(coin.reasons) ? coin.reasons : []),
+          "WAIT signal admitted after two scans with rising 5m momentum, volume and buy pressure"
+        ];
+      }
       coin.reasons = [
         ...(Array.isArray(coin.reasons) ? coin.reasons : []),
         `LP lock ${Number(lock.lockedPercent).toFixed(1)}% confirmed by RugCheck`
