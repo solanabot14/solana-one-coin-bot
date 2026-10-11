@@ -16,6 +16,7 @@ const REENTRY_MIN_TRANSACTIONS_5M = 20;
 const REENTRY_MIN_BUY_RATIO = 0.52;
 const REENTRY_MAX_BUY_RATIO = 0.80;
 const REENTRY_MIN_LP_LOCK_PERCENT = 85;
+const ENTRY_MIN_LP_LOCK_PERCENT = 80;
 const REENTRY_MAX_LIQUIDITY_DRAWDOWN = 0.12;
 const HARD_STOP_PERCENT = -10;
 const TAKE_PROFIT_1_PERCENT = 15;
@@ -181,7 +182,7 @@ function createBot({
     for (const coin of buyCandidates) {
       const lock = await checkLiquidityLock(coin.tokenAddress);
       if (!isActive(session)) return;
-      if (!lock?.allowed || Number(lock.lockedPercent) < REENTRY_MIN_LP_LOCK_PERCENT) {
+      if (!lock?.allowed || Number(lock.lockedPercent) < ENTRY_MIN_LP_LOCK_PERCENT) {
         console.log(`LP LOCK GATE | ${coin.symbol} | skipped | ${lock?.reason || "LOCK_STATUS_UNAVAILABLE"}`);
         continue;
       }
@@ -196,7 +197,7 @@ function createBot({
     }
 
     if (!selected.length) {
-      console.log("No BUY or STRONG BUY candidate with confirmed LP lock >=85% available.");
+      console.log("No BUY or STRONG BUY candidate with confirmed LP lock >=80% available.");
       return;
     }
 

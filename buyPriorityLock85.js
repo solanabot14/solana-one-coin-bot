@@ -6,7 +6,7 @@ const { createPaperTrader } = require("./paperTrader");
 const { createBot } = require("./bot85");
 const { getLockStatus } = require("./lpLockChecker85");
 
-const BOT_LABEL = "V3.1 BUY Priority Test - 85% LP Lock";
+const BOT_LABEL = "V3.1 BUY Priority Test - 80% LP Lock";
 const BUY_TO_STRONG_BUY_RATIO = 2;
 const COMPOUND_RATES = [0.10, 0.125, 0.15];
 const MINIMUM_BUY_USD = 10;
@@ -56,7 +56,11 @@ const trader = createPaperTrader(
 );
 
 async function discoverBuyPriorityCandidates(options = {}) {
-  const candidates = await scanner.discoverCandidates(options);
+  const candidates = await scanner.discoverCandidates({
+    ...options,
+    minimumLiquidityUsd: 20000,
+    minimumVolume24hUsd: 25000
+  });
   const history = trader.getPortfolio().history || [];
   const entryRecords = history.filter(row => row.type === "BUY");
   const buyCount = entryRecords.filter(row => row.entrySignal === "BUY").length;
