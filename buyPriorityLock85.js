@@ -120,6 +120,7 @@ const bot = createBot({
   discoverCandidates: discoverBuyPriorityCandidates,
   notifier: quietNotifier,
   checkLiquidityLock: getLockStatus,
+  acceptedSignals: ["BUY", "STRONG BUY"],
   botLabel: BOT_LABEL,
   reentryStateFile: statePath("v31BuyPriorityLock85ReentryState.json")
 });

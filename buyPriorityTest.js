@@ -18,13 +18,13 @@ const CONFIG = Object.freeze({
     pauseAtBalanceUsd: null
   },
   entry: {
-    minimumAgeMinutes: 30,
+    minimumAgeMinutes: 10,
     maximumAgeHours: 24,
-    minimumLiquidityUsd: 20000,
-    minimumVolume1hUsd: 10000,
+    minimumLiquidityUsd: 15000,
+    minimumVolume1hUsd: 5000,
     maximumRise15mPercent: 100,
-    momentumLookbackMinutes: 15,
-    momentumObservationRetentionMinutes: 20,
+    momentumLookbackMinutes: 5,
+    momentumObservationRetentionMinutes: 10,
     maximumTop10HolderPercent: 30
   },
   exit: {
@@ -258,6 +258,7 @@ const bot = createBot({
   botLabel: BOT_LABEL,
   reentryStateFile: statePath("v31BuyPriorityTestReentryState.json"),
   maxOpenPositions: CONFIG.capital.maxOpenPositions,
+  acceptedSignals: ["BUY", "STRONG BUY"],
   requireLiquidityLock: false,
   useReentryGuards: false,
   exitDecision: evaluateExit,
