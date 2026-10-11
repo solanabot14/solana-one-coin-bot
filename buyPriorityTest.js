@@ -15,7 +15,7 @@ const CONFIG = Object.freeze({
     tradeFraction: 0.10,
     minimumTradeUsd: 10,
     maximumLiquidityFraction: 0.01,
-    pauseAtBalanceUsd: 70
+    pauseAtBalanceUsd: null
   },
   entry: {
     minimumAgeMinutes: 30,
@@ -261,8 +261,8 @@ const bot = createBot({
   requireLiquidityLock: false,
   useReentryGuards: false,
   exitDecision: evaluateExit,
-  pauseEntriesAtBalance: CONFIG.capital.pauseAtBalanceUsd,
-  entryPauseStateFile: statePath("v31BuyPriorityTestEntryPause.json")
+  pauseEntriesAtBalance: null,
+  entryPauseStateFile: null
 });
 
 module.exports = {
