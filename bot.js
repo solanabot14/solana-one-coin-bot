@@ -154,7 +154,7 @@ function createBot({
       if (!tokenLossGuard.allows(coin)) continue;
       const lock = await checkLiquidityLock(coin.tokenAddress);
       if (!isActive(session)) return;
-      if (!lock?.allowed || Number(lock.lockedPercent) < 85) {
+      if (!Number.isFinite(Number(lock?.lockedPercent)) || Number(lock.lockedPercent) < 70) {
         console.log(`LP LOCK GATE | ${coin.symbol} | skipped | ${lock?.reason || "LOCK_STATUS_UNAVAILABLE"}`);
         continue;
       }
@@ -172,7 +172,7 @@ function createBot({
     }
 
     if (!selected.length) {
-      console.log("No FAST MOMENTUM paper candidate with confirmed LP lock >=85%.");
+      console.log("No FAST MOMENTUM paper candidate with confirmed LP lock >=70%.");
       return;
     }
 
