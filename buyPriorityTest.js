@@ -109,26 +109,31 @@ const trader = createPaperTrader(
 );
 
 const recentPriceObservations = new Map();
-async function checkEntryFilters(data, token) {
+async function checkEntryFilters(data, token, stats) {
+  const reject = reason => {
+    if (stats) stats[reason] = (stats[reason] || 0) + 1;
+    return false;
+  };
+  if (stats) stats.checked = (stats.checked || 0) + 1;
   const now = Date.now();
   const pairCreatedAt = Number(data.pairCreatedAt);
   const ageMinutes = Number.isFinite(pairCreatedAt) ? (now - pairCreatedAt) / 60000 : NaN;
   if (!Number.isFinite(ageMinutes) ||
       ageMinutes < CONFIG.entry.minimumAgeMinutes ||
-      ageMinutes > CONFIG.entry.maximumAgeHours * 60) return false;
+      ageMinutes > CONFIG.entry.maximumAgeHours * 60) return reject("age");
 
   const liquidity = Number(data.liquidityUsd);
   const volume1h = Number(data.volume1h);
   const buys1h = Number(data.buys1h);
   const sells1h = Number(data.sells1h);
-  if (![liquidity, volume1h, buys1h, sells1h].every(Number.isFinite) ||
-      liquidity < CONFIG.entry.minimumLiquidityUsd ||
-      volume1h < CONFIG.entry.minimumVolume1hUsd ||
-      buys1h <= sells1h) return false;
+  if (![liquidity, volume1h, buys1h, sells1h].every(Number.isFinite)) return reject("missing_market_data");
+  if (liquidity < CONFIG.entry.minimumLiquidityUsd) return reject("liquidity");
+  if (volume1h < CONFIG.entry.minimumVolume1hUsd) return reject("volume_1h");
+  if (buys1h <= sells1h) return reject("sell_pressure");
 
   const price = Number(data.priceUsd);
   const tokenAddress = token?.tokenAddress;
-  if (!(price > 0) || !tokenAddress || !data.pairAddress) return false;
+  if (!(price > 0) || !tokenAddress || !data.pairAddress) return reject("missing_price_or_pair");
   let observations = recentPriceObservations.get(tokenAddress);
   if (!observations || observations.pairAddress !== data.pairAddress) {
     observations = { pairAddress: data.pairAddress, points: [] };
@@ -141,44 +146,47 @@ async function checkEntryFilters(data, token) {
   const before = observations.points.filter(point => point.at <= thresholdAt).sort((a, b) => b.at - a.at)[0];
   const after = observations.points.filter(point => point.at >= thresholdAt).sort((a, b) => a.at - b.at)[0];
   recentPriceObservations.set(tokenAddress, observations);
-  if (!before || !after || after.at === before.at) return false;
+  if (!before || !after || after.at === before.at) return reject("momentum_observations_pending");
   const baselinePrice = before.price + (after.price - before.price) *
     ((thresholdAt - before.at) / (after.at - before.at));
   const rise15m = (price - baselinePrice) / baselinePrice * 100;
-  if (!Number.isFinite(rise15m) || rise15m > CONFIG.entry.maximumRise15mPercent) return false;
+  if (!Number.isFinite(rise15m)) return reject("momentum_unavailable");
+  if (rise15m > CONFIG.entry.maximumRise15mPercent) return reject("late_spike");
   data.priceChange15m = rise15m;
 
   const report = await getTokenReport(tokenAddress);
   if (!report || report.rugged !== false || !Array.isArray(report.risks) ||
-      !report.token || !Array.isArray(report.topHolders)) return false;
+      !report.token || !Array.isArray(report.topHolders)) return reject("rugcheck_report_unavailable_or_incomplete");
   const revoked = value => value === null || value === false || value === "";
-  if (!revoked(report.token.mintAuthority) || !revoked(report.token.freezeAuthority)) return false;
+  if (!revoked(report.token.mintAuthority) || !revoked(report.token.freezeAuthority)) return reject("authority_active");
   const holders = report.topHolders.slice(0, 10);
-  if (!holders.length || holders.some(holder => !Number.isFinite(Number(holder?.pct)))) return false;
+  if (!holders.length || holders.some(holder => !Number.isFinite(Number(holder?.pct)))) return reject("holder_data_unavailable");
   const top10Percent = holders.reduce((sum, holder) => sum + Number(holder.pct), 0);
-  if (top10Percent >= CONFIG.entry.maximumTop10HolderPercent) return false;
+  if (top10Percent >= CONFIG.entry.maximumTop10HolderPercent) return reject("top_holder_concentration");
   const unsafeRisk = report.risks.some(risk => {
     const name = String(risk?.name || "").toLowerCase();
     const level = String(risk?.level || "").toLowerCase();
     return ["danger", "critical"].includes(level) ||
       /honeypot|blacklist|freeze authority|mint authority|transfer fee|high tax/.test(name);
   });
-  if (unsafeRisk) return false;
+  if (unsafeRisk) return reject("rugcheck_risk");
   data.top10HolderPercent = top10Percent;
   data.mintAuthorityRevoked = true;
   data.freezeAuthorityRevoked = true;
   data.rugCheckPassed = true;
+  if (stats) stats.passed = (stats.passed || 0) + 1;
   return true;
 }
-
 async function discoverBuyPriorityCandidates(options = {}) {
+  const filterStats = {};
   const candidates = await scanner.discoverCandidates({
     ...options,
     minimumLiquidityUsd: CONFIG.entry.minimumLiquidityUsd,
     minimumVolume24hUsd: 0,
-    candidateFilter: checkEntryFilters,
+    candidateFilter: (data, token) => checkEntryFilters(data, token, filterStats),
     analyzeCandidate: () => ({ score: 1, signal: "BUY", reasons: ["All configured New Claude Strategy filters passed"] })
   });
+  console.log("NEW CLAUDE FILTER SUMMARY | " + JSON.stringify(filterStats));
   const portfolio = trader.getPortfolio();
   return candidates.map(candidate => {
     const sizing = getBuySizing(portfolio, candidate);
