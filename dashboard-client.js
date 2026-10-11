@@ -79,7 +79,7 @@
   function costSummaryPanel() {
     var entries=systems.map(function(system){return {label:system.label,sim:simulateBotCosts(system)};});
     var lockData=state.api&&state.api.buyPriorityLock85||{};
-    var lockSystem={id:'buy-lock85',name:'V3.1 BUY Priority Test · 85% LP Lock',label:'V3.1 BUY Priority Test · 85% Lock'};
+    var lockSystem={id:'buy-lock85',name:'V3.1 BUY Priority Test · 80% LP Lock',label:'V3.1 BUY Priority Test · 80% Lock'};
     lockSystem.trades=(lockData.completedTrades||[]).map(function(t){return normalizeTrade(t,lockSystem,false);});
     entries.push({label:lockSystem.label,sim:simulateBotCosts(lockSystem)});
     entries.push({label:'Swarm · V3.1',sim:simulateBotCosts(swarmCostSimulationSystem())});
