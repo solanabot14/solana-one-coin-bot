@@ -132,8 +132,8 @@ function createBot({
     const transactions5m = buys5m + sells5m;
     const buyRatio = transactions5m ? buys5m / transactions5m : 0;
     const qualifies = tokenAddress && Number.isFinite(momentum5m) &&
-      momentum5m >= 0.5 && momentum5m <= 8 && volume5m >= 3000 &&
-      transactions5m >= 15 && buyRatio >= 0.55;
+      momentum5m >= 0.25 && momentum5m <= 8 && volume5m >= 1500 &&
+      transactions5m >= 8 && buyRatio >= 0.52;
     if (!qualifies) {
       if (tokenAddress) momentumEntryObservations.delete(tokenAddress);
       return false;
