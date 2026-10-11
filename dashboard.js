@@ -193,8 +193,8 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       }
       if (req.method !== "GET") return json(res, { error: "Method not allowed" }, 405);
       if (route === "/api/status") return json(res, { running: controls.getBotStatus(), error: controls.getLastError() });
-      if (route === "/api/lock85/status") return json(res, { running: buyPriorityLock85.getBotStatus(), error: buyPriorityLock85.getLastError(), mode: "paper", lockThresholdPercent: 80 });
-      if (route === "/api/lock85/data") return json(res, { label: "V3.1 BUY Priority Test - 80% LP Lock", mode: "paper", lockThresholdPercent: 80, account: buyPriorityLock85.buildDashboardAccount() });
+      if (route === "/api/lock85/status") return json(res, { running: buyPriorityLock85.getBotStatus(), error: buyPriorityLock85.getLastError(), mode: "paper", lockThresholdPercent: 70 });
+      if (route === "/api/lock85/data") return json(res, { label: "V3.1 BUY Priority Test - 70% LP Lock", mode: "paper", lockThresholdPercent: 80, account: buyPriorityLock85.buildDashboardAccount() });
       if (route === "/api/swarm") return json(res, { running: swarm.getStatus(), error: swarm.getLastError(), ...swarm.getDashboardState() });
       if (route === "/api/data") {
         const baseAccount = portfolio();

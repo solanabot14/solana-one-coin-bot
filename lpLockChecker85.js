@@ -1,5 +1,5 @@
 const API_BASE = "https://api.rugcheck.xyz/v1/tokens";
-const MIN_LOCKED_PERCENT = 80;
+const MIN_LOCKED_PERCENT = 70;
 const SUCCESS_CACHE_MS = 10 * 60 * 1000;
 const FAILURE_CACHE_MS = 2 * 60 * 1000;
 const TIMEOUT_MS = 8000;
