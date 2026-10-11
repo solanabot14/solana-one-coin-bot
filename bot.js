@@ -80,12 +80,20 @@ function createBot({
   }
 
   function confirmLabSignal(coin, now) {
-    if (coin.labSignal !== "FAST MOMENTUM WATCH" || !coin.tokenAddress) {
+    const momentum5m = Number(coin.priceChange5m);
+    const volume5m = Number(coin.volume5m);
+    const buys5m = Number(coin.buys5m) || 0;
+    const sells5m = Number(coin.sells5m) || 0;
+    const transactions5m = buys5m + sells5m;
+    const buyRatio = transactions5m ? buys5m / transactions5m : 0;
+    const activeMomentum = ["BUY", "STRONG BUY", "WAIT"].includes(coin.signal) &&
+      Number.isFinite(momentum5m) && momentum5m >= 0.25 && momentum5m <= 8 &&
+      volume5m >= 3000 && transactions5m >= 10 && buyRatio >= 0.55;
+    if (!activeMomentum || !coin.tokenAddress) {
       if (coin.tokenAddress) labObservations.delete(coin.tokenAddress);
       return false;
     }
-    const current = { at: now, momentum5m: Number(coin.priceChange5m) || 0,
-      volume5m: Number(coin.volume5m) || 0 };
+    const current = { at: now, momentum5m, volume5m };
     const previous = labObservations.get(coin.tokenAddress);
     if (previous && now - previous.at <= scannerIntervalMs * 2 &&
         current.momentum5m >= previous.momentum5m - 1 &&
