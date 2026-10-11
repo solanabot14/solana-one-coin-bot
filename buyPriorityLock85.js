@@ -6,7 +6,7 @@ const { createPaperTrader } = require("./paperTrader");
 const { createBot } = require("./bot85");
 const { getLockStatus } = require("./lpLockChecker85");
 
-const BOT_LABEL = "V3.1 BUY Priority Test - 70% LP Lock";
+const BOT_LABEL = "V3.1 BUY Priority Test - 60% LP Lock";
 const BUY_TO_STRONG_BUY_RATIO = 2;
 const COMPOUND_RATES = [0.10, 0.125, 0.15];
 const MINIMUM_BUY_USD = 10;
@@ -50,7 +50,7 @@ const trader = createPaperTrader(
   statePath("v31BuyPriorityLock85TradingData.json"),
   fs,
   {
-    strategyVersion: "V3.1-BUY-Priority-70LP-2to1-CostEstimate",
+    strategyVersion: "V3.1-BUY-Priority-60LP-2to1-CostEstimate",
     getBuySizing
   }
 );

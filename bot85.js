@@ -16,7 +16,7 @@ const REENTRY_MIN_TRANSACTIONS_5M = 20;
 const REENTRY_MIN_BUY_RATIO = 0.52;
 const REENTRY_MAX_BUY_RATIO = 0.80;
 const REENTRY_MIN_LP_LOCK_PERCENT = 85;
-const ENTRY_MIN_LP_LOCK_PERCENT = 70;
+const ENTRY_MIN_LP_LOCK_PERCENT = 60;
 const REENTRY_MAX_LIQUIDITY_DRAWDOWN = 0.12;
 const HARD_STOP_PERCENT = -10;
 const TAKE_PROFIT_1_PERCENT = 15;
@@ -71,7 +71,7 @@ function createBot({
   checkLiquidityLock = getLockStatus,
   positionMonitorMs = POSITION_MONITOR_MS,
   scannerIntervalMs = SCANNER_INTERVAL_MS,
-  botLabel = "V3.1 BUY Priority Test - 70% LP Lock",
+  botLabel = "V3.1 BUY Priority Test - 60% LP Lock",
   reentryStateFile = defaultReentryStateFile()
 } = {}) {
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
