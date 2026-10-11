@@ -8,7 +8,7 @@ test("60% threshold accepts a confirmed lock at 60%", async () => {
   assert.deepEqual(await checker.getLockStatus("at-60"), { allowed: true, lockedPercent: 60, reason: "LOCKED_LIQUIDITY_CONFIRMED" });
 });
 
-test("60% threshold rejects a confirmed lock below 70%", async () => {
+test("60% threshold rejects a confirmed lock below 60%", async () => {
   const checker = createLpLockChecker({ httpGet: async () => ({ data: { lpLockedPct: 59.99 } }) });
   assert.deepEqual(await checker.getLockStatus("below-60"), { allowed: false, lockedPercent: 59.99, reason: "LIQUIDITY_NOT_LOCKED_ENOUGH" });
 });
