@@ -88,7 +88,7 @@ function createBot({
     const buyRatio = transactions5m ? buys5m / transactions5m : 0;
     const activeMomentum = ["BUY", "STRONG BUY", "WAIT"].includes(coin.signal) &&
       Number.isFinite(momentum5m) && momentum5m >= 0.25 && momentum5m <= 8 &&
-      volume5m >= 3000 && transactions5m >= 10 && buyRatio >= 0.55;
+      volume5m >= 1500 && transactions5m >= 8 && buyRatio >= 0.52;
     if (!activeMomentum || !coin.tokenAddress) {
       if (coin.tokenAddress) labObservations.delete(coin.tokenAddress);
       return false;
