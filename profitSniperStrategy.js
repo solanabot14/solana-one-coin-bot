@@ -8,9 +8,11 @@ const MIN_MOMENTUM_5M = 0.05;
 const MAX_MOMENTUM_5M = 20;
 const HARD_STOP_PERCENT = -8;
 const MIN_EXIT_LIQUIDITY_USD = 1000;
-const TAKE_PROFIT_1_PERCENT = 10;
+const TAKE_PROFIT_1_PERCENT = 20;
 const TAKE_PROFIT_1_SELL_PERCENT = 50;
-const TAKE_PROFIT_2_PERCENT = 20;
+const TAKE_PROFIT_2_PERCENT = 30;
+const TAKE_PROFIT_2_SELL_PERCENT = 80;
+const TRAILING_STOP_PERCENT = 10;
 const PROFIT_FLOOR_AFTER_TP1_PERCENT = 2;
 const COMPOUND_RATES = [0.10, 0.125, 0.15];
 const MINIMUM_TRADE_USD = 10;
@@ -63,18 +65,39 @@ function chooseExit({ position, currentPrice, freshData }) {
   const price = Number(currentPrice);
   if (!(entryPrice > 0) || !(price > 0)) return null;
   const profitPercent = (price - entryPrice) / entryPrice * 100;
+
+  if (position.secondTakeProfitDone) {
+    const highestPrice = Number(position.highestPrice) || price;
+    const dropFromHighPercent = highestPrice > 0
+      ? (highestPrice - price) / highestPrice * 100
+      : 0;
+    if (dropFromHighPercent >= TRAILING_STOP_PERCENT) {
+      return { percent: 100, reason: "TRAILING STOP -10% FROM HIGH" };
+    }
+    return null;
+  }
+
   if (position.firstTakeProfitDone) {
     if (profitPercent <= PROFIT_FLOOR_AFTER_TP1_PERCENT) {
       return { percent: 100, reason: "PROFIT FLOOR AFTER TP1 +2%" };
     }
     if (profitPercent >= TAKE_PROFIT_2_PERCENT) {
-      return { percent: 100, reason: "TAKE PROFIT 2" };
+      return {
+        percent: TAKE_PROFIT_2_SELL_PERCENT,
+        reason: "TAKE PROFIT 2 - SELL 40% OF ORIGINAL POSITION",
+        takeProfit: "secondTakeProfitDone"
+      };
     }
     return null;
   }
+
   if (profitPercent <= HARD_STOP_PERCENT) return { percent: 100, reason: "HARD STOP -8%" };
   if (profitPercent >= TAKE_PROFIT_1_PERCENT) {
-    return { percent: TAKE_PROFIT_1_SELL_PERCENT, reason: "TAKE PROFIT 1", takeProfit: "firstTakeProfitDone" };
+    return {
+      percent: TAKE_PROFIT_1_SELL_PERCENT,
+      reason: "TAKE PROFIT 1 - SELL 50% OF ORIGINAL POSITION",
+      takeProfit: "firstTakeProfitDone"
+    };
   }
   return null;
 }
@@ -83,7 +106,7 @@ module.exports = {
   constants: { MAX_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MIN_VOLUME_5M_USD,
     MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M, MIN_MOMENTUM_5M, MAX_MOMENTUM_5M, HARD_STOP_PERCENT, MIN_EXIT_LIQUIDITY_USD,
     TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
-    PROFIT_FLOOR_AFTER_TP1_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD },
+    TAKE_PROFIT_2_SELL_PERCENT, TRAILING_STOP_PERCENT, PROFIT_FLOOR_AFTER_TP1_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD },
   qualifiesMomentumCandidate,
   getMomentumFailureReasons,
   getBuySizing,
