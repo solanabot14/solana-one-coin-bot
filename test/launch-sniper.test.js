@@ -17,6 +17,8 @@ function candidate(overrides = {}) {
 
 test("accepts a fresh, liquid pair with active buy flow", () => {
   assert.equal(qualifiesLaunchCandidate(candidate(), now), true);
+  assert.equal(qualifiesLaunchCandidate(candidate({ liquidityUsd: 15000 }), now, 15000), true);
+  assert.equal(qualifiesLaunchCandidate(candidate({ liquidityUsd: 15000 }), now), false);
 });
 
 test("rejects missing or stale pair age", () => {
