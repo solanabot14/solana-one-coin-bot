@@ -534,6 +534,16 @@ function createBot({
     void tick("scanner", session);
   }
 
+  function writeOffPosition(expectedPosition, reason = "MANUAL PAPER WRITE-OFF · NO LIQUIDITY") {
+    if (typeof trader.writeOff !== "function") return { success: false, message: "Paper write-off is unavailable." };
+    const result = trader.writeOff(expectedPosition, reason);
+    if (result.success) {
+      if (useReentryGuards) syncClosedTokenGuards();
+      void notifier.notifyTrade(reason, result.trade);
+    }
+    return result;
+  }
+
   function closePosition(expectedPosition, currentPrice, liquidityUsd, reason = "MANUAL EMERGENCY EXIT") {
     const position = getPositions().find(item => positionKey(item) === expectedPosition);
     if (!position) return { success: false, error: "Position is no longer open." };
@@ -559,6 +569,7 @@ function createBot({
     startBot,
     stopBot,
     closePosition,
+    writeOffPosition,
     getBotStatus: () => activeSession !== null,
     getLastError: () => lastError,
     getEntriesPaused: () => entriesPaused || entriesPausedByBalance()

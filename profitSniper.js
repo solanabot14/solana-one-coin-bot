@@ -118,14 +118,22 @@ const bot = createBot({
 async function closePosition(positionId) {
   const position = trader.getPortfolio().positions.find(item => String(item.id) === String(positionId));
   if (!position) return { success: false, error: "Profit Sniper position not found." };
-  const quote = await market.getTokenData(position.tokenAddress, {
-    pairAddress: position.pairAddress || undefined,
-    allowAlternatePairQuote: true
-  });
+  let quote = null;
+  let quoteError = null;
+  try {
+    quote = await market.getTokenData(position.tokenAddress, {
+      pairAddress: position.pairAddress || undefined,
+      allowAlternatePairQuote: true
+    });
+  } catch (error) {
+    quoteError = error?.message || String(error);
+  }
   const price = Number(quote?.priceUsd);
   const liquidityUsd = Number(quote?.liquidityUsd);
   if (!(price > 0) || !(liquidityUsd > 0)) {
-    return { success: false, error: "No current priced pool with liquidity; position remains open." };
+    const result = bot.writeOffPosition(trader.positionKey(position), "MANUAL PAPER WRITE-OFF · NO LIQUIDITY");
+    return { ...result, symbol: position.symbol, writeOff: !!result.success,
+      saleValue: 0, quoteError, quotePairAddress: quote?.pairAddress || null };
   }
   const result = bot.closePosition(trader.positionKey(position), price, liquidityUsd, "MANUAL EMERGENCY EXIT");
   return { ...result, symbol: position.symbol, currentPrice: price, liquidityUsd,

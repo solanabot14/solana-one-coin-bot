@@ -361,6 +361,44 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, {
 		};
 	}
 
+	function writeOff(expectedPosition, reason = "MANUAL PAPER WRITE-OFF · NO LIQUIDITY") {
+		const positions = state.positions || [];
+		const index = positions.findIndex(p => positionKey(p) === expectedPosition);
+		const p = index >= 0 ? positions[index] : null;
+		if (!p) return fail("Position is no longer open.");
+		const next = structuredClone(state);
+		const quantitySold = Number(p.quantity) || 0;
+		const costBasisSold = Number(p.amountInvested) || 0;
+		const remainingEntryCosts = p.remainingEntryCosts || p.entryExecutionCosts || {};
+		const entryFeeAllocated = Number(remainingEntryCosts.feesUsd) || 0;
+		const entrySlippageAllocated = Number(remainingEntryCosts.slippageUsd) || 0;
+		const entryCostAllocated = entryFeeAllocated + entrySlippageAllocated;
+		const grossPnl = -costBasisSold;
+		const pnl = grossPnl - entryCostAllocated;
+		const exitTime = new Date().toISOString();
+		const trade = {
+			type: "SELL", positionId: p.id, symbol: p.symbol, name: p.name,
+			tokenAddress: p.tokenAddress, pairAddress: p.pairAddress || null,
+			strategyVersion: p.strategyVersion || null, entryScore: p.entryScore ?? null,
+			entrySignal: p.entrySignal || null, entryReasons: Array.isArray(p.entryReasons) ? [...p.entryReasons] : [],
+			entryPrice: p.entryPrice, highestPrice: p.highestPrice || p.entryPrice,
+			exitPrice: 0, exitPriceSource: "NO_LIQUIDITY_WRITE_OFF", liquidityUsd: 0, manualClose: true,
+			quantitySold, percentSold: 100, targetOriginalPositionPercent: null,
+			amountInvested: costBasisSold, saleValue: 0, grossPnl, pnl, netPnl: pnl,
+			estimatedFeesUsd: entryFeeAllocated, estimatedSlippageUsd: entrySlippageAllocated,
+			estimatedCostUsd: entryCostAllocated,
+			exitFeeBreakdown: { feesUsd: 0, slippageUsd: 0, poolFeeUsd: 0, solanaFeeUsd: 0, priorityFeeUsd: 0 },
+			entryCostsAllocatedUsd: entryCostAllocated,
+			pnlPercent: costBasisSold > 0 ? pnl / costBasisSold * 100 : 0,
+			entryTime: p.entryTime, exitTime, reason
+		};
+		next.cashBalance -= entryCostAllocated;
+		next.positions.splice(index, 1);
+		next.history.push(trade);
+		commit(next);
+		return { success: true, writeOff: true, trade: structuredClone(trade) };
+	}
+
 	function updateHigh(expectedPosition, price) {
 		const index = (state.positions || []).findIndex(p => positionKey(p) === expectedPosition);
 		if (index < 0 || !Number.isFinite(price) || price <= 0) return false;
@@ -375,6 +413,7 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, {
 	return {
 		buy,
 		sell,
+		writeOff,
 		updateHigh,
 		positionKey,
 		getPortfolio: () => structuredClone({

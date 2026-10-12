@@ -2,7 +2,7 @@
   'use strict';
 
   var state = {
-    api: null, swarm: null, status: null, error: null, range: 'ALL',
+    api: null, swarm: null, status: null, error: null, controlNotice: null, range: 'ALL',
     chartMetric: 'CUMULATIVE P&L', compareMetric: 'NET P&L', page: 1,
     systemFilter: 'ALL', outcomeFilter: 'ALL', tokenFilter: '', selectedNode: 'G1', chartOverlays: null,
     swarmTab: 'OVERVIEW', botTab: 'OVERVIEW', selectedDay: null, calendarMonth: null
@@ -100,7 +100,11 @@
   function metric(value, format) { return value === null || value === undefined ? 'NOT ENOUGH DATA' : format(value); }
   function request(url, options) {
     return fetch(url, Object.assign({ cache:'no-store', credentials:'same-origin' }, options || {})).then(function (response) {
-      if (!response.ok) throw new Error(url + ' returned ' + response.status);
+      if (!response.ok) {
+        return response.json().catch(function () { return {}; }).then(function (payload) {
+          throw new Error(payload.error || payload.message || (url + ' returned ' + response.status));
+        });
+      }
       return response.json();
     });
   }
@@ -313,7 +317,12 @@
     rows=rows.slice(0,6);
     return table([label,'TRADES','WIN RATE','NET P&L'],rows.map(function(x){return '<tr><td class="text-left">'+esc(x.label)+'</td><td>'+int(x.metrics.trades)+'</td><td>'+metric(x.metrics.winRate,function(v){return v.toFixed(1)+'%';})+'</td><td class="'+signClass(x.metrics.netPnl)+'">'+money(x.metrics.netPnl)+'</td></tr>';}),'No exit records');
   }
-  function statusNotice() { if(!state.error)return '';return '<div class="notice error">One or more feeds could not be refreshed. Missing values remain unavailable; they are not treated as zero. '+esc(state.error)+'</div>'; }
+  function statusNotice() {
+    var notices = [];
+    if (state.error) notices.push('<div class="notice error">One or more feeds could not be refreshed. Missing values remain unavailable; they are not treated as zero. '+esc(state.error)+'</div>');
+    if (state.controlNotice) notices.push('<div class="notice">'+esc(state.controlNotice)+'</div>');
+    return notices.join('');
+  }
 
   function botById(id) { return systems.find(function(s){return s.id===id;}); }
   function renderBot(path) {
@@ -562,7 +571,23 @@
     var day=event.target.closest('[data-day]');if(day){state.selectedDay=day.getAttribute('data-day');state.systemFilter='ALL';state.outcomeFilter='ALL';navigate('/transactions?day='+encodeURIComponent(state.selectedDay));return;}
     var pg=event.target.closest('[data-page]');if(pg){state.page=Math.max(1,state.page+(pg.getAttribute('data-page')==='next'?1:-1));render();return;}
     var action=event.target.closest('[data-action]');if(action){var act=action.getAttribute('data-action');if(act==='close-drawer')closeDrawer();if(act==='refresh')loadData();return;}
-    var control=event.target.closest('[data-control]');if(control){var verb=control.getAttribute('data-control');request('/api/'+verb,{method:'POST',headers:{'x-bot-control':'1'}}).then(loadData).catch(function(){state.error='Bot control request was rejected.';render();});return;}
+    var control=event.target.closest('[data-control]');if(control){
+      var verb=control.getAttribute('data-control');
+      control.disabled=true;
+      request('/api/'+verb,{method:'POST',headers:{'x-bot-control':'1'}})
+        .then(function(result){
+          state.controlNotice=result.writeOff
+            ? (result.symbol||'Position')+' closed in paper mode with $0 recovery because no tradable liquidity was available; the slot is free.'
+            : (result.symbol||'Position')+' closed in paper mode; the slot is free.';
+          return loadData();
+        })
+        .catch(function(error){
+          state.controlNotice=error.message||'Paper close failed. The position remains open.';
+          render();
+        })
+        .finally(function(){if(control.isConnected)control.disabled=false;});
+      return;
+    }
     var exportButton=event.target.closest('[data-export]');if(exportButton){exportCsv();return;}
   });
   document.addEventListener('change',function(event){
