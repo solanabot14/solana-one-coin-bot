@@ -23,7 +23,8 @@ test("fresh, active, upward momentum candidates pass; stale, weak, or overheated
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: -1 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 21 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 5, sells5m: 7 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ signal: "WATCH" })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ signal: "AVOID" })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ signal: "WAIT" })), true);
 });
 
 test("trade sizing follows the 10%, 12.5%, 15% cycle and resets after the third entry", () => {
