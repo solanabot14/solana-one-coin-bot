@@ -307,6 +307,9 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, {
 			exitPrice: currentPrice,
 
 			percentSold: percentToSell,
+			targetOriginalPositionPercent: Number.isFinite(Number(options.targetOriginalPositionPercent))
+				? Number(options.targetOriginalPositionPercent)
+				: null,
 			quantitySold,
 			amountInvested: costBasisSold,
 

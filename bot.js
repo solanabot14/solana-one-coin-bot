@@ -22,13 +22,11 @@ const REENTRY_MIN_LP_LOCK_PERCENT = 85;
 const ENTRY_MIN_LP_LOCK_PERCENT = 70;
 const REENTRY_MAX_LIQUIDITY_DRAWDOWN = 0.12;
 const HARD_STOP_PERCENT = -10;
-const TAKE_PROFIT_1_PERCENT = 15;
-const TAKE_PROFIT_1_SELL_PERCENT = 25;
-const TAKE_PROFIT_2_PERCENT = 30;
-const TAKE_PROFIT_2_SELL_PERCENT = 35;
-const TRAILING_STOP_PERCENT = 15;
-const PROFIT_LOCK_TRIGGER_PERCENT = 10;
-const PROFIT_LOCK_FLOOR_PERCENT = 4;
+const TAKE_PROFIT_1_PERCENT = 20;
+const TAKE_PROFIT_1_ORIGINAL_POSITION_PERCENT = 40;
+const TAKE_PROFIT_2_PERCENT = 40;
+const TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT = 80;
+const TRAILING_STOP_PERCENT = 12;
 const MOMENTUM_EXIT_MIN_LOSS = -2;
 const MOMENTUM_EXIT_5M = -3;
 const MOMENTUM_EXIT_STRONG_LOSS = -5;
@@ -65,6 +63,35 @@ function persistReentryGuards(guards, file, io = fs) {
   }
 }
 
+function getOriginalPositionExitProgress(position, history) {
+  if (!position) return { originalQuantity: 0, quantitySold: 0, soldPercent: 0 };
+  const positionId = position.id || position.positionId;
+  const events = Array.isArray(history)
+    ? history.filter(row => row && row.positionId === positionId)
+    : [];
+  const buy = events.find(row => row.type === "BUY");
+  const quantitySold = events
+    .filter(row => row.type === "SELL")
+    .reduce((sum, row) => sum + Math.max(0, Number(row.quantitySold) || 0), 0);
+  const originalQuantity = Math.max(
+    0,
+    Number(buy && buy.quantity) || Number(position.quantity) + quantitySold
+  );
+  return {
+    originalQuantity,
+    quantitySold,
+    soldPercent: originalQuantity > 0 ? quantitySold / originalQuantity * 100 : 0
+  };
+}
+
+function percentOfRemainingToReachOriginalTarget(position, history, targetPercent) {
+  const progress = getOriginalPositionExitProgress(position, history);
+  if (!(position && Number(position.quantity) > 0 && progress.originalQuantity > 0)) return 0;
+  const targetQuantity = progress.originalQuantity * Number(targetPercent) / 100;
+  const quantityToSell = Math.max(0, Math.min(Number(position.quantity), targetQuantity - progress.quantitySold));
+  return quantityToSell / Number(position.quantity) * 100;
+}
+
 function createBot({
   trader = paperTrader,
   getTokenData = market.getTokenData,
@@ -76,7 +103,7 @@ function createBot({
   checkLiquidityLock = getLockStatus,
   positionMonitorMs = POSITION_MONITOR_MS,
   scannerIntervalMs = SCANNER_INTERVAL_MS,
-  botLabel = "V3.1 Original - 2 Slots",
+  botLabel = "New V3.1 Version - Original Entries",
   reentryStateFile = defaultReentryStateFile(),
   maxOpenPositions = MAX_OPEN_POSITIONS,
   maxCandidateAgeMinutes = null,
@@ -422,14 +449,6 @@ function createBot({
         continue;
       }
 
-      const highestProfitPercent = ((Number(position.highestPrice) - entryPrice) / entryPrice) * 100;
-      const profitLockActive = highestProfitPercent >= PROFIT_LOCK_TRIGGER_PERCENT &&
-        !position.secondTakeProfitDone;
-      if (profitLockActive && profitPercent <= PROFIT_LOCK_FLOOR_PERCENT) {
-        exit("PROFIT LOCK");
-        continue;
-      }
-
       const enoughActivity = totalTransactions >= MOMENTUM_EXIT_MIN_TRANSACTIONS;
       const sellPressure = enoughActivity && buyRatio < MOMENTUM_EXIT_BUY_RATIO;
       const momentumExitA = profitPercent <= MOMENTUM_EXIT_MIN_LOSS &&
@@ -441,28 +460,42 @@ function createBot({
         continue;
       }
 
-      if (profitPercent >= TAKE_PROFIT_1_PERCENT && !position.firstTakeProfitDone) {
-        const result = sell(currentPrice, TAKE_PROFIT_1_SELL_PERCENT, {
-          expectedPosition,
-          takeProfit: "firstTakeProfitDone",
-          reason: "TAKE PROFIT 1",
-          liquidityUsd: freshData.liquidityUsd
-        });
-        if (result.success) void notifier.notifyTrade("TAKE PROFIT 1", result.trade);
+      const history = getPortfolio().history;
+      const exitProgress = getOriginalPositionExitProgress(position, history);
+      if (profitPercent >= TAKE_PROFIT_1_PERCENT &&
+          exitProgress.soldPercent < TAKE_PROFIT_1_ORIGINAL_POSITION_PERCENT) {
+        const percentToSell = percentOfRemainingToReachOriginalTarget(
+          position, history, TAKE_PROFIT_1_ORIGINAL_POSITION_PERCENT
+        );
+        if (percentToSell > 0) {
+          const result = sell(currentPrice, percentToSell, {
+            expectedPosition,
+            targetOriginalPositionPercent: TAKE_PROFIT_1_ORIGINAL_POSITION_PERCENT,
+            reason: "TAKE PROFIT 1",
+            liquidityUsd: freshData.liquidityUsd
+          });
+          if (result.success) void notifier.notifyTrade("TAKE PROFIT 1", result.trade);
+        }
         continue;
       }
       if (profitPercent >= TAKE_PROFIT_2_PERCENT &&
-          position.firstTakeProfitDone && !position.secondTakeProfitDone) {
-        const result = sell(currentPrice, TAKE_PROFIT_2_SELL_PERCENT, {
-          expectedPosition,
-          takeProfit: "secondTakeProfitDone",
-          reason: "TAKE PROFIT 2",
-          liquidityUsd: freshData.liquidityUsd
-        });
-        if (result.success) void notifier.notifyTrade("TAKE PROFIT 2", result.trade);
+          exitProgress.soldPercent < TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT) {
+        const percentToSell = percentOfRemainingToReachOriginalTarget(
+          position, history, TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT
+        );
+        if (percentToSell > 0) {
+          const result = sell(currentPrice, percentToSell, {
+            expectedPosition,
+            targetOriginalPositionPercent: TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT,
+            reason: "TAKE PROFIT 2",
+            liquidityUsd: freshData.liquidityUsd
+          });
+          if (result.success) void notifier.notifyTrade("TAKE PROFIT 2", result.trade);
+        }
         continue;
       }
-      if (position.secondTakeProfitDone && dropFromHigh >= TRAILING_STOP_PERCENT) {
+      if (exitProgress.soldPercent >= TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT &&
+          dropFromHigh >= TRAILING_STOP_PERCENT) {
         exit("TRAILING STOP");
       }
     }
@@ -520,4 +553,9 @@ function createBot({
   };
 }
 
-module.exports = { createBot, ...createBot() };
+module.exports = {
+  createBot,
+  getOriginalPositionExitProgress,
+  percentOfRemainingToReachOriginalTarget,
+  ...createBot()
+};
