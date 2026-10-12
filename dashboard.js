@@ -13,6 +13,7 @@ const buyPriorityExitTest = require("./buyPriorityExitTest");
 const buyPriorityLock85 = require("./buyPriorityLock85");
 const launchSniper = require("./launchSniper");
 const profitSniper = require("./profitSniper");
+const walletCopy = require("./walletCopy");
 
 function getConfig(env = process.env) {
   const railway = !!env.RAILWAY_ENVIRONMENT_ID;
@@ -172,6 +173,20 @@ function createDashboardServer({ config = getConfig(), controls = bot,
     try {
       const route = new URL(req.url, "http://localhost").pathname;
       if (req.method === "GET" && route === "/healthz") return json(res, { ok: true });
+      if (route === "/api/wallet-copy/webhook") {
+        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (!walletCopy.authenticateWebhook(req)) return json(res, { error: "Webhook authentication failed" }, 401);
+        let body = "";
+        for await (const chunk of req) {
+          body += chunk;
+          if (body.length > 1000000) return json(res, { error: "Payload too large" }, 413);
+        }
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch (_) { return json(res, { error: "Invalid JSON payload" }, 400); }
+        await walletCopy.handleWebhookPayload(payload);
+        return json(res, { ok: true });
+      }
       if (!authorized(req, config)) {
         res.setHeader("WWW-Authenticate", 'Basic realm="Trading dashboard", charset="UTF-8"');
         return json(res, { error: "Authentication required" }, 401);
@@ -229,12 +244,14 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const exitTestAccount = buyPriorityExitTest.buildDashboardAccount();
         const lock85Account = buyPriorityLock85.buildDashboardAccount();
         const profitSniperAccount = profitSniper.getPortfolio();
+        const walletCopyAccount = walletCopy.getPortfolio();
         const addresses = [...new Set([
           ...(baseAccount.positions || (baseAccount.position ? [baseAccount.position] : [])).map(p => p.tokenAddress),
           ...(buyTestAccount.positions || []).map(p => p.tokenAddress),
           ...(exitTestAccount.positions || []).map(p => p.tokenAddress),
           ...(lock85Account.positions || []).map(p => p.tokenAddress),
-          ...(profitSniperAccount.positions || []).map(p => p.tokenAddress)
+          ...(profitSniperAccount.positions || []).map(p => p.tokenAddress),
+          ...(walletCopyAccount.positions || []).map(p => p.tokenAddress)
         ].filter(Boolean))];
         const sharedQuotes = batchMarketData && addresses.length
           ? await batchMarketData(addresses)
@@ -242,14 +259,15 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const sharedMarketData = sharedQuotes
           ? async address => sharedQuotes.get(address) || null
           : marketData;
-        const [v31, candleBreakout, profitabilityLab, buyTest, exitTest, lock85, profitSniperData] = await Promise.all([
+        const [v31, candleBreakout, profitabilityLab, buyTest, exitTest, lock85, profitSniperData, walletCopyData] = await Promise.all([
           buildDashboardData(baseAccount, sharedMarketData),
           fetchCandleBreakoutDashboard(),
           fetchProfitabilityLabDashboard(),
           buildDashboardData(buyTestAccount, sharedMarketData).then(applyBuyPriorityCostEstimates),
           buildDashboardData(exitTestAccount, sharedMarketData).then(applyBuyPriorityCostEstimates),
           buildDashboardData(lock85Account, sharedMarketData),
-          buildDashboardData(profitSniperAccount, sharedMarketData)
+          buildDashboardData(profitSniperAccount, sharedMarketData),
+          buildDashboardData(walletCopyAccount, sharedMarketData)
         ]);
         return json(res, {
           v31,
@@ -265,7 +283,9 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           buyPriorityLock85: lock85,
           buyPriorityLock85Status: { running: buyPriorityLock85.getBotStatus(), error: buyPriorityLock85.getLastError() },
           profitSniper: profitSniperData,
-          profitSniperStatus: profitSniper.getStatus()
+          profitSniperStatus: profitSniper.getStatus(),
+          walletCopy: walletCopyData,
+          walletCopyStatus: walletCopy.getStatus()
         });
       }
       if (route === "/trading/launch-sniper") { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); return res.end(fs.readFileSync(path.join(__dirname, "launchSniperPanel.html"), "utf8")); }
@@ -298,7 +318,10 @@ if (require.main === module) {
   buyPriorityLock85.startBot();
   launchSniper.startBot();
   profitSniper.startBot();
-  server.listen(config.port, config.host, () => console.log("Dashboard listening on " + config.host + ":" + config.port));
+  server.listen(config.port, config.host, () => {
+    walletCopy.startBot();
+    console.log("Dashboard listening on " + config.host + ":" + config.port);
+  });
   const shutdown = () => {
     swarm.stop();
     bot.stopBot();
@@ -307,6 +330,7 @@ if (require.main === module) {
     buyPriorityLock85.stopBot();
     launchSniper.stopBot();
     profitSniper.stopBot();
+    walletCopy.stopBot();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 12000).unref();
   };
