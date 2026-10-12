@@ -62,8 +62,16 @@ function dataFromPair(pair) {
 	};
 }
 
-function readCachedTokenData(address) {
-	const cached = tokenDataCache.get(address);
+function tokenCacheKey(address, pairAddress = null) {
+	return String(address) + "|" + (pairAddress ? String(pairAddress) : "best");
+}
+
+function preferredPairAddress(address, pairAddresses) {
+	return pairAddresses instanceof Map ? pairAddresses.get(address) : pairAddresses?.[address];
+}
+
+function readCachedTokenData(address, pairAddress = null) {
+	const cached = tokenDataCache.get(tokenCacheKey(address, pairAddress));
 	if (!cached) return undefined;
 	if (Date.now() - cached.at > TOKEN_DATA_CACHE_MS) {
 		tokenDataCache.delete(address);
@@ -72,13 +80,14 @@ function readCachedTokenData(address) {
 	return cached.data;
 }
 
-async function getTokensData(tokenAddresses, { signal } = {}) {
+async function getTokensData(tokenAddresses, { signal, pairAddresses } = {}) {
 	const addresses = [...new Set((tokenAddresses || []).filter(Boolean))];
 	const results = new Map();
 	const missing = [];
 
 	for (const address of addresses) {
-		const cached = readCachedTokenData(address);
+		const preferredPair = preferredPairAddress(address, pairAddresses) || null;
+		const cached = readCachedTokenData(address, preferredPair);
 		if (cached !== undefined) results.set(address, cached);
 		else missing.push(address);
 	}
@@ -93,6 +102,8 @@ async function getTokensData(tokenAddresses, { signal } = {}) {
 			for (const pair of Array.isArray(response.data) ? response.data : []) {
 				const address = pair.chainId === "solana" ? pair.baseToken?.address : null;
 				if (!address || !batch.includes(address)) continue;
+				const preferredPair = preferredPairAddress(address, pairAddresses);
+				if (preferredPair && pair.pairAddress !== preferredPair) continue;
 				const current = bestPairs.get(address);
 				if (!current || (Number(pair.liquidity?.usd) || 0) > (Number(current.liquidity?.usd) || 0)) {
 					bestPairs.set(address, pair);
@@ -104,7 +115,7 @@ async function getTokensData(tokenAddresses, { signal } = {}) {
 				if (!pair) continue;
 				const data = dataFromPair(pair);
 				results.set(address, data);
-				tokenDataCache.set(address, { at: Date.now(), data });
+				tokenDataCache.set(tokenCacheKey(address, preferredPairAddress(address, pairAddresses) || null), { at: Date.now(), data });
 			}
 		} catch (error) {
 			if (signal?.aborted) break;
@@ -116,7 +127,9 @@ async function getTokensData(tokenAddresses, { signal } = {}) {
 }
 
 async function getTokenData(tokenAddress, options = {}) {
-	const results = await getTokensData([tokenAddress], options);
+	const { pairAddress, ...rest } = options || {};
+	const pairAddresses = pairAddress ? new Map([[tokenAddress, pairAddress]]) : undefined;
+	const results = await getTokensData([tokenAddress], { ...rest, pairAddresses });
 	return results.get(tokenAddress) || null;
 }
 

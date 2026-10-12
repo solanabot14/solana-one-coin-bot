@@ -256,8 +256,17 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const sharedQuotes = batchMarketData && addresses.length
           ? await batchMarketData(addresses)
           : null;
+        const pairQuoteCache = new Map();
         const sharedMarketData = sharedQuotes
-          ? async address => sharedQuotes.get(address) || null
+          ? async (address, options = {}) => {
+              const pairAddress = options.pairAddress;
+              if (!pairAddress) return sharedQuotes.get(address) || null;
+              const key = address + "|" + pairAddress;
+              if (!pairQuoteCache.has(key)) {
+                pairQuoteCache.set(key, marketData(address, { pairAddress }));
+              }
+              return pairQuoteCache.get(key);
+            }
           : marketData;
         const [v31, candleBreakout, profitabilityLab, buyTest, exitTest, lock85, profitSniperData, walletCopyData] = await Promise.all([
           buildDashboardData(baseAccount, sharedMarketData),

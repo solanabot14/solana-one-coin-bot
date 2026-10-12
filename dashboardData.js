@@ -142,7 +142,7 @@ async function buildDashboardData(data, getTokenData) {
 	for (const p of positions) {
 		let live = null;
 		try {
-			const fresh = await getTokenData(p.tokenAddress);
+			const fresh = await getTokenData(p.tokenAddress, { pairAddress: p.pairAddress || undefined });
 			const currentPrice = Number(fresh?.priceUsd);
 			if (Number.isFinite(currentPrice) && currentPrice > 0) {
 				const currentValue = p.quantity * currentPrice, pnl = currentValue - p.amountInvested;

@@ -1,7 +1,8 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const axios = require("axios");
-const { getTokensData } = require("../dexscreener");
+const { getTokenData, getTokensData } = require("../dexscreener");
+const { buildDashboardData } = require("../dashboardData");
 
 function pair(address, liquidity, price) {
 	return {
@@ -42,4 +43,42 @@ test("scanner data lookup batches at most 30 tokens and keeps the most liquid So
 	assert.equal(data.get(addresses[0]).liquidityUsd, 250);
 	assert.equal(data.get(addresses[30]).symbol, "Ttoken-30");
 	assert.equal(data.get(addresses[30]).volume5m, 2500);
+});
+
+
+test("a saved position pool is preferred over another higher-liquidity pool", async t => {
+	const previousGet = axios.get;
+	const address = "token-pair-exact";
+	const expectedPair = "pair-" + address + "-25";
+	axios.get = async () => ({
+		data: [
+			pair(address, 25, 0.0001089),
+			pair(address, 250, 0.0000446)
+		]
+	});
+	t.after(() => { axios.get = previousGet; });
+
+	const quote = await getTokenData(address, { pairAddress: expectedPair });
+	assert.equal(quote.pairAddress, expectedPair);
+	assert.equal(quote.priceUsd, "0.0001089");
+});
+
+test("dashboard mark-to-market requests the position's saved pair", async () => {
+	const position = {
+		id: "carlo-position", tokenAddress: "carlo-token", pairAddress: "carlo-pool",
+		symbol: "CARLO", entryPrice: 0.0000463, amountInvested: 12.69,
+		quantity: 12.69 / 0.0000463, entryTime: new Date().toISOString(),
+		highestPrice: 0.0000463
+	};
+	let requested;
+	const account = await buildDashboardData({
+		startingBalance: 100, cashBalance: 0, positions: [position], history: []
+	}, async (address, options) => {
+		requested = { address, pairAddress: options.pairAddress };
+		return { priceUsd: 0.0001089, pairAddress: options.pairAddress };
+	});
+
+	assert.deepEqual(requested, { address: "carlo-token", pairAddress: "carlo-pool" });
+	assert.ok(account.livePositions[0].live.pnl > 17);
+	assert.ok(account.livePositions[0].live.pnlPercent > 135);
 });
