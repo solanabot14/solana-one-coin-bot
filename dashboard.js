@@ -202,6 +202,14 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         if (route === "/api/start") controls.startBot(); else controls.stopBot();
         return json(res, { running: controls.getBotStatus() });
       }
+      if (route === "/api/profit-sniper/close-position") {
+        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
+        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        const positionId = new URL(req.url, "http://localhost").searchParams.get("positionId");
+        const result = await profitSniper.closePosition(positionId);
+        return json(res, result, result.success ? 200 : 409);
+      }
       if (route === "/api/profit-sniper/start" || route === "/api/profit-sniper/stop") {
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
         if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);

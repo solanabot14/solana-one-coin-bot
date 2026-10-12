@@ -534,6 +534,17 @@ function createBot({
     void tick("scanner", session);
   }
 
+  function closePosition(expectedPosition, currentPrice, liquidityUsd, reason = "MANUAL EMERGENCY EXIT") {
+    const position = getPositions().find(item => positionKey(item) === expectedPosition);
+    if (!position) return { success: false, error: "Position is no longer open." };
+    const result = sell(Number(currentPrice), 100, { expectedPosition, reason, liquidityUsd: Number(liquidityUsd) });
+    if (result.success) {
+      if (useReentryGuards) syncClosedTokenGuards();
+      void notifier.notifyTrade(reason, result.trade);
+    }
+    return result;
+  }
+
   function stopBot() {
     if (!activeSession) return;
     activeSession.abort();
@@ -547,6 +558,7 @@ function createBot({
   return {
     startBot,
     stopBot,
+    closePosition,
     getBotStatus: () => activeSession !== null,
     getLastError: () => lastError,
     getEntriesPaused: () => entriesPaused || entriesPausedByBalance()

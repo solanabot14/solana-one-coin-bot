@@ -41,3 +41,25 @@ test("refreshes every open position with one batched market-data request", async
   assert.equal(calls.length,1);
   assert.deepEqual(calls[0],["token-1","token-2"]);
 });
+
+
+test("manual position close sells the full remaining paper position by ID", () => {
+  const position = { id: "carlo-position", tokenAddress: "carlo-token", symbol: "CARLO" };
+  const calls = [];
+  const trader = {
+    getPortfolio: () => ({ positions: [position], history: [], cashBalance: 0 }),
+    positionKey: item => item.id,
+    sell: (...args) => { calls.push(args); return { success: true, trade: { positionId: "carlo-position" } }; },
+    buy: () => ({ success: true })
+  };
+  const bot = createBot({ trader, discoverCandidates: async () => [],
+    timers: { setInterval() { return 1; }, clearInterval() {} },
+    notifier: { notifyTrade: async () => {}, notifyCritical: async () => {} },
+    reentryStateFile: "/tmp/one-coin-manual-close-test.json" });
+  const result = bot.closePosition("carlo-position", 0.0000446, 15000, "MANUAL EMERGENCY EXIT");
+  assert.equal(result.success, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], 0.0000446);
+  assert.equal(calls[0][1], 100);
+  assert.deepEqual(calls[0][2], { expectedPosition: "carlo-position", reason: "MANUAL EMERGENCY EXIT", liquidityUsd: 15000 });
+});
