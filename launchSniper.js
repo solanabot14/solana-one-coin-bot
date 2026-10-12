@@ -3,7 +3,7 @@ const path = require("node:path");
 const axios = require("axios");
 const market = require("./dexscreener");
 const geckoTerminal = require("./geckoTerminal");
-const { analyzeToken } = require("./strategy");
+const { analyzePaperLaunchCandidate } = require("./paperLaunchStrategy");
 const { createPaperTrader } = require("./paperTrader");
 const { createBot } = require("./bot");
 const { getLockStatus } = require("./lpLockChecker");
@@ -136,7 +136,7 @@ function mapLaunchPair(pair, descriptor) {
     newPoolCreatedAt: new Date(descriptor.createdAt).toISOString(),
     discoverySource: "GECKOTERMINAL_NEW_POOL"
   };
-  const analysis = analyzeToken(data);
+  const analysis = analyzePaperLaunchCandidate(data);
   return { ...data, score: analysis.score, signal: analysis.signal, reasons: analysis.reasons };
 }
 
