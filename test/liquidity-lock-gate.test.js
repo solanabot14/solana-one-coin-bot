@@ -25,22 +25,22 @@ test("malformed lock percentages are rejected even when RugCheck is unavailable"
 });
 
 
-test("Profit Sniper threshold accepts confirmed 50% lock and fails closed when lock data is unavailable", async () => {
+test("Profit Sniper threshold accepts confirmed 30% lock and fails closed when lock data is unavailable", async () => {
   assert.equal(MIN_LOCKED_PERCENT, 85, "shared bots keep their existing default");
   const atThreshold = createLpLockChecker({
-    minimumLockedPercent: 50,
-    httpGet: async () => ({ data: { lpLockedPct: 50 } })
+    minimumLockedPercent: 30,
+    httpGet: async () => ({ data: { lpLockedPct: 30 } })
   });
   const belowThreshold = createLpLockChecker({
-    minimumLockedPercent: 50,
-    httpGet: async () => ({ data: { lpLockedPct: 49.99 } })
+    minimumLockedPercent: 30,
+    httpGet: async () => ({ data: { lpLockedPct: 29.99 } })
   });
   const unavailable = createLpLockChecker({
-    minimumLockedPercent: 50,
+    minimumLockedPercent: 30,
     httpGet: async () => ({ data: {} })
   });
-  assert.equal((await atThreshold.getLockStatus("threshold-50")).allowed, true);
-  assert.equal((await belowThreshold.getLockStatus("below-50")).allowed, false);
+  assert.equal((await atThreshold.getLockStatus("threshold-30")).allowed, true);
+  assert.equal((await belowThreshold.getLockStatus("below-30")).allowed, false);
   assert.equal((await unavailable.getLockStatus("unavailable")).allowed, false);
-  assert.equal(liquidityLockAllowsEntry(await unavailable.getLockStatus("unavailable"), 50, false), false);
+  assert.equal(liquidityLockAllowsEntry(await unavailable.getLockStatus("unavailable"), 30, false), false);
 });

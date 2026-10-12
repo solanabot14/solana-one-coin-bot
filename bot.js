@@ -284,7 +284,9 @@ function createBot({
         lock = await checkLiquidityLock(coin.tokenAddress);
         if (!isActive(session)) return;
         if (!liquidityLockAllowsEntry(lock, minimumEntryLockPercent, allowUnknownLiquidityLock)) {
-          console.log(`LP LOCK GATE | ${coin.symbol} | skipped | ${lock?.reason || "LOCK_STATUS_UNAVAILABLE"}`);
+          const lockPercent = Number(lock?.lockedPercent);
+          const lockDisplay = Number.isFinite(lockPercent) ? lockPercent.toFixed(1) + "%" : "unknown";
+          console.log(`LP LOCK GATE | ${coin.symbol} | skipped | locked ${lockDisplay} | required ${minimumEntryLockPercent}% | ${lock?.reason || "LOCK_STATUS_UNAVAILABLE"}`);
           continue;
         }
         if (lock?.lockedPercent === null || lock?.lockedPercent === undefined) {

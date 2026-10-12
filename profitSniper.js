@@ -13,7 +13,7 @@ const { MAX_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MIN_VOLUME_5M_US
 const MAX_OPEN_POSITIONS = 3;
 const SCAN_INTERVAL_MS = 30000;
 const POSITION_MONITOR_MS = 5000;
-const MINIMUM_LIQUIDITY_LOCK_PERCENT = 50;
+const MINIMUM_LIQUIDITY_LOCK_PERCENT = 30;
 const profitSniperLockChecker = require("./lpLockChecker").createLpLockChecker({
   minimumLockedPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT
 });

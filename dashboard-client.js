@@ -338,7 +338,9 @@
     var pools=scan.recentPools==null?'—':int(scan.recentPools);
     var last=scan.updatedAt?dateTime(scan.updatedAt):'Waiting for first scan';
     var error=scan.error?'<div class="notice">'+esc(scan.error)+'</div>':'';
-    return '<div class="panel section-gap"><div class="panel-head"><div><div class="panel-title">PROFIT SNIPER · SCANNER</div><div class="panel-subtitle">'+esc(source)+'</div></div><span class="badge">'+(status.running?'SCANNING':'STOPPED')+'</span></div><div class="kpi-grid">'+kpi('AUTO SCAN',status.running?'ON':'OFF','Every 30 seconds')+kpi('POSITION CHECK','5 sec','Up to 3 open slots')+kpi('RECENT POOLS',pools,'Pools still in 30-minute window')+kpi('MOMENTUM QUALIFIED',candidateCount,'Passed all entry gates')+kpi('LAST SCAN',esc(last),'Puerto Rico time')+'</div>'+error+'</div>';
+    var lockFloor=status.minimumLiquidityLockPercent==null?'—':esc(status.minimumLiquidityLockPercent)+'%';
+    var lockPolicy=status.allowUnknownLiquidityLockInPaper?'Unknown allowed':'Unknown blocks';
+    return '<div class="panel section-gap"><div class="panel-head"><div><div class="panel-title">PROFIT SNIPER · SCANNER</div><div class="panel-subtitle">'+esc(source)+'</div></div><span class="badge">'+(status.running?'SCANNING':'STOPPED')+'</span></div><div class="kpi-grid">'+kpi('AUTO SCAN',status.running?'ON':'OFF','Every 30 seconds')+kpi('POSITION CHECK','5 sec','Up to 3 open slots')+kpi('LP LOCK FLOOR',lockFloor,'RugCheck confirmed · '+lockPolicy)+kpi('RECENT POOLS',pools,'Pools still in 30-minute window')+kpi('MOMENTUM QUALIFIED',candidateCount,'Passed all entry gates')+kpi('LAST SCAN',esc(last),'Puerto Rico time')+'</div>'+error+'</div>';
   }
   function renderPositions(system) {
     var rows=system.positions.map(function(x){return livePositionRow(system.label,x,'');});
