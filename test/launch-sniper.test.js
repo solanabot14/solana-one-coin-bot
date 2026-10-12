@@ -36,3 +36,8 @@ test("rejects weak liquidity, volume, activity, or buy ratio", () => {
 test("does not qualify a pair without recent transaction data", () => {
   assert.equal(qualifiesLaunchCandidate(candidate({ buys5m: 0, sells5m: 0 }), now), false);
 });
+
+test("launch watcher is capped at three separate paper positions", () => {
+  assert.equal(thresholds.maximumOpenPositions, 3);
+  assert.equal(thresholds.paperEntryUsd, 10);
+});
