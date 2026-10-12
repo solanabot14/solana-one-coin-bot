@@ -180,7 +180,8 @@ function entryCostModel(data) {
   };
 }
 async function copyBuy(tx, mint, sourceAmount, eventTime, signature) {
-  if (state.cashBalance + 1e-9 < TRADE_SIZE || state.positions.filter(p => Number(p.quantity) > 0).length >= MAX_POSITIONS) {
+  const existing = lookupPosition(mint);
+  if (state.cashBalance + 1e-9 < TRADE_SIZE || (!existing && state.positions.filter(p => Number(p.quantity) > 0).length >= MAX_POSITIONS)) {
     state.stats.skipped++;
     return;
   }
@@ -201,23 +202,35 @@ async function copyBuy(tx, mint, sourceAmount, eventTime, signature) {
     return;
   }
   const id = signature + ":" + mint;
-  const position = {
+  const position = existing || {
     id, positionId: id, tokenAddress: mint,
     symbol: quote.symbol || mint.slice(0, 6), name: quote.name || quote.symbol || mint,
     pairAddress: quote.pairAddress || null, strategyVersion: "DECU-WALLET-FOLLOW-PAPER",
-    entryTime: eventTime, entryPrice: price, quantity, originalQuantity: quantity,
-    amountInvested: TRADE_SIZE, entryLiquidityUsd: liquidity,
+    entryTime: eventTime, entryPrice: price, quantity: 0, originalQuantity: 0,
+    amountInvested: 0, entryLiquidityUsd: liquidity,
     entrySignal: "Observed wallet swap " + signature,
     entryReasons: ["Paper copy at webhook arrival quote"],
-    highestPrice: price, remainingEntryCosts: { feesUsd: fee + NETWORK_FEE_USD, slippageUsd: slippage },
+    highestPrice: price, remainingEntryCosts: { feesUsd: 0, slippageUsd: 0 },
     experimentEntry: { estimatedCostModel: entryCostModel(quote) }
   };
-  state.positions.push(position);
+  const oldQuantity = Number(position.quantity) || 0;
+  const nextQuantity = oldQuantity + quantity;
+  position.entryPrice = (Number(position.entryPrice) * oldQuantity + price * quantity) / nextQuantity;
+  position.quantity = round(nextQuantity);
+  position.originalQuantity = round((Number(position.originalQuantity) || 0) + quantity);
+  position.amountInvested = round((Number(position.amountInvested) || 0) + TRADE_SIZE);
+  position.highestPrice = Math.max(Number(position.highestPrice) || 0, price);
+  position.remainingEntryCosts = {
+    feesUsd: round((Number(position.remainingEntryCosts && position.remainingEntryCosts.feesUsd) || 0) + fee + NETWORK_FEE_USD),
+    slippageUsd: round((Number(position.remainingEntryCosts && position.remainingEntryCosts.slippageUsd) || 0) + slippage)
+  };
+  if (!existing) state.positions.push(position);
   state.cashBalance = round(state.cashBalance - TRADE_SIZE);
   state.history.push({
-    type: "BUY", id, positionId: id, tokenAddress: mint, symbol: position.symbol, name: position.name,
-    pairAddress: position.pairAddress, strategyVersion: position.strategyVersion,
-    entryTime: eventTime, entryPrice: price, quantity, amountInvested: TRADE_SIZE,
+    type: "BUY", id, positionId: position.positionId, tokenAddress: mint,
+    symbol: position.symbol, name: position.name, pairAddress: position.pairAddress,
+    strategyVersion: position.strategyVersion, entryTime: position.entryTime,
+    signalTime: eventTime, entryPrice: price, quantity, amountInvested: TRADE_SIZE,
     entryLiquidityUsd: liquidity, highestPrice: price, reason: "Observed wallet swap",
     sourceSignature: signature
   });
@@ -284,7 +297,7 @@ async function processTransaction(tx) {
   }
   for (const leg of deltas.filter(x => x.delta > 0)) {
     const previous = Number(state.sourceBalances[leg.mint]) || 0;
-    if (!lookupPosition(leg.mint)) await copyBuy(tx, leg.mint, leg.delta, eventTime, signature);
+    await copyBuy(tx, leg.mint, leg.delta, eventTime, signature);
     state.sourceBalances[leg.mint] = previous + leg.delta;
   }
   remember(signature, tx);
