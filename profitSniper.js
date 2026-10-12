@@ -33,27 +33,47 @@ function estimateExecutionCosts({ amountUsd, liquidityUsd }) {
   return { feesUsd: poolFeeUsd + solanaFeeUsd, slippageUsd, poolFeeUsd, solanaFeeUsd, priorityFeeUsd: 0 };
 }
 
-const { qualifiesMomentumCandidate, getBuySizing, chooseExit } = strategy;
+const { qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit } = strategy;
 
 let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, source: "GeckoTerminal new pools + DexScreener + RugCheck" };
 
 async function discoverCandidates(options = {}) {
   const candidates = await launchSniper.discoverLaunchCandidates({ ...options, minimumLiquidityUsd: MIN_LIQUIDITY_USD, minimumVolume24hUsd: MIN_VOLUME_24H_USD });
   const now = Date.now();
-  const qualified = candidates.filter(coin => qualifiesMomentumCandidate(coin, now))
+  const evaluated = candidates.map(coin => ({ coin, failures: getMomentumFailureReasons(coin, now) }));
+  const rejectedGates = {};
+  for (const item of evaluated) {
+    for (const reason of item.failures) rejectedGates[reason] = (rejectedGates[reason] || 0) + 1;
+  }
+  const qualified = evaluated.filter(item => item.failures.length === 0).map(item => item.coin)
     .sort((a, b) => Number(b.score || 0) - Number(a.score || 0) || Number(b.volume5m || 0) - Number(a.volume5m || 0))
     .map(coin => ({ ...coin, signal: "BUY", reasons: [...(coin.reasons || []), "Profit Sniper activity + momentum filters passed"] }));
+  const samples = evaluated.slice(0, 3).map(({ coin, failures }) => ({
+    symbol: coin.symbol || null,
+    momentum5m: Number(coin.priceChange5m),
+    volume5m: Number(coin.volume5m),
+    buys5m: Number(coin.buys5m),
+    sells5m: Number(coin.sells5m),
+    rejectedGates: failures
+  }));
+  const scanState = launchSniper.getStatus().scanDiagnostics;
   lastScanDiagnostics = {
     state: "scan_complete",
     updatedAt: new Date(now).toISOString(),
     source: "GeckoTerminal new pools + DexScreener + RugCheck",
-    poolsReceived: launchSniper.getStatus().scanDiagnostics?.poolsReceived ?? null,
-    recentPools: launchSniper.getStatus().scanDiagnostics?.poolsTracked ?? null,
+    poolsReceived: scanState?.poolsReceived ?? null,
+    recentPools: scanState?.poolsTracked ?? null,
     activityQualified: candidates.length,
     momentumQualified: qualified.length,
+    momentumRejectedGates: rejectedGates,
+    candidateSamples: samples,
     selectedByScore: qualified.slice(0, MAX_OPEN_POSITIONS).map(coin => coin.symbol || coin.tokenAddress),
-    error: launchSniper.getStatus().scanDiagnostics?.error || null
+    error: scanState?.error || null
   };
+  console.log("PROFIT SNIPER SCAN | activity-qualified: " + candidates.length +
+    " | momentum-qualified: " + qualified.length +
+    " | rejected gates: " + (Object.keys(rejectedGates).length ? JSON.stringify(rejectedGates) : "none") +
+    " | candidate samples: " + JSON.stringify(samples));
   return qualified;
 }
 
@@ -84,6 +104,7 @@ const bot = createBot({
   minimumVolume24hUsd: MIN_VOLUME_24H_USD,
   acceptedSignals: ["BUY", "STRONG BUY"],
   requireLiquidityLock: true,
+  allowUnknownLiquidityLock: true,
   useReentryGuards: true,
   useSimpleCooldown: false,
   exitDecision: chooseExit
@@ -97,6 +118,7 @@ function getStatus() {
     execution: "No wallet connection or live swaps",
     scanIntervalMs: SCAN_INTERVAL_MS,
     positionMonitorIntervalMs: POSITION_MONITOR_MS,
+    allowUnknownLiquidityLockInPaper: true,
     strategy: { hardStopPercent: HARD_STOP_PERCENT, tp1Percent: TAKE_PROFIT_1_PERCENT,
       tp1SellPercent: TAKE_PROFIT_1_SELL_PERCENT, tp2Percent: TAKE_PROFIT_2_PERCENT,
       postTp1FloorPercent: PROFIT_FLOOR_AFTER_TP1_PERCENT, compoundRates: COMPOUND_RATES,
@@ -110,6 +132,7 @@ module.exports = {
   getStatus,
   getPortfolio: trader.getPortfolio,
   qualifiesMomentumCandidate,
+  getMomentumFailureReasons,
   getBuySizing,
   chooseExit,
   estimateExecutionCosts,
