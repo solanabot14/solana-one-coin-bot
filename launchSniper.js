@@ -53,7 +53,7 @@ function describeNewPool(pool) {
   return { poolAddress, tokenAddress, createdAt };
 }
 
-function qualifiesLaunchCandidate(data, now = Date.now()) {
+function qualifiesLaunchCandidate(data, now = Date.now(), minimumLiquidityUsd = MIN_LIQUIDITY_USD) {
   if (!data || typeof data !== "object") return false;
   const createdAt = Number(data.pairCreatedAt);
   const ageMs = now - createdAt;
@@ -65,7 +65,7 @@ function qualifiesLaunchCandidate(data, now = Date.now()) {
   const transactions5m = buys5m + sells5m;
   const buyRatio5m = transactions5m > 0 ? buys5m / transactions5m : 0;
   return Number.isFinite(createdAt) && ageMs >= 0 && ageMs <= MAX_PAIR_AGE_MS &&
-    Number.isFinite(liquidity) && liquidity >= MIN_LIQUIDITY_USD &&
+    Number.isFinite(liquidity) && liquidity >= minimumLiquidityUsd &&
     Number.isFinite(volume24h) && volume24h >= MIN_VOLUME_24H_USD &&
     Number.isFinite(volume5m) && volume5m >= MIN_VOLUME_5M_USD &&
     transactions5m >= MIN_TRANSACTIONS_5M && buyRatio5m >= MIN_BUY_RATIO_5M;
@@ -140,7 +140,7 @@ function mapLaunchPair(pair, descriptor) {
   return { ...data, score: analysis.score, signal: analysis.signal, reasons: analysis.reasons };
 }
 
-function measureCandidateGates(candidates, now = Date.now()) {
+function measureCandidateGates(candidates, now = Date.now(), minimumLiquidityUsd = MIN_LIQUIDITY_USD) {
   const gates = {
     pairsMatched: candidates.length,
     age: 0,
@@ -156,7 +156,7 @@ function measureCandidateGates(candidates, now = Date.now()) {
     const ageMs = now - createdAt;
     if (!Number.isFinite(createdAt) || ageMs < 0 || ageMs > MAX_PAIR_AGE_MS) continue;
     gates.age++;
-    if (!(Number(data.liquidityUsd) >= MIN_LIQUIDITY_USD)) continue;
+    if (!(Number(data.liquidityUsd) >= minimumLiquidityUsd)) continue;
     gates.liquidity++;
     if (!(Number(data.volume24h) >= MIN_VOLUME_24H_USD)) continue;
     gates.volume24h++;
@@ -174,7 +174,7 @@ function measureCandidateGates(candidates, now = Date.now()) {
   return gates;
 }
 
-async function discoverLaunchCandidates({ signal } = {}) {
+async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQUIDITY_USD } = {}) {
   const now = Date.now();
   const diagnostics = {
     updatedAt: new Date(now).toISOString(),
@@ -211,7 +211,7 @@ async function discoverLaunchCandidates({ signal } = {}) {
     diagnostics.poolsInAgeWindow = trackedLaunchPools.size;
     diagnostics.poolsTracked = trackedLaunchPools.size;
     if (signal?.aborted || !trackedLaunchPools.size) {
-      diagnostics.gates = measureCandidateGates([]);
+      diagnostics.gates = measureCandidateGates([], now, minimumLiquidityUsd);
       lastScanDiagnostics = diagnostics;
       console.log("PAPER LAUNCH SCAN | pools received: " + diagnostics.poolsReceived +
         " | recent pools tracked: " + diagnostics.poolsTracked + " | no pairs queried");
@@ -225,8 +225,8 @@ async function discoverLaunchCandidates({ signal } = {}) {
     const mapped = dexPairs
       .map(pair => mapLaunchPair(pair, descriptorByPool.get(pair?.pairAddress)))
       .filter(Boolean);
-    const gates = measureCandidateGates(mapped);
-    const eligibleCandidates = mapped.filter(candidate => qualifiesLaunchCandidate(candidate));
+    const gates = measureCandidateGates(mapped, now, minimumLiquidityUsd);
+    const eligibleCandidates = mapped.filter(candidate => qualifiesLaunchCandidate(candidate, now, minimumLiquidityUsd));
     const signalCounts = {};
     for (const candidate of eligibleCandidates) {
       signalCounts[candidate.signal] = (signalCounts[candidate.signal] || 0) + 1;
@@ -247,7 +247,7 @@ async function discoverLaunchCandidates({ signal } = {}) {
     return eligibleCandidates;
   } catch (error) {
     diagnostics.error = error.message;
-    diagnostics.gates = measureCandidateGates([]);
+    diagnostics.gates = measureCandidateGates([], now, minimumLiquidityUsd);
     lastScanDiagnostics = diagnostics;
     if (!signal?.aborted) console.warn("PAPER LAUNCH DISCOVERY UNAVAILABLE | " + error.message);
     return [];
