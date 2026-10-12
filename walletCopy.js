@@ -377,28 +377,42 @@ async function pollOnce() {
   try {
     const apiKey = process.env.HELIUS_API_KEY;
     if (!apiKey) throw new Error("HELIUS_API_KEY is not configured.");
-    // Cursor paging requests only new activity, avoiding repeated history downloads.
+    // Use the legacy-compatible history query. Stop at our saved signature
+    // and process the collected new events oldest-first across all pages.
+    const pending = [];
+    let before = null;
+    let newest = null;
+    let reachedCursor = false;
     for (let page = 0; page < 5 && running; page++) {
-      const url = new URL("https://api-mainnet.helius-rpc.com/v0/addresses/" + WALLET + "/transactions");
+      const url = new URL("https://api.helius.xyz/v0/addresses/" + WALLET + "/transactions");
       url.searchParams.set("api-key", apiKey);
       url.searchParams.set("limit", "100");
-      url.searchParams.set("token-accounts", "balanceChanged");
-      url.searchParams.set("commitment", "confirmed");
-      url.searchParams.set("sort-order", "asc");
-      if (state.pollCursor) url.searchParams.set("after-signature", state.pollCursor);
-      else url.searchParams.set("gte-time", String(Math.floor(new Date(state.pollStartedAt).getTime() / 1000)));
+      if (before) url.searchParams.set("before", before);
       const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
-      if (!response.ok) throw new Error("Helius wallet polling failed (" + response.status + ").");
+      if (!response.ok) {
+        const detail = (await response.text().catch(() => "")).replaceAll(apiKey, "[redacted]").slice(0, 240);
+        throw new Error("Helius wallet polling failed (" + response.status + "). " + detail);
+      }
       const transactions = await response.json();
       if (!Array.isArray(transactions)) throw new Error("Helius wallet polling returned an invalid history response.");
       if (!running) return;
-      const ordered = transactions;
-      // Keep webhook and polling deliveries serialized and deduplicate by signature.
-      await handleWebhookPayload(ordered.filter(tx => String(tx.type || "").toUpperCase() === "SWAP"));
-      if (ordered.length) state.pollCursor = getSignature(ordered[ordered.length - 1]);
-      saveState();
-      if (transactions.length < 100) break;
+      newest ||= transactions[0] && getSignature(transactions[0]);
+      for (const tx of transactions) {
+        if (getSignature(tx) === state.pollCursor || Math.floor(new Date(getEventTime(tx)).getTime() / 1000) < Math.floor(new Date(state.pollStartedAt).getTime() / 1000)) {
+          reachedCursor = true;
+          break;
+        }
+        pending.push(tx);
+      }
+      if (reachedCursor || transactions.length < 100) break;
+      const nextBefore = getSignature(transactions[transactions.length - 1]);
+      if (nextBefore === before) throw new Error("Helius history cursor did not advance.");
+      before = nextBefore;
+      if (page === 4) throw new Error("Wallet history backlog exceeds 500 events; cursor preserved for recovery.");
     }
+    await handleWebhookPayload(pending.reverse().filter(tx => String(tx.type || "").toUpperCase() === "SWAP"));
+    if (newest) state.pollCursor = newest;
+    saveState();
     lastPollAt = new Date().toISOString();
     lastPollError = null;
     setupError = null;

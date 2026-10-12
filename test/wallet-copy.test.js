@@ -85,7 +85,7 @@ test("403 webhook registration falls back to a working cursor feed without dupli
       return { ok: true, json: async () => [] };
     }
     historyCalls++;
-    if (historyCalls === 3) return { ok: false, status: 429 };
+    if (historyCalls === 3) return { ok: false, status: 429, text: async () => "rate limited" };
     return { ok: true, json: async () => [tx] };
   };
   try {
@@ -98,7 +98,7 @@ test("403 webhook registration falls back to a working cursor feed without dupli
     assert.equal(follower.getStatus().copiedBuys, before + 1);
     await follower.pollOnce();
     assert.equal(follower.getStatus().copiedBuys, before + 1);
-    assert.ok(urls.some(url => url.includes("after-signature=poll-buy-1")));
+    assert.ok(urls.some(url => url.includes("/addresses/") && !url.includes("sort-order")));
     await follower.pollOnce();
     assert.equal(follower.getStatus().feedConnected, false);
     assert.match(follower.getStatus().error, /429/);
