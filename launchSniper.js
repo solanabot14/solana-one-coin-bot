@@ -74,7 +74,14 @@ function discoverLaunchCandidates(options = {}) {
     minimumLiquidityUsd: MIN_LIQUIDITY_USD,
     minimumVolume24hUsd: MIN_VOLUME_24H_USD,
     candidateFilter: data => qualifiesLaunchCandidate(data)
-  });
+  }).then(candidates => candidates.map(candidate => ({
+    ...candidate,
+    experimentEntry: {
+      ...(candidate.experimentEntry || {}),
+      pairAgeMs: Math.max(0, Date.now() - Number(candidate.pairCreatedAt)),
+      discoverySource: "DexScreener polling"
+    }
+  })));
 }
 
 const quietNotifier = {
