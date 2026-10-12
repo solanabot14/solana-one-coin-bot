@@ -204,7 +204,8 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       }
       if (route === "/api/profit-sniper/close-position") {
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
-        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
+        // This is the sole public control allowed without dashboard credentials:
+        // it only closes a paper position. All bot start/stop controls remain read-only.
         if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
         const positionId = new URL(req.url, "http://localhost").searchParams.get("positionId");
         const result = await profitSniper.closePosition(positionId);
