@@ -278,6 +278,7 @@ if (require.main === module) {
   buyPriorityTest.startBot();
   buyPriorityExitTest.startBot();
   buyPriorityLock85.startBot();
+  launchSniper.startBot();
   server.listen(config.port, config.host, () => console.log("Dashboard listening on " + config.host + ":" + config.port));
   const shutdown = () => {
     swarm.stop();
