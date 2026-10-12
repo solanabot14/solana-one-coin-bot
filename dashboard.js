@@ -9,6 +9,7 @@ const { getTokenData, getTokensData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
 const swarm = require("./janMvpBot");
 const buyPriorityTest = require("./buyPriorityTest");
+const buyPriorityExitTest = require("./buyPriorityExitTest");
 const buyPriorityLock85 = require("./buyPriorityLock85");
 
 function getConfig(env = process.env) {
@@ -199,10 +200,12 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       if (route === "/api/data") {
         const baseAccount = portfolio();
         const buyTestAccount = buyPriorityTest.buildDashboardAccount();
+        const exitTestAccount = buyPriorityExitTest.buildDashboardAccount();
         const lock85Account = buyPriorityLock85.buildDashboardAccount();
         const addresses = [...new Set([
           ...(baseAccount.positions || (baseAccount.position ? [baseAccount.position] : [])).map(p => p.tokenAddress),
           ...(buyTestAccount.positions || []).map(p => p.tokenAddress),
+          ...(exitTestAccount.positions || []).map(p => p.tokenAddress),
           ...(lock85Account.positions || []).map(p => p.tokenAddress)
         ].filter(Boolean))];
         const sharedQuotes = batchMarketData && addresses.length
@@ -211,11 +214,12 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const sharedMarketData = sharedQuotes
           ? async address => sharedQuotes.get(address) || null
           : marketData;
-        const [v31, candleBreakout, profitabilityLab, buyTest, lock85] = await Promise.all([
+        const [v31, candleBreakout, profitabilityLab, buyTest, exitTest, lock85] = await Promise.all([
           buildDashboardData(baseAccount, sharedMarketData),
           fetchCandleBreakoutDashboard(),
           fetchProfitabilityLabDashboard(),
           buildDashboardData(buyTestAccount, sharedMarketData).then(applyBuyPriorityCostEstimates),
+          buildDashboardData(exitTestAccount, sharedMarketData).then(applyBuyPriorityCostEstimates),
           buildDashboardData(lock85Account, sharedMarketData)
         ]);
         return json(res, {
@@ -226,7 +230,9 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           profitabilityLab: profitabilityLab.data,
           profitabilityLabError: profitabilityLab.error,
           buyPriorityTest: buyTest,
+          buyPriorityExitTest: exitTest,
           buyPriorityTestStatus: { running: buyPriorityTest.getBotStatus(), entriesPaused: buyPriorityTest.getEntriesPaused(), error: buyPriorityTest.getLastError() },
+          buyPriorityExitTestStatus: { running: buyPriorityExitTest.getBotStatus(), entriesPaused: buyPriorityExitTest.getEntriesPaused(), error: buyPriorityExitTest.getLastError() },
           buyPriorityLock85: lock85,
           buyPriorityLock85Status: { running: buyPriorityLock85.getBotStatus(), error: buyPriorityLock85.getLastError() }
         });
@@ -255,12 +261,14 @@ if (require.main === module) {
   bot.startBot();
   swarm.start();
   buyPriorityTest.startBot();
+  buyPriorityExitTest.startBot();
   buyPriorityLock85.startBot();
   server.listen(config.port, config.host, () => console.log("Dashboard listening on " + config.host + ":" + config.port));
   const shutdown = () => {
     swarm.stop();
     bot.stopBot();
     buyPriorityTest.stopBot();
+    buyPriorityExitTest.stopBot();
     buyPriorityLock85.stopBot();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 12000).unref();
