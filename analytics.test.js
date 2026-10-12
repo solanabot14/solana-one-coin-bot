@@ -48,3 +48,20 @@ test('drawdown is explicitly labeled as realized P&L only', () => {
   assert.equal(d.maxDrawdown, 4);
   assert.equal(d.basis, 'CUMULATIVE REALIZED P&L');
 });
+
+test('counts partial sell events in realized ledger before the whole position closes', () => {
+  const rows = [
+    { type:'SELL', systemId:'test', time:'2026-10-01T12:00:00Z', pnl:2, percentSold:40 },
+    { type:'SELL', systemId:'test', time:'2026-10-01T13:00:00Z', pnl:-3, percentSold:60 }
+  ];
+  const events = a.realizedSellEvents(rows);
+  assert.equal(events.length, 2);
+  assert.equal(events.reduce((sum, row) => sum + row.pnl, 0), -1);
+  assert.equal(a.dailyPnl(events, 'UTC')[0].pnl, -1);
+});
+
+test('keeps legacy closed-trade rows in realized ledger fallback', () => {
+  const events = a.realizedSellEvents([{ type:'CLOSED TRADE', time:'2026-10-01T12:00:00Z', pnl:4 }]);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].pnl, 4);
+});
