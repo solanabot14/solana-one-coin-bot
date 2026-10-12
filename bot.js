@@ -284,8 +284,12 @@ function createBot({
         lock = await checkLiquidityLock(coin.tokenAddress);
         if (!isActive(session)) return;
         if (!liquidityLockAllowsEntry(lock, minimumEntryLockPercent, allowUnknownLiquidityLock)) {
-          const lockPercent = Number(lock?.lockedPercent);
-          const lockDisplay = Number.isFinite(lockPercent) ? lockPercent.toFixed(1) + "%" : "unknown";
+          const rawLockPercent = lock?.lockedPercent;
+          const lockPercent = Number(rawLockPercent);
+          const lockDisplay = rawLockPercent === null || rawLockPercent === undefined ||
+            (typeof rawLockPercent === "string" && rawLockPercent.trim() === "") || !Number.isFinite(lockPercent)
+            ? "unknown"
+            : lockPercent.toFixed(1) + "%";
           console.log(`LP LOCK GATE | ${coin.symbol} | skipped | locked ${lockDisplay} | required ${minimumEntryLockPercent}% | ${lock?.reason || "LOCK_STATUS_UNAVAILABLE"}`);
           continue;
         }
