@@ -226,15 +226,25 @@ async function discoverLaunchCandidates({ signal } = {}) {
       .map(pair => mapLaunchPair(pair, descriptorByPool.get(pair?.pairAddress)))
       .filter(Boolean);
     const gates = measureCandidateGates(mapped);
+    const eligibleCandidates = mapped.filter(candidate => qualifiesLaunchCandidate(candidate));
+    const signalCounts = {};
+    for (const candidate of eligibleCandidates) {
+      signalCounts[candidate.signal] = (signalCounts[candidate.signal] || 0) + 1;
+    }
     diagnostics.gates = gates;
+    diagnostics.signalCounts = signalCounts;
     lastScanDiagnostics = diagnostics;
+    const signalSummary = Object.entries(signalCounts).map(([signal, count]) =>
+      signal + " " + count
+    ).join(", ") || "none";
     console.log("PAPER LAUNCH SCAN | pools received: " + diagnostics.poolsReceived +
       " | recent pools: " + diagnostics.poolsTracked + " | Dex pairs: " + diagnostics.dexPairsReturned +
       " | exact pool matches: " + gates.pairsMatched + " | age: " + gates.age +
       " | liquidity: " + gates.liquidity + " | 24h volume: " + gates.volume24h +
       " | 5m volume: " + gates.volume5m + " | 5m trades: " + gates.transactions5m +
-      " | buy flow: " + gates.buyRatio5m + " | eligible: " + gates.eligible);
-    return mapped.filter(candidate => qualifiesLaunchCandidate(candidate));
+      " | buy flow: " + gates.buyRatio5m + " | eligible: " + gates.eligible +
+      " | activity-qualified signals: " + signalSummary);
+    return eligibleCandidates;
   } catch (error) {
     diagnostics.error = error.message;
     diagnostics.gates = measureCandidateGates([]);
