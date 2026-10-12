@@ -275,6 +275,7 @@ const bot = createBot({
   minimumVolume24hUsd: MIN_VOLUME_24H_USD,
   acceptedSignals: ["BUY", "STRONG BUY"],
   requireLiquidityLock: true,
+  allowUnknownLiquidityLock: true,
   useSimpleCooldown: true
 });
 
@@ -288,6 +289,7 @@ function getStatus() {
     positionMonitorIntervalMs: 5000,
     maximumPairAgeMinutes: 30,
     minimumLiquidityLockPercent: 70,
+    allowUnknownLiquidityLockInPaper: true,
     scanDiagnostics: lastScanDiagnostics
   };
 }
