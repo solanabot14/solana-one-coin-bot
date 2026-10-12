@@ -67,6 +67,8 @@ function persistReentryGuards(guards, file, io = fs) {
 function createBot({
   trader = paperTrader,
   getTokenData = market.getTokenData,
+  getTokensData = market.getTokensData,
+  batchPositionPrices = false,
   discoverCandidates = scanner.discoverCandidates,
   timers = globalThis,
   notifier = telegram,
@@ -330,11 +332,21 @@ function createBot({
   }
 
   async function monitorPosition(session) {
-    for (const snapshot of getPositions()) {
+    const snapshots = getPositions();
+    let batchPrices = null;
+    if (batchPositionPrices && snapshots.length) {
+      try {
+        batchPrices = await getTokensData(snapshots.map(position => position.tokenAddress), { signal: session.signal });
+      } catch (error) {
+        if (isActive(session)) console.warn("Batched position price refresh failed:", error.message);
+        return;
+      }
+    }
+    for (const snapshot of snapshots) {
       if (!isActive(session)) return;
       const expectedPosition = positionKey(snapshot);
       const tokenAddress = snapshot.tokenAddress;
-      const freshData = await getTokenData(tokenAddress, { signal: session.signal });
+      const freshData = batchPrices ? (batchPrices.get(tokenAddress) || null) : await getTokenData(tokenAddress, { signal: session.signal });
       let position = getPositions().find(item => positionKey(item) === expectedPosition);
       if (!isActive(session) || !position || !freshData) continue;
 

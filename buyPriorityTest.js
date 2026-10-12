@@ -260,6 +260,9 @@ const quietNotifier = {
 const bot = createBot({
   trader,
   getTokenData: market.getTokenData,
+  getTokensData: market.getTokensData,
+  batchPositionPrices: true,
+  positionMonitorMs: 2000,
   discoverCandidates: discoverBuyPriorityCandidates,
   notifier: quietNotifier,
   checkLiquidityLock: getLockStatus,

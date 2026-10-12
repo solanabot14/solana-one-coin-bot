@@ -76,6 +76,35 @@ function tradeMetrics(trades) {
   };
 }
 
+function realizedSellEvents(rows) {
+  const events = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const type = String(row?.type || '').toUpperCase();
+    const sells = Array.isArray(row?.sells) ? row.sells : [];
+    if (type === 'SELL') {
+      const time = row.exitTime || row.time || row.timestamp || null;
+      const pnl = number(row.pnl ?? row.netPnl ?? row.realizedPnl);
+      if (time && pnl !== null) events.push({ ...row, time, exitTime: time, pnl });
+      continue;
+    }
+    if (sells.length) {
+      for (const sell of sells) {
+        const time = sell.exitTime || sell.time || row.exitTime || null;
+        const pnl = number(sell.pnl ?? sell.netPnl);
+        if (time && pnl !== null) events.push({ ...sell, system: row.system, systemId: row.systemId, time, exitTime: time, pnl });
+      }
+      continue;
+    }
+    // Legacy feeds expose one row per closed position instead of SELL ledger rows.
+    if (type === 'CLOSED TRADE' || type === 'TRADE') {
+      const time = row.exitTime || row.time || null;
+      const pnl = number(row.pnl ?? row.netPnl ?? row.realizedPnl);
+      if (time && pnl !== null) events.push({ ...row, time, exitTime: time, pnl });
+    }
+  }
+  return events.sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
+}
+
 function pnlEvents(trades) {
   const events = [];
   for (const trade of trades) {
@@ -171,7 +200,7 @@ function drawdownFromRealizedPnl(trades) {
 }
 
 var OneCoinAnalytics = {
-  NOT_ENOUGH_DATA, normalizeTrade, tradeMetrics, pnlEvents, groupBy,
+  NOT_ENOUGH_DATA, normalizeTrade, tradeMetrics, realizedSellEvents, pnlEvents, groupBy,
   groupByExitReason, dailyPnl, byHour, byWeekday, filterRange, drawdownFromRealizedPnl
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = OneCoinAnalytics;
