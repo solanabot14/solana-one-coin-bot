@@ -262,7 +262,7 @@ const bot = createBot({
   getTokenData: market.getTokenData,
   getTokensData: market.getTokensData,
   batchPositionPrices: true,
-  positionMonitorMs: 1500,
+  positionMonitorMs: 2000,
   discoverCandidates: discoverBuyPriorityCandidates,
   notifier: quietNotifier,
   checkLiquidityLock: getLockStatus,
