@@ -94,7 +94,7 @@ function readCachedTokenData(address, pairAddress = null) {
 	return cached.data;
 }
 
-async function getTokensData(tokenAddresses, { signal, pairAddresses } = {}) {
+async function getTokensData(tokenAddresses, { signal, pairAddresses, allowAlternatePairQuote = false } = {}) {
 	const addresses = [...new Set((tokenAddresses || []).filter(Boolean))];
 	const results = new Map();
 	const missing = [];
@@ -119,6 +119,7 @@ async function getTokensData(tokenAddresses, { signal, pairAddresses } = {}) {
 				if (!address || !batch.includes(address)) continue;
 				const preferredPair = preferredPairAddress(address, pairAddresses);
 				if (preferredPair && pair.pairAddress !== preferredPair) {
+					if (!allowAlternatePairQuote) continue;
 					const currentFallback = fallbackPairs.get(address);
 					if (!currentFallback || compareFallbackPairs(pair, currentFallback) > 0) fallbackPairs.set(address, pair);
 					continue;
@@ -132,7 +133,7 @@ async function getTokensData(tokenAddresses, { signal, pairAddresses } = {}) {
 			for (const address of batch) {
 				const preferredPair = preferredPairAddress(address, pairAddresses) || null;
 				const exactPair = bestPairs.get(address);
-				const pair = exactPair || (preferredPair ? fallbackPairs.get(address) : null);
+				const pair = exactPair || (preferredPair && allowAlternatePairQuote ? fallbackPairs.get(address) : null);
 				if (!pair) continue;
 				const data = dataFromPair(pair);
 				if (preferredPair && !exactPair) {

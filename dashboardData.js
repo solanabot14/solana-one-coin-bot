@@ -135,14 +135,14 @@ function buildScoreStats(completedTrades) {
 	}).sort((a, b) => (a.score === "10+" ? 10 : Number(a.score)) - (b.score === "10+" ? 10 : Number(b.score)));
 }
 
-async function buildDashboardData(data, getTokenData) {
+async function buildDashboardData(data, getTokenData, { allowAlternatePairQuote = false } = {}) {
 	const positions = Array.isArray(data.positions) ? data.positions : (data.position ? [data.position] : []);
 	const completedTrades = groupCompletedTrades(data.history, null).filter(t => !positions.some(p => p.id && p.id === t.positionId));
 	const livePositions = [];
 	for (const p of positions) {
 		let live = null;
 		try {
-			const fresh = await getTokenData(p.tokenAddress, { pairAddress: p.pairAddress || undefined });
+			const fresh = await getTokenData(p.tokenAddress, { pairAddress: p.pairAddress || undefined, allowAlternatePairQuote });
 			const currentPrice = Number(fresh?.priceUsd);
 			if (Number.isFinite(currentPrice) && currentPrice > 0) {
 				const currentValue = p.quantity * currentPrice, pnl = currentValue - p.amountInvested;

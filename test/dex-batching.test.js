@@ -72,11 +72,21 @@ test("a missing saved pool falls back to the most active pool and labels the quo
 		pair(address, 5000, 0.0001089, { volume5m: 12000, buys5m: 48, sells5m: 12 })
 	] });
 	t.after(() => { axios.get = previousGet; });
-	const quote = await getTokenData(address, { pairAddress: "pool-no-longer-returned" });
+	const quote = await getTokenData(address, { pairAddress: "pool-no-longer-returned", allowAlternatePairQuote: true });
 	assert.equal(quote.priceUsd, "0.0001089");
 	assert.notEqual(quote.pairAddress, "pool-no-longer-returned");
 	assert.equal(quote.pairAddressMismatch, true);
 	assert.match(quote.quoteWarning, /most active current pool/);
+});
+
+
+test("alternate pool quotes stay disabled unless explicitly enabled", async t => {
+	const previousGet = axios.get;
+	const address = "token-pair-fallback-disabled";
+	axios.get = async () => ({ data: [pair(address, 25000, 0.0000446)] });
+	t.after(() => { axios.get = previousGet; });
+	const quote = await getTokenData(address, { pairAddress: "pool-no-longer-returned" });
+	assert.equal(quote, null);
 });
 
 test("dashboard mark-to-market requests the position's saved pair", async () => {

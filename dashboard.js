@@ -218,7 +218,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       }
       if (route === "/api/profit-sniper/status") return json(res, profitSniper.getStatus());
       if (route === "/api/profit-sniper/data") {
-        const account = await buildDashboardData(profitSniper.getPortfolio(), marketData);
+        const account = await buildDashboardData(profitSniper.getPortfolio(), marketData, { allowAlternatePairQuote: true });
         return json(res, { label: "Profit Sniper", paperOnly: true, account, status: profitSniper.getStatus(), thresholds: profitSniper.thresholds });
       }
       if (route === "/api/launch-sniper/status") return json(res, launchSniper.getStatus());
@@ -261,9 +261,9 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           ? async (address, options = {}) => {
               const pairAddress = options.pairAddress;
               if (!pairAddress) return sharedQuotes.get(address) || null;
-              const key = address + "|" + pairAddress;
+              const key = address + "|" + pairAddress + "|" + (options.allowAlternatePairQuote ? "alternate" : "exact");
               if (!pairQuoteCache.has(key)) {
-                pairQuoteCache.set(key, marketData(address, { pairAddress }));
+                pairQuoteCache.set(key, marketData(address, { pairAddress, allowAlternatePairQuote: options.allowAlternatePairQuote }));
               }
               return pairQuoteCache.get(key);
             }
@@ -275,7 +275,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           buildDashboardData(buyTestAccount, sharedMarketData).then(applyBuyPriorityCostEstimates),
           buildDashboardData(exitTestAccount, sharedMarketData).then(applyBuyPriorityCostEstimates),
           buildDashboardData(lock85Account, sharedMarketData),
-          buildDashboardData(profitSniperAccount, sharedMarketData),
+          buildDashboardData(profitSniperAccount, sharedMarketData, { allowAlternatePairQuote: true }),
           buildDashboardData(walletCopyAccount, sharedMarketData)
         ]);
         return json(res, {
