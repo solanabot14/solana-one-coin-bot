@@ -33,7 +33,7 @@ function qualifiesMomentumCandidate(coin, now = Date.now()) {
     Number.isFinite(transactions5m) && transactions5m >= MIN_TRANSACTIONS_5M &&
     buyRatio >= MIN_BUY_RATIO_5M &&
     Number.isFinite(momentum5m) && momentum5m >= MIN_MOMENTUM_5M && momentum5m <= MAX_MOMENTUM_5M &&
-    ["BUY", "STRONG BUY"].includes(coin.signal) && Boolean(coin.tokenAddress);
+    Boolean(coin.tokenAddress);
 }
 
 function getBuySizing(state) {
