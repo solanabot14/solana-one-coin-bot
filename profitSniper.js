@@ -38,7 +38,7 @@ const { qualifiesMomentumCandidate, getBuySizing, chooseExit } = strategy;
 let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, source: "GeckoTerminal new pools + DexScreener + RugCheck" };
 
 async function discoverCandidates(options = {}) {
-  const candidates = await launchSniper.discoverLaunchCandidates({ ...options, minimumLiquidityUsd: MIN_LIQUIDITY_USD });
+  const candidates = await launchSniper.discoverLaunchCandidates({ ...options, minimumLiquidityUsd: MIN_LIQUIDITY_USD, minimumVolume24hUsd: MIN_VOLUME_24H_USD });
   const now = Date.now();
   const qualified = candidates.filter(coin => qualifiesMomentumCandidate(coin, now))
     .sort((a, b) => Number(b.score || 0) - Number(a.score || 0) || Number(b.volume5m || 0) - Number(a.volume5m || 0))
