@@ -137,12 +137,9 @@
         system.trades.forEach(function (row) { tx.push(Object.assign({}, row, { type:'CLOSED TRADE', time:row.exitTime })); });
       }
     });
-    if (state.swarm && Array.isArray(state.swarm.executions)) {
-      state.swarm.executions.forEach(function (row) {
-        tx.push(Object.assign({}, row, { system:'Swarm · V3.1', systemId:'swarm', token:row.symbol || '-', pnl:n(row.pnl), invested:n(row.amountInvested || row.amount),
-          exitReason:row.reason || 'Not recorded', entryReason:row.entrySignal || 'Not recorded', time:row.time || null, exitTime:row.exitTime||row.time||null, mode:'PAPER', limitedHistory:true }));
-      });
-    }
+    swarmTransactions().forEach(function (row) {
+      tx.push(Object.assign({}, row, { mode:'PAPER', limitedHistory:true }));
+    });
     allTransactions = tx.sort(function (a,b) { return Date.parse(b.time || 0) - Date.parse(a.time || 0); });
   }
 
@@ -374,7 +371,19 @@
     $('view').innerHTML=pageHead('Swarm','Every swarm is an independent root with its own reproduction plan. '+(sw.running?'RUNNING':'STOPPED'),'<span class="badge">'+esc(sw.mode||'PAPER')+'</span>')+html+(tab==='OVERVIEW'?swarmCostSimulationPanel():'');
   }
   function swarmTrades() { return swarmTransactions().filter(function(t){return t.type==='SELL';}).map(function(t){return normalizeTrade(t,{name:'Swarm',id:'swarm'},true);}); }
-  function swarmTransactions() { var x=state.swarm&&Array.isArray(state.swarm.executions)?state.swarm.executions:[];return x.map(function(r){return Object.assign({},r,{system:'Swarm · V3.1',systemId:'swarm',type:r.type||'TRADE',time:r.time||null,exitTime:r.exitTime||r.time||null,token:r.symbol||'-',pnl:n(r.pnl),invested:n(r.amountInvested||r.amount),exitReason:r.reason||'Not recorded',entryReason:r.entrySignal||'Not recorded'});}); }
+  function swarmTransactions() {
+    var x=state.swarm&&Array.isArray(state.swarm.executions)?state.swarm.executions:[];
+    return x.map(function(r){
+      var type=String(r.type||'TRADE').toUpperCase(),saleValue=n(r.saleValue??r.amountReceived),pnl=n(r.pnl);
+      var invested=n(r.amountInvested??r.invested??r.amount);
+      if(type==='SELL'&&invested===null&&saleValue!==null&&pnl!==null)invested=saleValue-pnl;
+      var returnPercent=n(r.pnlPercent??r.returnPercent);
+      if(type==='SELL'&&returnPercent===null&&invested!==null&&invested>0&&pnl!==null)returnPercent=pnl/invested*100;
+      return Object.assign({},r,{system:'Swarm · V3.1',systemId:'swarm',type:type,time:r.time||null,exitTime:r.exitTime||r.time||null,
+        token:r.symbol||'-',pnl:pnl,invested:invested,amountInvested:invested,saleValue:saleValue,amountReceived:saleValue,
+        returnPercent:returnPercent,exitReason:r.reason||'Not recorded',entryReason:r.entrySignal||'Not recorded'});
+    });
+  }
   function familyCard(f) { var m=familyMetrics(f.slots);return '<div class="family-card" data-route="/swarm/genesis/'+f.id+'"><h3>'+f.id+'</h3><strong class="'+signClass(m.pnl)+'">'+money(m.pnl)+'</strong><small>FAMILY EQUITY '+money(m.equity)+'</small><small>'+int(m.descendants)+' DESCENDANTS · '+int(m.trades)+' TRADES</small><small>MAX GEN '+int(m.maxGen)+' · WIN RATE '+metric(m.winRate,function(x){return x.toFixed(1)+'%';})+'</small></div>'; }
   function familyMetrics(slots) { var sum=function(key){var values=slots.map(function(x){return n(x[key]);}).filter(function(x){return x!==null;});return values.length?values.reduce(function(a,b){return a+b;},0):null;},pnl=sum('realizedProfit'),equity=sum('capital'),trades=sum('completedTrades'),wins=sum('winners'),gens=slots.map(function(x){return n(x.generation);}).filter(function(x){return x!==null;});return {pnl:pnl,equity:equity,descendants:slots.length?Math.max(0,slots.length-1):null,trades:trades,wins:wins,winRate:trades>0&&wins!==null?wins/trades*100:null,maxGen:gens.length?Math.max.apply(null,gens):null}; }
   function familyTable(fs) { return table(['GENESIS','FAMILY EQUITY','FAMILY P&L','RETURN','DESCENDANTS','TRADES','WIN RATE','MAX GEN'],fs.map(function(f){var m=familyMetrics(f.slots);return '<tr class="click-row" data-route="/swarm/genesis/'+f.id+'"><td class="text-left">'+f.id+'</td><td>'+money(m.equity)+'</td><td class="'+signClass(m.pnl)+'">'+money(m.pnl)+'</td><td>NOT ENOUGH DATA</td><td>'+int(m.descendants)+'</td><td>'+int(m.trades)+'</td><td>'+metric(m.winRate,function(x){return x.toFixed(1)+'%';})+'</td><td>'+int(m.maxGen)+'</td></tr>'; }),'No Genesis swarms found'); }
@@ -391,7 +400,8 @@
     var dex=closed?transactionDexScreenerLink(t):null;
     var dexLink=closed?'<a class="dex-link" data-dex-link href="'+esc(dex.href)+'" title="'+esc(dex.hint)+'" aria-label="'+esc(dex.label)+'" target="_blank" rel="noopener noreferrer">'+dex.label+'</a>':'';
     var token=esc(t.token||t.symbol||t.name||'-');
-    return '<tr class="click-row" data-transaction="'+esc(rowId)+'" data-tx-index="'+index+'"><td>'+dateTime(t.time||t.exitTime||t.entryTime)+'</td><td class="text-left">'+esc(t.system||'-')+'</td><td class="text-left">'+esc(t.swarmId||'-')+'</td><td class="text-left"><strong>'+token+'</strong>'+(closed?'<div class="closed-dex-link">'+dexLink+'</div>':'')+'</td><td>'+esc(t.type||'TRADE')+'</td><td>'+money(t.invested||t.amountInvested||t.amount)+'</td><td>'+money(t.saleValue||t.amountReceived)+'</td><td class="'+signClass(t.pnl)+'">'+money(t.pnl)+'</td><td>'+pct(t.pnlPercent||t.returnPercent)+'</td><td class="text-left">'+esc(t.entryReason||'Not recorded')+'</td><td class="text-left">'+esc(t.exitReason||t.reason||'Not recorded')+'</td></tr>';
+    var buy=type==='BUY',invested=t.invested??t.amountInvested??t.amount,received=t.saleValue??t.amountReceived,pnl=t.pnl,returnPercent=t.pnlPercent??t.returnPercent;
+    return '<tr class="click-row" data-transaction="'+esc(rowId)+'" data-tx-index="'+index+'"><td>'+dateTime(t.time||t.exitTime||t.entryTime)+'</td><td class="text-left">'+esc(t.system||'-')+'</td><td class="text-left">'+esc(t.swarmId||'-')+'</td><td class="text-left"><strong>'+token+'</strong>'+(closed?'<div class="closed-dex-link">'+dexLink+'</div>':'')+'</td><td>'+esc(t.type||'TRADE')+'</td><td>'+money(invested)+'</td><td>'+(buy?'—':money(received))+'</td><td class="'+signClass(pnl)+'">'+(buy?'—':money(pnl))+'</td><td>'+(buy?'—':pct(returnPercent))+'</td><td class="text-left">'+esc(t.entryReason||'Not recorded')+'</td><td class="text-left">'+esc(t.exitReason||t.reason||'Not recorded')+'</td></tr>';
   }
   function renderTransactions(source, compact) {
     var list=(source||allTransactions).slice();
