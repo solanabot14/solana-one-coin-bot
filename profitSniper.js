@@ -41,7 +41,8 @@ async function discoverCandidates(options = {}) {
   const candidates = await launchSniper.discoverLaunchCandidates(options);
   const now = Date.now();
   const qualified = candidates.filter(coin => qualifiesMomentumCandidate(coin, now))
-    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0) || Number(b.volume5m || 0) - Number(a.volume5m || 0));
+    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0) || Number(b.volume5m || 0) - Number(a.volume5m || 0))
+    .map(coin => ({ ...coin, signal: "BUY", reasons: [...(coin.reasons || []), "Profit Sniper activity + momentum filters passed"] }));
   lastScanDiagnostics = {
     state: "scan_complete",
     updatedAt: new Date(now).toISOString(),
