@@ -296,6 +296,7 @@ module.exports = {
   ...bot,
   getStatus,
   getPortfolio: trader.getPortfolio,
+  discoverLaunchCandidates,
   qualifiesLaunchCandidate,
   estimateExecutionCosts,
   thresholds: {

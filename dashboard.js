@@ -12,6 +12,7 @@ const buyPriorityTest = require("./buyPriorityTest");
 const buyPriorityExitTest = require("./buyPriorityExitTest");
 const buyPriorityLock85 = require("./buyPriorityLock85");
 const launchSniper = require("./launchSniper");
+const profitSniper = require("./profitSniper");
 
 function getConfig(env = process.env) {
   const railway = !!env.RAILWAY_ENVIRONMENT_ID;
@@ -186,12 +187,24 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         if (route === "/api/start") controls.startBot(); else controls.stopBot();
         return json(res, { running: controls.getBotStatus() });
       }
+      if (route === "/api/profit-sniper/start" || route === "/api/profit-sniper/stop") {
+        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
+        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        if (route === "/api/profit-sniper/start") profitSniper.startBot(); else profitSniper.stopBot();
+        return json(res, profitSniper.getStatus());
+      }
       if (route === "/api/launch-sniper/start" || route === "/api/launch-sniper/stop") {
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
         if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
         if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
         if (route === "/api/launch-sniper/start") launchSniper.startBot(); else launchSniper.stopBot();
         return json(res, launchSniper.getStatus());
+      }
+      if (route === "/api/profit-sniper/status") return json(res, profitSniper.getStatus());
+      if (route === "/api/profit-sniper/data") {
+        const account = await buildDashboardData(profitSniper.getPortfolio(), marketData);
+        return json(res, { label: "Profit Sniper", paperOnly: true, account, status: profitSniper.getStatus(), thresholds: profitSniper.thresholds });
       }
       if (route === "/api/launch-sniper/status") return json(res, launchSniper.getStatus());
       if (route === "/api/launch-sniper/data") {
@@ -215,11 +228,13 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const buyTestAccount = buyPriorityTest.buildDashboardAccount();
         const exitTestAccount = buyPriorityExitTest.buildDashboardAccount();
         const lock85Account = buyPriorityLock85.buildDashboardAccount();
+        const profitSniperAccount = profitSniper.getPortfolio();
         const addresses = [...new Set([
           ...(baseAccount.positions || (baseAccount.position ? [baseAccount.position] : [])).map(p => p.tokenAddress),
           ...(buyTestAccount.positions || []).map(p => p.tokenAddress),
           ...(exitTestAccount.positions || []).map(p => p.tokenAddress),
-          ...(lock85Account.positions || []).map(p => p.tokenAddress)
+          ...(lock85Account.positions || []).map(p => p.tokenAddress),
+          ...(profitSniperAccount.positions || []).map(p => p.tokenAddress)
         ].filter(Boolean))];
         const sharedQuotes = batchMarketData && addresses.length
           ? await batchMarketData(addresses)
@@ -227,13 +242,14 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const sharedMarketData = sharedQuotes
           ? async address => sharedQuotes.get(address) || null
           : marketData;
-        const [v31, candleBreakout, profitabilityLab, buyTest, exitTest, lock85] = await Promise.all([
+        const [v31, candleBreakout, profitabilityLab, buyTest, exitTest, lock85, profitSniperData] = await Promise.all([
           buildDashboardData(baseAccount, sharedMarketData),
           fetchCandleBreakoutDashboard(),
           fetchProfitabilityLabDashboard(),
           buildDashboardData(buyTestAccount, sharedMarketData).then(applyBuyPriorityCostEstimates),
           buildDashboardData(exitTestAccount, sharedMarketData).then(applyBuyPriorityCostEstimates),
-          buildDashboardData(lock85Account, sharedMarketData)
+          buildDashboardData(lock85Account, sharedMarketData),
+          buildDashboardData(profitSniperAccount, sharedMarketData)
         ]);
         return json(res, {
           v31,
@@ -247,7 +263,9 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           buyPriorityTestStatus: { running: buyPriorityTest.getBotStatus(), entriesPaused: buyPriorityTest.getEntriesPaused(), error: buyPriorityTest.getLastError() },
           buyPriorityExitTestStatus: { running: buyPriorityExitTest.getBotStatus(), entriesPaused: buyPriorityExitTest.getEntriesPaused(), error: buyPriorityExitTest.getLastError() },
           buyPriorityLock85: lock85,
-          buyPriorityLock85Status: { running: buyPriorityLock85.getBotStatus(), error: buyPriorityLock85.getLastError() }
+          buyPriorityLock85Status: { running: buyPriorityLock85.getBotStatus(), error: buyPriorityLock85.getLastError() },
+          profitSniper: profitSniperData,
+          profitSniperStatus: profitSniper.getStatus()
         });
       }
       if (route === "/trading/launch-sniper") { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); return res.end(fs.readFileSync(path.join(__dirname, "launchSniperPanel.html"), "utf8")); }
@@ -279,6 +297,7 @@ if (require.main === module) {
   buyPriorityExitTest.startBot();
   buyPriorityLock85.startBot();
   launchSniper.startBot();
+  profitSniper.startBot();
   server.listen(config.port, config.host, () => console.log("Dashboard listening on " + config.host + ":" + config.port));
   const shutdown = () => {
     swarm.stop();
@@ -287,6 +306,7 @@ if (require.main === module) {
     buyPriorityExitTest.stopBot();
     buyPriorityLock85.stopBot();
     launchSniper.stopBot();
+    profitSniper.stopBot();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 12000).unref();
   };

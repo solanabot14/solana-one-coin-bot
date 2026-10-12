@@ -118,7 +118,8 @@
       { id:'candle', name:'Bit V 3.1 40% TP1', label:'Bit V 3.1 40% TP1', data:api.candleBreakout, status:api.candleBreakoutStatus, mode:'PAPER' },
       { id:'lab', name:'B3.1 Lab', label:'B3.1 Lab', data:api.profitabilityLab, status:{ running:api.profitabilityLab && api.profitabilityLab.running }, mode:'PAPER', limited:true },
       { id:'buy-test', name:'New Claude Strategy', label:'New Claude Strategy', data:api.buyPriorityTest, status:api.buyPriorityTestStatus, mode:'PAPER' },
-      { id:'exit-test', name:'New Claude Exit Test', label:'New Claude Exit Test', data:api.buyPriorityExitTest, status:api.buyPriorityExitTestStatus, mode:'PAPER' }
+      { id:'exit-test', name:'New Claude Exit Test', label:'New Claude Exit Test', data:api.buyPriorityExitTest, status:api.buyPriorityExitTestStatus, mode:'PAPER' },
+      { id:'profit-sniper', name:'Profit Sniper', label:'Profit Sniper', data:api.profitSniper, status:api.profitSniperStatus, mode:'PAPER' }
     ];
     systems = input.map(function (s) {
       var d = s.data || {};
@@ -318,7 +319,7 @@
     if(!system){$('view').innerHTML=pageHead('System unavailable','This bot is not present in the current source feed.');return;}
     var tab=(path.split('/')[3]||'overview').toUpperCase(); state.botTab=tab;
     var tabs=['OVERVIEW','LIVE','PERFORMANCE','ANALYTICS','TRANSACTIONS'];
-    var base=id==='candle'?'/trading/candle-breakout':id==='lab'?'/trading/b31-lab':id==='buy-test'?'/trading/buy-priority-test':id==='exit-test'?'/trading/buy-priority-exit-test':'/trading/v31';
+    var base=id==='candle'?'/trading/candle-breakout':id==='lab'?'/trading/b31-lab':id==='buy-test'?'/trading/buy-priority-test':id==='exit-test'?'/trading/buy-priority-exit-test':id==='profit-sniper'?'/trading/profit-sniper':'/trading/v31';
     var tabHtml='<div class="tab-row">'+tabs.map(function(x){return '<button data-route="'+base+(x==='OVERVIEW'?'':'/'+x.toLowerCase())+'" class="'+(x===tab?'active':'')+'">'+x+'</button>';}).join('')+'</div>';
     var m=metrics(system.trades), content='';
     if(tab==='OVERVIEW') content='<div class="kpi-grid">'+kpi('CURRENT EQUITY',money(system.equity),'Current account equity')+kpi('REALIZED P&L',money(realizedTotal(realizedEventsFor(system))),'Recorded sale events',signClass(realizedTotal(realizedEventsFor(system))))+kpi("TODAY'S P&L",money(todayPnl(realizedEventsFor(system))),'Realized exits')+kpi('RETURN',pct(system.totalPnlPercent),'From starting balance',signClass(system.totalPnlPercent))+kpi('WIN RATE',metric(m.winRate,function(x){return x.toFixed(1)+'%';}))+kpi('TRADES',int(m.trades),'Known closed trades')+kpi('OPEN POSITIONS',int(system.positions.length),'Currently observed')+kpi((system.id==='buy-test'||system.id==='exit-test')?'EXPECTANCY / TRADE':'AVG TRADE',money(m.averageTrade),'Per closed trade',signClass(m.averageTrade))+kpi('PROFIT FACTOR',metric(m.profitFactor,function(x){return x===Infinity?'∞':x.toFixed(2);}))+'</div><div class="grid-2"><div class="panel"><div class="panel-head"><div><div class="panel-title">REALIZED P&L CURVE</div><div class="panel-subtitle">Built from recorded exits</div></div></div><div class="chart-wrap">'+svgLine(cumulative(system.trades),system.name)+'</div></div><div class="panel"><div class="panel-head"><div><div class="panel-title">WIN / LOSS</div><div class="panel-subtitle">Count and dollar contribution</div></div></div>'+splitContribution(system.trades)+'</div></div>';
@@ -326,10 +327,19 @@
     else if(tab==='PERFORMANCE') content='<div class="grid-2"><div class="panel"><div class="panel-head"><div class="panel-title">DAILY P&L</div></div>'+dailyBar(system.trades,30)+'</div><div class="panel"><div class="panel-head"><div class="panel-title">WEEKDAY P&L</div></div>'+groupTable(byWeekday(system.trades),['DAY','TRADES','NET P&L'])+'</div></div><div class="panel section-gap"><div class="panel-head"><div class="panel-title">TRADE DISTRIBUTION</div></div>'+histogram(system.trades)+'</div>';
     else if(tab==='ANALYTICS') content=renderEntryExitAnalytics(system.trades);
     else content=renderTransactions(system.trades.map(function(t){return Object.assign({type:'CLOSED TRADE',time:t.exitTime},t);}),true);
-    var control=system.id==='v31'?'<button class="button primary" data-control="start">START V3.1</button><button class="button danger" data-control="stop">STOP V3.1</button>':'';
-    $('view').innerHTML=pageHead(esc(system.name),system.id==='candle'?'TP1 +15%: sell 40%; remaining 60% locks at +4% after +10%, trails 8%':system.id==='lab'?'Paper-only profitability experiment':system.id==='exit-test'?'Matched New Claude entries · 20% at +25% · 20% at +60% · 12% trail on 60% runner':system.id==='buy-test'?'10% compounding · max 4 positions · configured token filters and staged exits':'Paper account · read-only analytics',control+'<span class="badge">PAPER</span>')+tabHtml+content+(tab==='OVERVIEW'?costSimulationPanel(system):'')+(system.historyLimited?'<div class="notice">This feed currently exposes its 15 most recent trades only. Full historical analytics need a read-only history feed.</div>':'');
+    var control=system.id==='v31'?'<button class="button primary" data-control="start">START V3.1</button><button class="button danger" data-control="stop">STOP V3.1</button>':system.id==='profit-sniper'?'<button class="button primary" data-control="profit-sniper/start">START PROFIT SNIPER</button><button class="button danger" data-control="profit-sniper/stop">STOP PROFIT SNIPER</button>':'';
+    $('view').innerHTML=pageHead(esc(system.name),system.id==='candle'?'TP1 +15%: sell 40%; remaining 60% locks at +4% after +10%, trails 8%':system.id==='lab'?'Paper-only profitability experiment':system.id==='exit-test'?'Matched New Claude entries · 20% at +25% · 20% at +60% · 12% trail on 60% runner':system.id==='buy-test'?'10% compounding · max 4 positions · configured token filters and staged exits':system.id==='profit-sniper'?'Fresh Solana launches · 3 slots · half at +10% · exit remainder at +20% or protect from +2%':'Paper account · read-only analytics',control+'<span class="badge">PAPER</span>')+(system.id==='profit-sniper'?profitSniperStatusPanel(system):'')+tabHtml+content+(tab==='OVERVIEW'?costSimulationPanel(system):'')+(system.historyLimited?'<div class="notice">This feed currently exposes its 15 most recent trades only. Full historical analytics need a read-only history feed.</div>':'');
   }
   function cumulative(trades) { var es=events(trades), total=0;return es.map(function(e){total+=e.pnl;return {label:dateTime(e.time),value:total};}); }
+  function profitSniperStatusPanel(system) {
+    var status=system.status||{},scan=status.scanDiagnostics||{};
+    var source=scan.source||'GeckoTerminal new pools + DexScreener + RugCheck';
+    var candidateCount=scan.momentumQualified==null?'—':int(scan.momentumQualified);
+    var pools=scan.recentPools==null?'—':int(scan.recentPools);
+    var last=scan.updatedAt?dateTime(scan.updatedAt):'Waiting for first scan';
+    var error=scan.error?'<div class="notice">'+esc(scan.error)+'</div>':'';
+    return '<div class="panel section-gap"><div class="panel-head"><div><div class="panel-title">PROFIT SNIPER · SCANNER</div><div class="panel-subtitle">'+esc(source)+'</div></div><span class="badge">'+(status.running?'SCANNING':'STOPPED')+'</span></div><div class="kpi-grid">'+kpi('AUTO SCAN',status.running?'ON':'OFF','Every 30 seconds')+kpi('POSITION CHECK','5 sec','Up to 3 open slots')+kpi('RECENT POOLS',pools,'Pools still in 30-minute window')+kpi('MOMENTUM QUALIFIED',candidateCount,'Passed all entry gates')+kpi('LAST SCAN',esc(last),'Puerto Rico time')+'</div>'+error+'</div>';
+  }
   function renderPositions(system) {
     var rows=system.positions.map(function(x){return livePositionRow(system.label,x,'');});
     return '<div class="table-panel live-trading-panel"><div class="table-head"><div><h2>LIVE TRADING NOW · '+esc(system.label)+'</h2><span class="sub">Coins currently held by this bot</span></div><span class="badge">PAPER</span></div>'+table(['BOT','GENESIS / SWARM','COIN','INVESTED','ENTRY PRICE','CURRENT PRICE','UNREALIZED P&L','RETURN','HOLD TIME','DEXSCREENER'],rows,'This bot has no open position right now')+'</div>';
@@ -484,7 +494,7 @@
   }
   function priceValue(value) { var x=n(value);return x===null?'NOT ENOUGH DATA':'$'+x.toFixed(8); }
     function closeDrawer() {$('drawerBackdrop').classList.add('hidden');$('detailDrawer').classList.remove('open');$('detailDrawer').setAttribute('aria-hidden','true');}
-  function routeForSystem(id) { return id==='v31'?'/trading/v31':id==='candle'?'/trading/candle-breakout':id==='buy-test'?'/trading/buy-priority-test':id==='exit-test'?'/trading/buy-priority-exit-test':id==='swarm'?'/swarm':'/trading/b31-lab'; }
+  function routeForSystem(id) { return id==='v31'?'/trading/v31':id==='candle'?'/trading/candle-breakout':id==='buy-test'?'/trading/buy-priority-test':id==='exit-test'?'/trading/buy-priority-exit-test':id==='profit-sniper'?'/trading/profit-sniper':id==='swarm'?'/swarm':'/trading/b31-lab'; }
 
   function csvCell(value) {
     if(value===null||value===undefined)return '';
