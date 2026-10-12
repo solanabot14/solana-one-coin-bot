@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { qualifiesMomentumCandidate, getBuySizing, chooseExit } = require("../profitSniperStrategy");
+const { qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit } = require("../profitSniperStrategy");
 
 function candidate(overrides = {}) {
   return {
@@ -19,6 +19,8 @@ function candidate(overrides = {}) {
 
 test("fresh, active, upward momentum candidates pass; stale, weak, or overheated candidates fail", () => {
   assert.equal(qualifiesMomentumCandidate(candidate()), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 0.1 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: -0.01 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 0 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 31 * 60 * 1000 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: -1 })), false);
@@ -43,4 +45,8 @@ test("exit logic sells half at +10%, protects the rest at +2%, exits at +20%, an
   assert.deepEqual(chooseExit({ position: { ...position, firstTakeProfitDone: true }, currentPrice: 102 }), { percent: 100, reason: "PROFIT FLOOR AFTER TP1 +2%" });
   assert.deepEqual(chooseExit({ position: { ...position, firstTakeProfitDone: true }, currentPrice: 120 }), { percent: 100, reason: "TAKE PROFIT 2" });
   assert.equal(chooseExit({ position, currentPrice: 105 }), null);
+});
+
+test("momentum diagnostics name the failed Sniper gate", () => {
+  assert.deepEqual(getMomentumFailureReasons(candidate({ priceChange5m: 0 })), ["momentum5m"]);
 });
