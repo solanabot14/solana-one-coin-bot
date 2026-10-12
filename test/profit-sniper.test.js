@@ -19,6 +19,7 @@ function candidate(overrides = {}) {
 
 test("fresh, active, upward momentum candidates pass; stale, weak, or overheated candidates fail", () => {
   assert.equal(qualifiesMomentumCandidate(candidate()), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 0 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 31 * 60 * 1000 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: -1 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 21 })), false);
