@@ -8,8 +8,6 @@ const { getPortfolio } = require("./paperTrader");
 const { getTokenData, getTokensData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
 const swarm = require("./janMvpBot");
-const buyPriorityTest = require("./buyPriorityTest");
-const buyPriorityExitTest = require("./buyPriorityExitTest");
 const buyPriorityLock85 = require("./buyPriorityLock85");
 const launchSniper = require("./launchSniper");
 const profitSniper = require("./profitSniper");
@@ -249,15 +247,11 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       if (route === "/api/swarm") return json(res, { running: swarm.getStatus(), error: swarm.getLastError(), ...swarm.getDashboardState() });
       if (route === "/api/data") {
         const baseAccount = portfolio();
-        const buyTestAccount = buyPriorityTest.buildDashboardAccount();
-        const exitTestAccount = buyPriorityExitTest.buildDashboardAccount();
         const lock85Account = buyPriorityLock85.buildDashboardAccount();
         const profitSniperAccount = profitSniper.getPortfolio();
         const walletCopyAccount = walletCopy.getPortfolio();
         const addresses = [...new Set([
           ...(baseAccount.positions || (baseAccount.position ? [baseAccount.position] : [])).map(p => p.tokenAddress),
-          ...(buyTestAccount.positions || []).map(p => p.tokenAddress),
-          ...(exitTestAccount.positions || []).map(p => p.tokenAddress),
           ...(lock85Account.positions || []).map(p => p.tokenAddress),
           ...(profitSniperAccount.positions || []).map(p => p.tokenAddress),
           ...(walletCopyAccount.positions || []).map(p => p.tokenAddress)
@@ -277,12 +271,10 @@ function createDashboardServer({ config = getConfig(), controls = bot,
               return pairQuoteCache.get(key);
             }
           : marketData;
-        const [v31, candleBreakout, profitabilityLab, buyTest, exitTest, lock85, profitSniperData, walletCopyData] = await Promise.all([
+        const [v31, candleBreakout, profitabilityLab, lock85, profitSniperData, walletCopyData] = await Promise.all([
           buildDashboardData(baseAccount, sharedMarketData),
           fetchCandleBreakoutDashboard(),
           fetchProfitabilityLabDashboard(),
-          buildDashboardData(buyTestAccount, sharedMarketData).then(applyBuyPriorityCostEstimates),
-          buildDashboardData(exitTestAccount, sharedMarketData).then(applyBuyPriorityCostEstimates),
           buildDashboardData(lock85Account, sharedMarketData),
           buildDashboardData(profitSniperAccount, sharedMarketData, { allowAlternatePairQuote: true }),
           buildDashboardData(walletCopyAccount, sharedMarketData)
@@ -294,10 +286,6 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           candleBreakoutError: candleBreakout.error,
           profitabilityLab: profitabilityLab.data,
           profitabilityLabError: profitabilityLab.error,
-          buyPriorityTest: buyTest,
-          buyPriorityExitTest: exitTest,
-          buyPriorityTestStatus: { running: buyPriorityTest.getBotStatus(), entriesPaused: buyPriorityTest.getEntriesPaused(), error: buyPriorityTest.getLastError() },
-          buyPriorityExitTestStatus: { running: buyPriorityExitTest.getBotStatus(), entriesPaused: buyPriorityExitTest.getEntriesPaused(), error: buyPriorityExitTest.getLastError() },
           buyPriorityLock85: lock85,
           buyPriorityLock85Status: { running: buyPriorityLock85.getBotStatus(), error: buyPriorityLock85.getLastError() },
           profitSniper: profitSniperData,
@@ -331,8 +319,6 @@ if (require.main === module) {
   const server = createDashboardServer({ config });
   bot.startBot();
   swarm.start();
-  buyPriorityTest.startBot();
-  buyPriorityExitTest.startBot();
   buyPriorityLock85.startBot();
   launchSniper.startBot();
   profitSniper.startBot();
@@ -343,8 +329,6 @@ if (require.main === module) {
   const shutdown = () => {
     swarm.stop();
     bot.stopBot();
-    buyPriorityTest.stopBot();
-    buyPriorityExitTest.stopBot();
     buyPriorityLock85.stopBot();
     launchSniper.stopBot();
     profitSniper.stopBot();

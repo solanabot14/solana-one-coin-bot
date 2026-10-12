@@ -26,6 +26,13 @@ let running = false;
 let setupError = null;
 let setupPromise = null;
 let eventQueue = Promise.resolve();
+let pollTimer = null;
+let polling = false;
+let feedMode = "waiting";
+let webhookWarning = null;
+let lastPollAt = null;
+let lastPollError = null;
+const POLL_INTERVAL_MS = 30000;
 
 function freshState() {
   return {
@@ -39,6 +46,9 @@ function freshState() {
     stats: { received: 0, swaps: 0, buys: 0, sells: 0, skipped: 0 },
     lastEventAt: null,
     lastSignature: null,
+    pollCursor: null,
+    pollStartedAt: null,
+    skipReasons: {},
     webhookId: null,
     webhookSecret: crypto.randomBytes(32).toString("hex"),
     startedAt: new Date().toISOString()
@@ -115,11 +125,24 @@ function status() {
     copiedBuys: state.stats.buys,
     copiedSells: state.stats.sells,
     skippedSignals: state.stats.skipped,
-    webhookConfigured: !!state.webhookId && !setupError,
+    webhookConfigured: feedMode === "webhook",
+    feedMode,
+    feedConnected: feedMode === "webhook" || (feedMode === "polling" && !!lastPollAt && !lastPollError),
+    pollIntervalSeconds: POLL_INTERVAL_MS / 1000,
+    lastPollAt,
+    webhookWarning,
+    skipReasons: state.skipReasons || {},
+    lastSkip: state.lastSkip || null,
     lastEventAt: state.lastEventAt,
     lastSignature: state.lastSignature,
     error: setupError
   };
+}
+function skip(reason, mint = null) {
+  state.stats.skipped++;
+  state.skipReasons ||= {};
+  state.skipReasons[reason] = (state.skipReasons[reason] || 0) + 1;
+  state.lastSkip = { reason, mint, at: new Date().toISOString() };
 }
 function timingSafeEqual(a, b) {
   const left = Buffer.from(String(a || ""));
@@ -182,14 +205,14 @@ function entryCostModel(data) {
 async function copyBuy(tx, mint, sourceAmount, eventTime, signature) {
   const existing = lookupPosition(mint);
   if (state.cashBalance + 1e-9 < TRADE_SIZE || (!existing && state.positions.filter(p => Number(p.quantity) > 0).length >= MAX_POSITIONS)) {
-    state.stats.skipped++;
+    skip("cash_or_position_limit", mint);
     return;
   }
   const quote = await marketData(mint);
   const price = Number(quote && quote.priceUsd);
   const liquidity = Number(quote && quote.liquidityUsd);
   if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(liquidity) || liquidity <= 0) {
-    state.stats.skipped++;
+    skip("missing_price_or_liquidity", mint);
     return;
   }
   const impactRate = TRADE_SIZE / (liquidity / 2 + TRADE_SIZE);
@@ -198,7 +221,7 @@ async function copyBuy(tx, mint, sourceAmount, eventTime, signature) {
   const tokenBudget = Math.max(0, TRADE_SIZE - NETWORK_FEE_USD - fee - slippage);
   const quantity = tokenBudget / price;
   if (!Number.isFinite(quantity) || quantity <= 0) {
-    state.stats.skipped++;
+    skip("invalid_quantity", mint);
     return;
   }
   const id = signature + ":" + mint;
@@ -239,21 +262,24 @@ async function copyBuy(tx, mint, sourceAmount, eventTime, signature) {
 async function copySell(mint, sourceSold, eventTime, signature) {
   const priorSource = Number(state.sourceBalances[mint]) || 0;
   if (priorSource <= 0 || sourceSold <= 0) {
-    state.stats.skipped++;
+    skip("sell_before_observed_buy", mint);
     return;
   }
   const fraction = Math.min(1, sourceSold / priorSource);
-  state.sourceBalances[mint] = Math.max(0, priorSource - sourceSold);
   const position = lookupPosition(mint);
-  if (!position) { state.stats.skipped++; return; }
+  if (!position) {
+    state.sourceBalances[mint] = Math.max(0, priorSource - sourceSold);
+    skip("sell_without_paper_position", mint); return;
+  }
   const soldQuantity = Math.min(Number(position.quantity), Number(position.quantity) * fraction);
   if (soldQuantity <= 0) return;
   const quote = await marketData(mint);
   const price = Number(quote && quote.priceUsd);
   if (!Number.isFinite(price) || price <= 0) {
-    state.stats.skipped++;
+    skip("missing_sell_price", mint);
     return;
   }
+  state.sourceBalances[mint] = Math.max(0, priorSource - sourceSold);
   const liquidity = Number(quote.liquidityUsd) || 0;
   const grossValue = soldQuantity * price;
   const impactRate = liquidity > 0 ? grossValue / (liquidity / 2 + grossValue) : 0;
@@ -285,7 +311,7 @@ async function processTransaction(tx) {
   state.stats.received++;
   const deltas = swapDeltas(tx);
   if (!deltas.length) {
-    state.stats.skipped++;
+    skip("no_wallet_swap_token_legs");
     remember(signature, tx);
     return true;
   }
@@ -327,14 +353,72 @@ function startBot() {
   if (running) return;
   running = true;
   setupError = null;
-  setupPromise = setupHelius().catch(error => { setupError = error.message; console.error("Decu wallet follower setup failed:", error.message); });
+  setupPromise = setupHelius().then(() => {
+    if (running) feedMode = "webhook";
+  }).catch(error => {
+    webhookWarning = error.message;
+    console.warn("Decu webhook unavailable; starting history polling:", error.message);
+    if (running) return startPolling();
+  });
+  return setupPromise;
 }
-function stopBot() { running = false; }
+async function startPolling() {
+  feedMode = "polling";
+  state.pollStartedAt ||= new Date().toISOString();
+  saveState();
+  await pollOnce();
+  if (!running) return;
+  pollTimer = setInterval(() => { void pollOnce(); }, POLL_INTERVAL_MS);
+  pollTimer.unref();
+}
+async function pollOnce() {
+  if (polling || !running) return;
+  polling = true;
+  try {
+    const apiKey = process.env.HELIUS_API_KEY;
+    if (!apiKey) throw new Error("HELIUS_API_KEY is not configured.");
+    // Cursor paging requests only new activity, avoiding repeated history downloads.
+    for (let page = 0; page < 5 && running; page++) {
+      const url = new URL("https://api-mainnet.helius-rpc.com/v0/addresses/" + WALLET + "/transactions");
+      url.searchParams.set("api-key", apiKey);
+      url.searchParams.set("limit", "100");
+      url.searchParams.set("token-accounts", "balanceChanged");
+      url.searchParams.set("commitment", "confirmed");
+      url.searchParams.set("sort-order", "asc");
+      if (state.pollCursor) url.searchParams.set("after-signature", state.pollCursor);
+      else url.searchParams.set("gte-time", String(Math.floor(new Date(state.pollStartedAt).getTime() / 1000)));
+      const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      if (!response.ok) throw new Error("Helius wallet polling failed (" + response.status + ").");
+      const transactions = await response.json();
+      if (!Array.isArray(transactions)) throw new Error("Helius wallet polling returned an invalid history response.");
+      if (!running) return;
+      const ordered = transactions;
+      // Keep webhook and polling deliveries serialized and deduplicate by signature.
+      await handleWebhookPayload(ordered.filter(tx => String(tx.type || "").toUpperCase() === "SWAP"));
+      if (ordered.length) state.pollCursor = getSignature(ordered[ordered.length - 1]);
+      saveState();
+      if (transactions.length < 100) break;
+    }
+    lastPollAt = new Date().toISOString();
+    lastPollError = null;
+    setupError = null;
+  } catch (error) {
+    lastPollError = error.message;
+    setupError = error.message;
+    console.error("Decu wallet polling:", error.message);
+  } finally { polling = false; }
+}
+function stopBot() {
+  running = false;
+  clearInterval(pollTimer);
+  pollTimer = null;
+  feedMode = "stopped";
+}
 function getPortfolio() { return portfolio(); }
 function getStatus() { return status(); }
 
 module.exports = {
   WALLET, STARTING_BALANCE, TRADE_SIZE, MAX_POSITIONS,
   startBot, stopBot, getPortfolio, getStatus, authenticateWebhook, handleWebhookPayload,
-  swapDeltas, processTransaction, setMarketData: fn => { marketData = fn; }
+  swapDeltas, processTransaction, pollOnce, setMarketData: fn => { marketData = fn; }
 };

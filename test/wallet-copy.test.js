@@ -68,3 +68,53 @@ test("swap parser ignores unrelated wallets and stablecoin legs", () => {
     ]
   }), []);
 });
+
+test("403 webhook registration falls back to a working cursor feed without duplicate buys", async () => {
+  const originalFetch = global.fetch;
+  process.env.HELIUS_API_KEY = "test-key";
+  const mint = "PollingToken111111111111111111111111111111";
+  const timestamp = Math.floor(Date.now() / 1000);
+  const tx = { type: "SWAP", signature: "poll-buy-1", timestamp,
+    tokenTransfers: [{ mint, tokenAmount: 100, fromUserAccount: "Pool", toUserAccount: follower.WALLET }] };
+  let historyCalls = 0;
+  const urls = [];
+  global.fetch = async (url, options = {}) => {
+    urls.push(String(url));
+    if (String(url).includes("/webhooks")) {
+      if (options.method === "POST") return { ok: false, status: 403, text: async () => "forbidden" };
+      return { ok: true, json: async () => [] };
+    }
+    historyCalls++;
+    if (historyCalls === 3) return { ok: false, status: 429 };
+    return { ok: true, json: async () => [tx] };
+  };
+  try {
+    const before = follower.getStatus().copiedBuys;
+    await follower.startBot();
+    assert.equal(follower.getStatus().feedMode, "polling");
+    assert.equal(follower.getStatus().feedConnected, true);
+    assert.equal(follower.getStatus().error, null);
+    assert.match(follower.getStatus().webhookWarning, /403/);
+    assert.equal(follower.getStatus().copiedBuys, before + 1);
+    await follower.pollOnce();
+    assert.equal(follower.getStatus().copiedBuys, before + 1);
+    assert.ok(urls.some(url => url.includes("after-signature=poll-buy-1")));
+    await follower.pollOnce();
+    assert.equal(follower.getStatus().feedConnected, false);
+    assert.match(follower.getStatus().error, /429/);
+    await follower.pollOnce();
+    assert.equal(follower.getStatus().feedConnected, true);
+    follower.stopBot();
+    assert.equal(follower.getStatus().feedMode, "stopped");
+  } finally { follower.stopBot(); global.fetch = originalFetch; delete process.env.HELIUS_API_KEY; }
+});
+
+test("skipped signals explain sells with no observed source buy and missing quotes", async () => {
+  await follower.processTransaction({ type: "SWAP", signature: "unknown-sale", timestamp: 1791820800,
+    tokenTransfers: [{ mint: "Unknown111", tokenAmount: 1, fromUserAccount: follower.WALLET, toUserAccount: "Pool" }] });
+  assert.ok(follower.getStatus().skipReasons.sell_before_observed_buy > 0);
+  follower.setMarketData(async () => null);
+  await follower.processTransaction({ type: "SWAP", signature: "no-quote", timestamp: 1791820800,
+    tokenTransfers: [{ mint: "NoQuote111", tokenAmount: 1, fromUserAccount: "Pool", toUserAccount: follower.WALLET }] });
+  assert.ok(follower.getStatus().skipReasons.missing_price_or_liquidity > 0);
+});

@@ -121,8 +121,6 @@
       { id:'v31', name:'New V3.1 Version', label:'New V3.1 Version', data:api.v31, status:state.status, mode:'PAPER' },
       { id:'candle', name:'Bit V 3.1 40% TP1', label:'Bit V 3.1 40% TP1', data:api.candleBreakout, status:api.candleBreakoutStatus, mode:'PAPER' },
       { id:'lab', name:'B3.1 Lab', label:'B3.1 Lab', data:api.profitabilityLab, status:{ running:api.profitabilityLab && api.profitabilityLab.running }, mode:'PAPER', limited:true },
-      { id:'buy-test', name:'New Claude Strategy', label:'New Claude Strategy', data:api.buyPriorityTest, status:api.buyPriorityTestStatus, mode:'PAPER' },
-      { id:'exit-test', name:'New Claude Exit Test', label:'New Claude Exit Test', data:api.buyPriorityExitTest, status:api.buyPriorityExitTestStatus, mode:'PAPER' },
       { id:'profit-sniper', name:'Profit Sniper', label:'Profit Sniper', data:api.profitSniper, status:api.profitSniperStatus, mode:'PAPER' },
       { id:'wallet-copy', name:'Decu Wallet Follow', label:'Decu Wallet Follow', data:api.walletCopy, status:api.walletCopyStatus, mode:'PAPER' }
     ];
@@ -356,9 +354,13 @@
   function walletCopyStatusPanel(system) {
     var status=system.status||{};
     var error=status.error?'<div class="notice">'+esc(status.error)+'</div>':'';
-    var feed=status.webhookConfigured?'CONNECTED':'WAITING';
+    var feed=status.feedConnected?'CONNECTED':status.error?'ERROR':'WAITING';
+    var feedLabel=status.feedMode==='polling'?'Helius wallet polling · every 30 sec':'Helius swap webhook';
+    var skipDetail=Object.keys(status.skipReasons||{}).map(function(reason){return reason.replace(/_/g,' ')+': '+status.skipReasons[reason];}).join(' · ');
+    var diagnostics=skipDetail?'<div class="footer-note">Skip reasons: '+esc(skipDetail)+'</div>':'';
+    var pollNote=status.lastPollAt?'<div class="footer-note">Last feed check: '+esc(dateTime(status.lastPollAt))+'</div>':'';
     var last=status.lastEventAt?dateTime(status.lastEventAt):'No swap observed yet';
-    return '<div class="panel section-gap"><div class="panel-head"><div><div class="panel-title">DECU WALLET FOLLOW · PAPER ONLY</div><div class="panel-subtitle">Observed swaps from '+esc(status.wallet||'configured wallet')+' · entry fills use the dashboard quote when the event arrives</div></div><span class="badge">'+(status.running?'ACTIVE':'STOPPED')+'</span></div><div class="kpi-grid">'+kpi('PAPER START',money(status.startingBalance),'Simulated balance')+kpi('FIXED ENTRY',money(status.tradeSizeUsd),'Per first buy of a token')+kpi('OPEN POSITIONS',int(status.openPositions),'Maximum '+int(status.maxOpenPositions))+kpi('FEED',feed,'Helius swap webhook')+kpi('COPIED BUYS',int(status.copiedBuys),'New observed entries')+kpi('COPIED SELLS',int(status.copiedSells),'Proportional wallet exits')+kpi('LAST SIGNAL',esc(last),'Webhook event time')+kpi('SKIPPED',int(status.skippedSignals),'Missing quote, unknown basis, or account limit')+'</div>'+error+'<div class="footer-note">Paper simulation only. The follower starts with swaps observed after activation, uses $5 per token entry, and mirrors each observed sell as a percentage of the source wallet’s tracked balance. Delayed webhook delivery and quote-based paper fills can differ substantially from the source wallet’s fills.</div></div>';
+    return '<div class="panel section-gap"><div class="panel-head"><div><div class="panel-title">DECU WALLET FOLLOW · PAPER ONLY</div><div class="panel-subtitle">Observed swaps from '+esc(status.wallet||'configured wallet')+' · entry fills use the dashboard quote when the event arrives</div></div><span class="badge">'+(status.running?'ACTIVE':'STOPPED')+'</span></div><div class="kpi-grid">'+kpi('PAPER START',money(status.startingBalance),'Simulated balance')+kpi('FIXED ENTRY',money(status.tradeSizeUsd),'Per observed token buy')+kpi('OPEN POSITIONS',int(status.openPositions),'Maximum '+int(status.maxOpenPositions))+kpi('FEED',feed,feedLabel)+kpi('COPIED BUYS',int(status.copiedBuys),'New observed entries')+kpi('COPIED SELLS',int(status.copiedSells),'Proportional wallet exits')+kpi('LAST SIGNAL',esc(last),'Wallet event time')+kpi('SKIPPED',int(status.skippedSignals),'Missing quote, unknown basis, or account limit')+'</div>'+error+pollNote+diagnostics+'<div class="footer-note">Paper simulation only. The follower starts with swaps observed after activation, uses $5 per token entry, and mirrors each observed sell as a percentage of the source wallet’s tracked balance. Feed delays and quote-based paper fills can differ substantially from the source wallet’s fills.</div></div>';
   }
   function renderPositions(system) {
     var rows=system.positions.map(function(x){return livePositionRow(system.label,x,'');});
