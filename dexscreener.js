@@ -70,6 +70,20 @@ function preferredPairAddress(address, pairAddresses) {
 	return pairAddresses instanceof Map ? pairAddresses.get(address) : pairAddresses?.[address];
 }
 
+function compareFallbackPairs(a, b) {
+	const score = pair => [
+		(Number(pair.txns?.m5?.buys) || 0) + (Number(pair.txns?.m5?.sells) || 0),
+		Number(pair.volume?.m5) || 0,
+		Number(pair.volume?.h1) || 0,
+		Number(pair.liquidity?.usd) || 0
+	];
+	const left = score(a), right = score(b);
+	for (let i = 0; i < left.length; i += 1) {
+		if (left[i] !== right[i]) return left[i] - right[i];
+	}
+	return 0;
+}
+
 function readCachedTokenData(address, pairAddress = null) {
 	const cached = tokenDataCache.get(tokenCacheKey(address, pairAddress));
 	if (!cached) return undefined;
@@ -98,12 +112,17 @@ async function getTokensData(tokenAddresses, { signal, pairAddresses } = {}) {
 		try {
 			const response = await requestTokenPairsWithRetry(batch, signal);
 			const bestPairs = new Map();
+			const fallbackPairs = new Map();
 
 			for (const pair of Array.isArray(response.data) ? response.data : []) {
 				const address = pair.chainId === "solana" ? pair.baseToken?.address : null;
 				if (!address || !batch.includes(address)) continue;
 				const preferredPair = preferredPairAddress(address, pairAddresses);
-				if (preferredPair && pair.pairAddress !== preferredPair) continue;
+				if (preferredPair && pair.pairAddress !== preferredPair) {
+					const currentFallback = fallbackPairs.get(address);
+					if (!currentFallback || compareFallbackPairs(pair, currentFallback) > 0) fallbackPairs.set(address, pair);
+					continue;
+				}
 				const current = bestPairs.get(address);
 				if (!current || (Number(pair.liquidity?.usd) || 0) > (Number(current.liquidity?.usd) || 0)) {
 					bestPairs.set(address, pair);
@@ -111,11 +130,18 @@ async function getTokensData(tokenAddresses, { signal, pairAddresses } = {}) {
 			}
 
 			for (const address of batch) {
-				const pair = bestPairs.get(address);
+				const preferredPair = preferredPairAddress(address, pairAddresses) || null;
+				const exactPair = bestPairs.get(address);
+				const pair = exactPair || (preferredPair ? fallbackPairs.get(address) : null);
 				if (!pair) continue;
 				const data = dataFromPair(pair);
+				if (preferredPair && !exactPair) {
+					data.quoteWarning = "Saved pool unavailable; price uses the most active current pool for this token.";
+					data.pairAddressMismatch = true;
+					data.requestedPairAddress = preferredPair;
+				}
 				results.set(address, data);
-				tokenDataCache.set(tokenCacheKey(address, preferredPairAddress(address, pairAddresses) || null), { at: Date.now(), data });
+				tokenDataCache.set(tokenCacheKey(address, preferredPair), { at: Date.now(), data });
 			}
 		} catch (error) {
 			if (signal?.aborted) break;

@@ -153,7 +153,7 @@ async function buildDashboardData(data, getTokenData) {
 					holdTimeMs:Math.max(0,Date.now()-new Date(p.entryTime).getTime()),priceChange5m:fresh.priceChange5m,
 					priceChange1h:fresh.priceChange1h,priceChange24h:fresh.priceChange24h,liquidityUsd:fresh.liquidityUsd,
 					volume24h:fresh.volume24h,buys5m,sells5m,transactions5m,buyRatio5m:transactions5m?buys5m/transactions5m:0,
-					pairAddress:p.pairAddress||fresh.pairAddress||null};
+					pairAddress:p.pairAddress||fresh.pairAddress||null,quoteWarning:fresh.quoteWarning||null};
 			}
 		} catch (_) {}
 		livePositions.push({position:p,live});

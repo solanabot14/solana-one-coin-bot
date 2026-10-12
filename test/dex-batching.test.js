@@ -4,15 +4,15 @@ const axios = require("axios");
 const { getTokenData, getTokensData } = require("../dexscreener");
 const { buildDashboardData } = require("../dashboardData");
 
-function pair(address, liquidity, price) {
+function pair(address, liquidity, price, activity = {}) {
 	return {
 		chainId: "solana",
 		baseToken: { address, name: "Token " + address, symbol: "T" + address },
 		priceUsd: String(price),
 		liquidity: { usd: liquidity },
-		volume: { m5: 2500, h24: 150000 },
+		volume: { m5: activity.volume5m ?? 2500, h1: activity.volume1h ?? 12000, h24: 150000 },
 		priceChange: { m5: 1, h1: 4, h24: 12 },
-		txns: { m5: { buys: 20, sells: 5 } },
+		txns: { m5: { buys: activity.buys5m ?? 20, sells: activity.sells5m ?? 5 } },
 		pairAddress: "pair-" + address + "-" + liquidity
 	};
 }
@@ -61,6 +61,22 @@ test("a saved position pool is preferred over another higher-liquidity pool", as
 	const quote = await getTokenData(address, { pairAddress: expectedPair });
 	assert.equal(quote.pairAddress, expectedPair);
 	assert.equal(quote.priceUsd, "0.0001089");
+});
+
+
+test("a missing saved pool falls back to the most active pool and labels the quote", async t => {
+	const previousGet = axios.get;
+	const address = "token-pair-fallback";
+	axios.get = async () => ({ data: [
+		pair(address, 25000, 0.0000446, { volume5m: 700, buys5m: 2, sells5m: 1 }),
+		pair(address, 5000, 0.0001089, { volume5m: 12000, buys5m: 48, sells5m: 12 })
+	] });
+	t.after(() => { axios.get = previousGet; });
+	const quote = await getTokenData(address, { pairAddress: "pool-no-longer-returned" });
+	assert.equal(quote.priceUsd, "0.0001089");
+	assert.notEqual(quote.pairAddress, "pool-no-longer-returned");
+	assert.equal(quote.pairAddressMismatch, true);
+	assert.match(quote.quoteWarning, /most active current pool/);
 });
 
 test("dashboard mark-to-market requests the position's saved pair", async () => {
