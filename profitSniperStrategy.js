@@ -7,6 +7,7 @@ const MIN_BUY_RATIO_5M = 0.55;
 const MIN_MOMENTUM_5M = 0.05;
 const MAX_MOMENTUM_5M = 20;
 const HARD_STOP_PERCENT = -8;
+const MIN_EXIT_LIQUIDITY_USD = 1000;
 const TAKE_PROFIT_1_PERCENT = 10;
 const TAKE_PROFIT_1_SELL_PERCENT = 50;
 const TAKE_PROFIT_2_PERCENT = 20;
@@ -51,7 +52,13 @@ function getBuySizing(state) {
   return { amountInvested: Math.max(MINIMUM_TRADE_USD, equity * compoundRate), compoundRate };
 }
 
-function chooseExit({ position, currentPrice }) {
+function chooseExit({ position, currentPrice, freshData }) {
+  const liquidityRaw = freshData?.liquidityUsd;
+  const currentLiquidity = Number(liquidityRaw);
+  if (liquidityRaw !== null && liquidityRaw !== undefined &&
+      Number.isFinite(currentLiquidity) && currentLiquidity <= MIN_EXIT_LIQUIDITY_USD) {
+    return { percent: 100, reason: "EMERGENCY EXIT: LIQUIDITY COLLAPSE" };
+  }
   const entryPrice = Number(position && position.entryPrice);
   const price = Number(currentPrice);
   if (!(entryPrice > 0) || !(price > 0)) return null;
@@ -74,7 +81,7 @@ function chooseExit({ position, currentPrice }) {
 
 module.exports = {
   constants: { MAX_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MIN_VOLUME_5M_USD,
-    MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M, MIN_MOMENTUM_5M, MAX_MOMENTUM_5M, HARD_STOP_PERCENT,
+    MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M, MIN_MOMENTUM_5M, MAX_MOMENTUM_5M, HARD_STOP_PERCENT, MIN_EXIT_LIQUIDITY_USD,
     TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
     PROFIT_FLOOR_AFTER_TP1_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD },
   qualifiesMomentumCandidate,
