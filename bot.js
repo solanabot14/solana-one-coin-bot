@@ -3,6 +3,7 @@ const path = require("node:path");
 const market = require("./dexscreener");
 const scanner = require("./scanner");
 const { createTokenLossGuard } = require("./tokenLossGuard");
+const { liquidityLockAllowsEntry } = require("./liquidityLockGate");
 const paperTrader = require("./paperTrader");
 const telegram = require("./telegram");
 const { getLockStatus } = require("./lpLockChecker");
@@ -83,6 +84,7 @@ function createBot({
   minimumVolume24hUsd = 100000,
   acceptedSignals = ["STRONG BUY"],
   requireLiquidityLock = true,
+  allowUnknownLiquidityLock = false,
   useReentryGuards = false,
   useSimpleCooldown = true,
   exitDecision = null,
@@ -276,14 +278,22 @@ function createBot({
       if (requireLiquidityLock) {
         lock = await checkLiquidityLock(coin.tokenAddress);
         if (!isActive(session)) return;
-        if (!Number.isFinite(Number(lock?.lockedPercent)) || Number(lock.lockedPercent) < ENTRY_MIN_LP_LOCK_PERCENT) {
+        if (!liquidityLockAllowsEntry(lock, ENTRY_MIN_LP_LOCK_PERCENT, allowUnknownLiquidityLock)) {
           console.log(`LP LOCK GATE | ${coin.symbol} | skipped | ${lock?.reason || "LOCK_STATUS_UNAVAILABLE"}`);
           continue;
         }
-        coin.reasons = [
-          ...(Array.isArray(coin.reasons) ? coin.reasons : []),
-          `LP lock ${Number(lock.lockedPercent).toFixed(1)}% confirmed by RugCheck`
-        ];
+        if (lock?.lockedPercent === null || lock?.lockedPercent === undefined) {
+          console.log(`LP LOCK GATE | ${coin.symbol} | PAPER entry allowed | RugCheck status unavailable; lock is unconfirmed`);
+          coin.reasons = [
+            ...(Array.isArray(coin.reasons) ? coin.reasons : []),
+            "Paper-only entry allowed with unavailable LP lock status; lock is unconfirmed"
+          ];
+        } else {
+          coin.reasons = [
+            ...(Array.isArray(coin.reasons) ? coin.reasons : []),
+            `LP lock ${Number(lock.lockedPercent).toFixed(1)}% confirmed by RugCheck`
+          ];
+        }
       }
       const guard = useReentryGuards ? tokenCooldowns.get(coin.tokenAddress) : null;
       if (guard && !guard.released && !observeReentry(coin, lock)) continue;
