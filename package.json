@@ -5,7 +5,7 @@
   "main": "dashboard.js",
   "scripts": {
     "start": "node dashboard.js",
-    "test": "node --test test/token-cooldown.test.js test/dex-batching.test.js test/pullback-strategy.test.js test/pullback-discovery.test.js test/scanner-shared-cache.test.js test/gecko-terminal.test.js test/swarm-methodology.test.js analytics.test.js test/lp-lock-85.test.js test/exit-profile-test.test.js",
+    "test": "node --test test/token-cooldown.test.js test/dex-batching.test.js test/pullback-strategy.test.js test/pullback-discovery.test.js test/scanner-shared-cache.test.js test/gecko-terminal.test.js test/swarm-methodology.test.js analytics.test.js test/lp-lock-85.test.js test/exit-profile-test.test.js test/launch-sniper.test.js",
     "test:all": "node --test"
   },
   "keywords": [],
