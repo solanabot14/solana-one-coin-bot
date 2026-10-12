@@ -38,6 +38,13 @@ test("trade sizing follows the 10%, 12.5%, 15% cycle and resets after the third 
   assert.deepEqual(getBuySizing(makeState(3)), { amountInvested: 10, compoundRate: 0.1 });
 });
 
+test("low liquidity forces a full paper exit while unavailable liquidity data is ignored", () => {
+  const position = { entryPrice: 100 };
+  assert.deepEqual(chooseExit({ position, currentPrice: 1, freshData: { liquidityUsd: 1 } }), { percent: 100, reason: "EMERGENCY EXIT: LIQUIDITY COLLAPSE" });
+  assert.deepEqual(chooseExit({ position, currentPrice: 100, freshData: { liquidityUsd: 1000 } }), { percent: 100, reason: "EMERGENCY EXIT: LIQUIDITY COLLAPSE" });
+  assert.equal(chooseExit({ position, currentPrice: 100, freshData: {} }), null);
+});
+
 test("exit logic sells half at +10%, protects the rest at +2%, exits at +20%, and stops at -8%", () => {
   const position = { entryPrice: 100, firstTakeProfitDone: false };
   assert.deepEqual(chooseExit({ position, currentPrice: 92 }), { percent: 100, reason: "HARD STOP -8%" });
