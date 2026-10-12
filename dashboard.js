@@ -11,6 +11,7 @@ const swarm = require("./janMvpBot");
 const buyPriorityTest = require("./buyPriorityTest");
 const buyPriorityExitTest = require("./buyPriorityExitTest");
 const buyPriorityLock85 = require("./buyPriorityLock85");
+const launchSniper = require("./launchSniper");
 
 function getConfig(env = process.env) {
   const railway = !!env.RAILWAY_ENVIRONMENT_ID;
@@ -185,6 +186,18 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         if (route === "/api/start") controls.startBot(); else controls.stopBot();
         return json(res, { running: controls.getBotStatus() });
       }
+      if (route === "/api/launch-sniper/start" || route === "/api/launch-sniper/stop") {
+        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
+        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        if (route === "/api/launch-sniper/start") launchSniper.startBot(); else launchSniper.stopBot();
+        return json(res, launchSniper.getStatus());
+      }
+      if (route === "/api/launch-sniper/status") return json(res, launchSniper.getStatus());
+      if (route === "/api/launch-sniper/data") {
+        const account = await buildDashboardData(launchSniper.getPortfolio(), marketData);
+        return json(res, { label: "Paper Launch Watcher", paperOnly: true, account, thresholds: launchSniper.thresholds });
+      }
       if (route === "/api/lock85/start" || route === "/api/lock85/stop") {
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
         if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
@@ -237,6 +250,8 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           buyPriorityLock85Status: { running: buyPriorityLock85.getBotStatus(), error: buyPriorityLock85.getLastError() }
         });
       }
+      if (route === "/trading/launch-sniper") { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); return res.end(fs.readFileSync(path.join(__dirname, "launchSniperPanel.html"), "utf8")); }
+      if (route === "/launchSniperPanel.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(fs.readFileSync(path.join(__dirname, "launchSniperPanel.js"), "utf8")); }
       if (route === "/trading/buy-priority-lock85") { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); return res.end(fs.readFileSync(path.join(__dirname, "buyPriorityLock85Panel.html"), "utf8")); }
       if (route === "/buyPriorityLock85Panel.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(fs.readFileSync(path.join(__dirname, "buyPriorityLock85Panel.js"), "utf8")); }
       if (route === "/dashboard-client.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(client); }
@@ -270,6 +285,7 @@ if (require.main === module) {
     buyPriorityTest.stopBot();
     buyPriorityExitTest.stopBot();
     buyPriorityLock85.stopBot();
+    launchSniper.stopBot();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 12000).unref();
   };
