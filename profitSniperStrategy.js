@@ -4,7 +4,7 @@ const MIN_VOLUME_24H_USD = 0;
 const MIN_VOLUME_5M_USD = 1500;
 const MIN_TRANSACTIONS_5M = 12;
 const MIN_BUY_RATIO_5M = 0.55;
-const MIN_MOMENTUM_5M = 0.25;
+const MIN_MOMENTUM_5M = 0.05;
 const MAX_MOMENTUM_5M = 20;
 const HARD_STOP_PERCENT = -8;
 const TAKE_PROFIT_1_PERCENT = 10;
@@ -14,8 +14,9 @@ const PROFIT_FLOOR_AFTER_TP1_PERCENT = 2;
 const COMPOUND_RATES = [0.10, 0.125, 0.15];
 const MINIMUM_TRADE_USD = 10;
 
-function qualifiesMomentumCandidate(coin, now = Date.now()) {
-  if (!coin || typeof coin !== "object") return false;
+function getMomentumFailureReasons(coin, now = Date.now()) {
+  if (!coin || typeof coin !== "object") return ["missing_candidate"];
+  const failures = [];
   const createdAt = Number(coin.pairCreatedAt);
   const ageMs = now - createdAt;
   const liquidity = Number(coin.liquidityUsd);
@@ -26,14 +27,20 @@ function qualifiesMomentumCandidate(coin, now = Date.now()) {
   const transactions5m = buys5m + sells5m;
   const buyRatio = transactions5m > 0 ? buys5m / transactions5m : 0;
   const momentum5m = Number(coin.priceChange5m);
-  return Number.isFinite(createdAt) && ageMs >= 0 && ageMs <= MAX_PAIR_AGE_MS &&
-    Number.isFinite(liquidity) && liquidity >= MIN_LIQUIDITY_USD &&
-    Number.isFinite(volume24h) && volume24h >= MIN_VOLUME_24H_USD &&
-    Number.isFinite(volume5m) && volume5m >= MIN_VOLUME_5M_USD &&
-    Number.isFinite(transactions5m) && transactions5m >= MIN_TRANSACTIONS_5M &&
-    buyRatio >= MIN_BUY_RATIO_5M &&
-    Number.isFinite(momentum5m) && momentum5m >= MIN_MOMENTUM_5M && momentum5m <= MAX_MOMENTUM_5M &&
-    Boolean(coin.tokenAddress);
+
+  if (!Number.isFinite(createdAt) || ageMs < 0 || ageMs > MAX_PAIR_AGE_MS) failures.push("age");
+  if (!Number.isFinite(liquidity) || liquidity < MIN_LIQUIDITY_USD) failures.push("liquidity");
+  if (!Number.isFinite(volume24h) || volume24h < MIN_VOLUME_24H_USD) failures.push("volume24h");
+  if (!Number.isFinite(volume5m) || volume5m < MIN_VOLUME_5M_USD) failures.push("volume5m");
+  if (!Number.isFinite(transactions5m) || transactions5m < MIN_TRANSACTIONS_5M) failures.push("transactions5m");
+  if (buyRatio < MIN_BUY_RATIO_5M) failures.push("buyRatio5m");
+  if (!Number.isFinite(momentum5m) || momentum5m < MIN_MOMENTUM_5M || momentum5m > MAX_MOMENTUM_5M) failures.push("momentum5m");
+  if (!coin.tokenAddress) failures.push("tokenAddress");
+  return failures;
+}
+
+function qualifiesMomentumCandidate(coin, now = Date.now()) {
+  return getMomentumFailureReasons(coin, now).length === 0;
 }
 
 function getBuySizing(state) {
@@ -71,6 +78,7 @@ module.exports = {
     TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
     PROFIT_FLOOR_AFTER_TP1_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD },
   qualifiesMomentumCandidate,
+  getMomentumFailureReasons,
   getBuySizing,
   chooseExit
 };
