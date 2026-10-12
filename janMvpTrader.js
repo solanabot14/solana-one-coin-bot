@@ -283,7 +283,7 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
     next.executions.push({
       type:"BUY", slotId:slot.id, positionId:slot.position.id, symbol:slot.position.symbol,
       tokenAddress:slot.position.tokenAddress,
-      price, amount, time:slot.position.entryTime,
+      price, amount, amountInvested:amount, entryLiquidityUsd:slot.position.entryLiquidityUsd, time:slot.position.entryTime,
       source: options.source || null,
       sourceOgPositionId: options.sourceOgPositionId || null
     });
@@ -332,7 +332,8 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
     const execution = {
       type:"SELL", slotId:slot.id, positionId:pos.id, symbol:pos.symbol,
       tokenAddress:pos.tokenAddress,
-      price:currentPrice, percentSold:percentToSell, saleValue, pnl,
+      price:currentPrice, percentSold:percentToSell, quantitySold, amountInvested:costBasisSold,
+      entryLiquidityUsd:pos.entryLiquidityUsd, saleValue, amountReceived:saleValue, pnl,
       pnlPercent: costBasisSold > 0 ? pnl / costBasisSold * 100 : 0,
       profitAllocation: pnl > 0 ? {
         reinvested: pnl * config.reinvestPercent / 100,
