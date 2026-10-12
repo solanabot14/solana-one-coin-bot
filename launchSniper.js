@@ -62,7 +62,7 @@ const trader = createPaperTrader(
   {
     strategyVersion: "Paper-Launch-Watcher-v1",
     startingBalance: 100,
-    maxOpenPositions: 1,
+    maxOpenPositions: 3,
     getBuySizing: () => ({ amountInvested: 10, compoundRate: 0.10 }),
     estimateExecutionCosts
   }
@@ -95,11 +95,11 @@ const bot = createBot({
   discoverCandidates: discoverLaunchCandidates,
   notifier: quietNotifier,
   checkLiquidityLock: getLockStatus,
-  positionMonitorMs: 2000,
+  positionMonitorMs: 5000,
   scannerIntervalMs: 30000,
   botLabel: "Paper Launch Watcher",
   reentryStateFile: statePath("launchSniperPaperReentryState.json"),
-  maxOpenPositions: 1,
+  maxOpenPositions: 3,
   maxCandidateAgeMinutes: 30,
   minimumLiquidityUsd: MIN_LIQUIDITY_USD,
   minimumVolume24hUsd: MIN_VOLUME_24H_USD,
@@ -115,6 +115,7 @@ function getStatus() {
     mode: "PAPER",
     execution: "No wallet connection or live swaps",
     scanIntervalMs: 30000,
+    positionMonitorIntervalMs: 5000,
     maximumPairAgeMinutes: 30,
     minimumLiquidityLockPercent: 70
   };
@@ -133,7 +134,7 @@ module.exports = {
     minimumVolume5mUsd: MIN_VOLUME_5M_USD,
     minimumTransactions5m: MIN_TRANSACTIONS_5M,
     minimumBuyRatio5m: MIN_BUY_RATIO_5M,
-    maximumOpenPositions: 1,
+    maximumOpenPositions: 3,
     paperEntryUsd: 10
   }
 };
