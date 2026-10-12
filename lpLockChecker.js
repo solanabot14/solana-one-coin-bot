@@ -6,7 +6,11 @@ const TIMEOUT_MS = 8000;
 const REPORT_CACHE_MS = 2 * 60 * 1000;
 const reportCache = new Map();
 
-function createLpLockChecker({ httpGet = (...args) => require("axios").get(...args), clock = Date.now } = {}) {
+function createLpLockChecker({ httpGet = (...args) => require("axios").get(...args), clock = Date.now, minimumLockedPercent = MIN_LOCKED_PERCENT } = {}) {
+	const configuredMinimum = Number(minimumLockedPercent);
+	const requiredLockedPercent = Number.isFinite(configuredMinimum) && configuredMinimum >= 0 && configuredMinimum <= 100
+		? configuredMinimum
+		: MIN_LOCKED_PERCENT;
 	const cache = new Map();
 	const pending = new Map();
 	async function getLockStatus(tokenAddress) {
@@ -21,7 +25,7 @@ function createLpLockChecker({ httpGet = (...args) => require("axios").get(...ar
 				const raw = response?.data?.lpLockedPct ?? response?.data?.lp_lock_pct;
 				const lockedPercent = Number(raw);
 				value = Number.isFinite(lockedPercent)
-					? { allowed: lockedPercent >= MIN_LOCKED_PERCENT, lockedPercent, reason: lockedPercent >= MIN_LOCKED_PERCENT ? "LOCKED_LIQUIDITY_CONFIRMED" : "LIQUIDITY_NOT_LOCKED_ENOUGH" }
+					? { allowed: lockedPercent >= requiredLockedPercent, lockedPercent, reason: lockedPercent >= requiredLockedPercent ? "LOCKED_LIQUIDITY_CONFIRMED" : "LIQUIDITY_NOT_LOCKED_ENOUGH" }
 					: { allowed: false, lockedPercent: null, reason: "LOCK_STATUS_UNAVAILABLE" };
 			} catch (_) {
 				value = { allowed: false, lockedPercent: null, reason: "LOCK_STATUS_UNAVAILABLE" };

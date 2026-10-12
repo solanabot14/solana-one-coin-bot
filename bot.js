@@ -82,6 +82,7 @@ function createBot({
   maxCandidateAgeMinutes = null,
   minimumLiquidityUsd = 25000,
   minimumVolume24hUsd = 100000,
+  minimumLiquidityLockPercent = ENTRY_MIN_LP_LOCK_PERCENT,
   acceptedSignals = ["STRONG BUY"],
   requireLiquidityLock = true,
   allowUnknownLiquidityLock = false,
@@ -92,6 +93,10 @@ function createBot({
   entryPauseStateFile = null
 } = {}) {
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
+  const configuredLockPercent = Number(minimumLiquidityLockPercent);
+  const minimumEntryLockPercent = Number.isFinite(configuredLockPercent) && configuredLockPercent >= 0 && configuredLockPercent <= 100
+    ? configuredLockPercent
+    : ENTRY_MIN_LP_LOCK_PERCENT;
   const tokenLossGuard = createTokenLossGuard({
     getHistory: () => getPortfolio().history,
     scannerIntervalMs
@@ -278,7 +283,7 @@ function createBot({
       if (requireLiquidityLock) {
         lock = await checkLiquidityLock(coin.tokenAddress);
         if (!isActive(session)) return;
-        if (!liquidityLockAllowsEntry(lock, ENTRY_MIN_LP_LOCK_PERCENT, allowUnknownLiquidityLock)) {
+        if (!liquidityLockAllowsEntry(lock, minimumEntryLockPercent, allowUnknownLiquidityLock)) {
           console.log(`LP LOCK GATE | ${coin.symbol} | skipped | ${lock?.reason || "LOCK_STATUS_UNAVAILABLE"}`);
           continue;
         }
@@ -302,7 +307,7 @@ function createBot({
     }
 
     if (!selected.length) {
-      console.log(`No BUY or STRONG BUY candidate with confirmed LP lock >=${ENTRY_MIN_LP_LOCK_PERCENT}% available.`);
+      console.log(`No BUY or STRONG BUY candidate with confirmed LP lock >=${minimumEntryLockPercent}% available.`);
       return;
     }
 

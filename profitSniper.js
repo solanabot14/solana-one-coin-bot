@@ -13,6 +13,10 @@ const { MAX_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MIN_VOLUME_5M_US
 const MAX_OPEN_POSITIONS = 3;
 const SCAN_INTERVAL_MS = 30000;
 const POSITION_MONITOR_MS = 5000;
+const MINIMUM_LIQUIDITY_LOCK_PERCENT = 50;
+const profitSniperLockChecker = require("./lpLockChecker").createLpLockChecker({
+  minimumLockedPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT
+});
 
 function statePath(fileName = "profitSniperTradingData.json") {
   if (process.env.RAILWAY_ENVIRONMENT_ID && !process.env.RAILWAY_VOLUME_MOUNT_PATH) {
@@ -92,7 +96,7 @@ const bot = createBot({
   getTokenData: market.getTokenData,
   discoverCandidates,
   notifier: quietNotifier,
-  checkLiquidityLock: require("./lpLockChecker").getLockStatus,
+  checkLiquidityLock: profitSniperLockChecker.getLockStatus,
   batchPositionPrices: true,
   positionMonitorMs: POSITION_MONITOR_MS,
   scannerIntervalMs: SCAN_INTERVAL_MS,
@@ -102,9 +106,10 @@ const bot = createBot({
   maxCandidateAgeMinutes: 30,
   minimumLiquidityUsd: MIN_LIQUIDITY_USD,
   minimumVolume24hUsd: MIN_VOLUME_24H_USD,
+  minimumLiquidityLockPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT,
   acceptedSignals: ["BUY", "STRONG BUY"],
   requireLiquidityLock: true,
-  allowUnknownLiquidityLock: true,
+  allowUnknownLiquidityLock: false,
   useReentryGuards: true,
   useSimpleCooldown: false,
   exitDecision: chooseExit
@@ -118,7 +123,8 @@ function getStatus() {
     execution: "No wallet connection or live swaps",
     scanIntervalMs: SCAN_INTERVAL_MS,
     positionMonitorIntervalMs: POSITION_MONITOR_MS,
-    allowUnknownLiquidityLockInPaper: true,
+    allowUnknownLiquidityLockInPaper: false,
+    minimumLiquidityLockPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT,
     strategy: { hardStopPercent: HARD_STOP_PERCENT, tp1Percent: TAKE_PROFIT_1_PERCENT,
       tp1SellPercent: TAKE_PROFIT_1_SELL_PERCENT, tp2Percent: TAKE_PROFIT_2_PERCENT,
       postTp1FloorPercent: PROFIT_FLOOR_AFTER_TP1_PERCENT, compoundRates: COMPOUND_RATES,
@@ -145,7 +151,7 @@ module.exports = {
     minimumBuyRatio5m: MIN_BUY_RATIO_5M,
     minimumMomentum5mPercent: MIN_MOMENTUM_5M,
     maximumMomentum5mPercent: MAX_MOMENTUM_5M,
-    minimumLiquidityLockPercent: 70,
+    minimumLiquidityLockPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT,
     maximumOpenPositions: MAX_OPEN_POSITIONS,
     minimumTradeUsd: MINIMUM_TRADE_USD
   }
