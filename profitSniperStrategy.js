@@ -1,13 +1,18 @@
 const MAX_PAIR_AGE_MS = 30 * 60 * 1000;
+const MIN_PAIR_AGE_MS = 2 * 60 * 1000;
 const MIN_LIQUIDITY_USD = 15000;
-const MIN_VOLUME_24H_USD = 0;
+const MIN_VOLUME_24H_USD = 5000;
+const MAX_VOLUME_TO_LIQUIDITY = 8;
 const MIN_VOLUME_5M_USD = 1500;
 const MIN_TRANSACTIONS_5M = 12;
 const MIN_BUY_RATIO_5M = 0.55;
 const MIN_MOMENTUM_5M = 0.05;
 const MAX_MOMENTUM_5M = 20;
+const MAX_MOMENTUM_1H = 250;
+const MAX_MOMENTUM_24H = 500;
 const HARD_STOP_PERCENT = -8;
 const MIN_EXIT_LIQUIDITY_USD = 1000;
+const MAX_EXIT_LIQUIDITY_DRAWDOWN = 0.25;
 const BLOCKED_TOKEN_ADDRESSES = new Set(["EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J"]);
 const TAKE_PROFIT_1_PERCENT = 10;
 const TAKE_PROFIT_1_SELL_PERCENT = 50;
@@ -31,14 +36,20 @@ function getMomentumFailureReasons(coin, now = Date.now()) {
   const transactions5m = buys5m + sells5m;
   const buyRatio = transactions5m > 0 ? buys5m / transactions5m : 0;
   const momentum5m = Number(coin.priceChange5m);
+  const momentum1h = Number(coin.priceChange1h);
+  const momentum24h = Number(coin.priceChange24h);
 
-  if (!Number.isFinite(createdAt) || ageMs < 0 || ageMs > MAX_PAIR_AGE_MS) failures.push("age");
+  if (!Number.isFinite(createdAt) || ageMs < MIN_PAIR_AGE_MS || ageMs > MAX_PAIR_AGE_MS) failures.push("age");
   if (!Number.isFinite(liquidity) || liquidity < MIN_LIQUIDITY_USD) failures.push("liquidity");
   if (!Number.isFinite(volume24h) || volume24h < MIN_VOLUME_24H_USD) failures.push("volume24h");
+  if (Number.isFinite(volume24h) && Number.isFinite(liquidity) && liquidity > 0 &&
+      volume24h / liquidity > MAX_VOLUME_TO_LIQUIDITY) failures.push("volumeToLiquidity");
   if (!Number.isFinite(volume5m) || volume5m < MIN_VOLUME_5M_USD) failures.push("volume5m");
   if (!Number.isFinite(transactions5m) || transactions5m < MIN_TRANSACTIONS_5M) failures.push("transactions5m");
   if (buyRatio < MIN_BUY_RATIO_5M) failures.push("buyRatio5m");
   if (!Number.isFinite(momentum5m) || momentum5m < MIN_MOMENTUM_5M || momentum5m > MAX_MOMENTUM_5M) failures.push("momentum5m");
+  if (coin.priceChange1h != null && Number.isFinite(momentum1h) && momentum1h > MAX_MOMENTUM_1H) failures.push("momentum1h");
+  if (coin.priceChange24h != null && Number.isFinite(momentum24h) && momentum24h > MAX_MOMENTUM_24H) failures.push("momentum24h");
   if (!coin.tokenAddress) failures.push("tokenAddress");
   if (coin.chainId !== "solana") failures.push("chainId");
   if (!coin.pairAddress) failures.push("pairAddress");
@@ -81,6 +92,11 @@ function chooseExit({ position, currentPrice, freshData }) {
       Number.isFinite(currentLiquidity) && currentLiquidity <= MIN_EXIT_LIQUIDITY_USD) {
     return { percent: 100, writeOff: true, reason: "EMERGENCY WRITE-OFF: NO EXECUTABLE LIQUIDITY" };
   }
+  const entryLiquidity = Number(position?.entryLiquidityUsd);
+  if (Number.isFinite(currentLiquidity) && currentLiquidity > MIN_EXIT_LIQUIDITY_USD &&
+      entryLiquidity > 0 && currentLiquidity < entryLiquidity * (1 - MAX_EXIT_LIQUIDITY_DRAWDOWN)) {
+    return { percent: 100, reason: "EMERGENCY EXIT: POOL LIQUIDITY DOWN 25%" };
+  }
   const entryPrice = Number(position && position.entryPrice);
   const price = Number(currentPrice);
   if (!(entryPrice > 0) || !(price > 0)) return null;
@@ -98,7 +114,8 @@ function chooseExit({ position, currentPrice, freshData }) {
 
   if (position.firstTakeProfitDone) {
     if (profitPercent <= PROFIT_FLOOR_AFTER_TP1_PERCENT) {
-      return { percent: 100, reason: "PROFIT FLOOR AFTER TP1 +2%" };
+      return { percent: 100, reason: profitPercent <= HARD_STOP_PERCENT
+        ? "HARD STOP AFTER TP1 -8% (PRICE GAP)" : "PROFIT FLOOR AFTER TP1 +2%" };
     }
     if (profitPercent + 1e-9 >= TAKE_PROFIT_2_PERCENT) {
       return { percent: 100, reason: "TAKE PROFIT 2 - EXIT REMAINDER AT +20%" };
@@ -118,8 +135,10 @@ function chooseExit({ position, currentPrice, freshData }) {
 }
 
 module.exports = {
-  constants: { MAX_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MIN_VOLUME_5M_USD,
-    MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M, MIN_MOMENTUM_5M, MAX_MOMENTUM_5M, HARD_STOP_PERCENT, MIN_EXIT_LIQUIDITY_USD,
+  constants: { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MAX_VOLUME_TO_LIQUIDITY, MIN_VOLUME_5M_USD,
+    MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M, MIN_MOMENTUM_5M, MAX_MOMENTUM_5M,
+    MAX_MOMENTUM_1H, MAX_MOMENTUM_24H, HARD_STOP_PERCENT, MIN_EXIT_LIQUIDITY_USD,
+    MAX_EXIT_LIQUIDITY_DRAWDOWN,
     TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
     TAKE_PROFIT_2_SELL_PERCENT, TRAILING_STOP_PERCENT, PROFIT_FLOOR_AFTER_TP1_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD },
   qualifiesMomentumCandidate,

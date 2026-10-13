@@ -26,17 +26,16 @@ test('reset preserves every old event and open snapshot, persists archive, and n
  assert.equal(reopened.cashBalance,180); assert.equal(reopened.history.length,1);
  assert.equal(reopened.archivedSessions.length,1);
 });
-test('actual paper fills sell 45 original tokens twice then the last 10',t=>{
+test('actual paper fills sell 50 original tokens at +10% and the rest at +20%',t=>{
  const trader=createPaperTrader(account(t),fs,{startingBalance:1000,getBuySizing:()=>({amountInvested:100})});
  trader.buy({tokenAddress:'mint',pairAddress:'pool',priceUsd:1});
- for (const [price,remaining] of [[1.1,55],[1.2,10],[1.35,0]]) {
+ for (const [price,remaining] of [[1.1,50],[1.2,0]]) {
    let position=trader.getPortfolio().position;
-   if(price===1.35) {trader.updateHigh(position.id,1.5);position=trader.getPortfolio().position;}
    const action=chooseExit({position,currentPrice:price});
    assert.ok(action); assert.equal(trader.sell(price,action.percent,{expectedPosition:position.id,...action}).success,true);
    assert.ok(Math.abs((trader.getPortfolio().position?.quantity||0)-remaining)<1e-9);
  }
- assert.equal(trader.getPortfolio().history.length,4);
+ assert.equal(trader.getPortfolio().history.length,3);
 });
 test('failed reset save leaves original persisted account intact',t=>{
  const file=account(t); const trader=createPaperTrader(file);

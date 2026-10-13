@@ -23,7 +23,10 @@ test("fresh, active, upward momentum candidates pass; stale, weak, or overheated
   assert.equal(qualifiesMomentumCandidate(candidate()), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 0.1 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: -0.01 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 0 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 0 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 4000 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 250000 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 60 * 1000 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 31 * 60 * 1000 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: -1 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 21 })), false);
@@ -60,6 +63,12 @@ test("low liquidity forces a full paper exit while unavailable liquidity data is
   assert.equal(chooseExit({ position, currentPrice: 100, freshData: {} }), null);
 });
 
+test("a pool losing a quarter of its entry liquidity triggers an early exit", () => {
+  assert.deepEqual(chooseExit({ position: { entryPrice: 100, entryLiquidityUsd: 20000 },
+    currentPrice: 105, freshData: { liquidityUsd: 14999 } }),
+    { percent: 100, reason: "EMERGENCY EXIT: POOL LIQUIDITY DOWN 25%" });
+});
+
 test("original exits sell half at +10%, exit the remainder at +20%, protect at +2%, and stop at -8%", () => {
   const position = { entryPrice: 100, firstTakeProfitDone: false };
   assert.deepEqual(chooseExit({ position, currentPrice: 92 }), { percent: 100, reason: "HARD STOP -8%" });
@@ -74,6 +83,9 @@ test("original exits sell half at +10%, exit the remainder at +20%, protect at +
   assert.deepEqual(chooseExit({ position: afterFirstSale, currentPrice: 102 }), {
     percent: 100, reason: "PROFIT FLOOR AFTER TP1 +2%"
   });
+  assert.deepEqual(chooseExit({ position: afterFirstSale, currentPrice: 50 }), {
+    percent: 100, reason: "HARD STOP AFTER TP1 -8% (PRICE GAP)"
+  });
   assert.equal(chooseExit({ position: afterFirstSale, currentPrice: 119 }), null);
   assert.deepEqual(chooseExit({ position: afterFirstSale, currentPrice: 120 }), {
     percent: 100, reason: "TAKE PROFIT 2 - EXIT REMAINDER AT +20%"
@@ -87,6 +99,9 @@ test("original exits sell half at +10%, exit the remainder at +20%, protect at +
 test("momentum diagnostics name the failed Sniper gate", () => {
   assert.deepEqual(getMomentumFailureReasons(candidate({ priceChange5m: 0 })), ["momentum5m"]);
   assert.deepEqual(getMomentumFailureReasons(candidate({ tokenAddress: "EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J" })), ["blockedTokenAddress"]);
+  assert.ok(getMomentumFailureReasons(candidate({ liquidityUsd: 22620.82, volume24h: 355693.51 })).includes("volumeToLiquidity"));
+  assert.ok(getMomentumFailureReasons(candidate({ liquidityUsd: 17378.89, volume24h: 1603 })).includes("volume24h"));
+  assert.ok(getMomentumFailureReasons(candidate({ priceChange1h: 902 })).includes("momentum1h"));
 });
 
 test("an inflated quote cannot credit more than the pool could support", () => {

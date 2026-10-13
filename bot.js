@@ -117,6 +117,7 @@ function createBot({
   useReentryGuards = false,
   useSimpleCooldown = true,
   exitDecision = null,
+  validateEntry = null,
   pauseEntriesAtBalance = null,
   entryPauseStateFile = null
 } = {}) {
@@ -347,15 +348,36 @@ function createBot({
 
     for (const coin of selected) {
       if (!isActive(session) || entriesPausedByBalance() || getPositions().length >= maxOpenPositions) break;
+      let entryCoin = coin;
+      if (typeof validateEntry === "function") {
+        try {
+          const validation = await validateEntry(coin, { signal: session.signal, portfolio: getPortfolio() });
+          if (!isActive(session)) return;
+          if (!validation?.allowed) {
+            console.log(`ENTRY RECHECK | ${coin.symbol || coin.tokenAddress} | skipped | ${validation?.reason || "unavailable"}`);
+            continue;
+          }
+          entryCoin = validation.coin || coin;
+          if (lockPositionPair && (entryCoin.tokenAddress !== coin.tokenAddress ||
+              entryCoin.pairAddress !== coin.pairAddress)) {
+            console.log(`ENTRY RECHECK | ${coin.symbol || coin.tokenAddress} | skipped | exact mint or pool changed`);
+            continue;
+          }
+        } catch (error) {
+          if (!isActive(session)) return;
+          console.warn(`ENTRY RECHECK | ${coin.symbol || coin.tokenAddress} | skipped | ${error.message}`);
+          continue;
+        }
+      }
       console.log("\nBOT SELECTED:");
-      console.log(`${coin.symbol} - ${coin.name}`);
-      console.log(`Score: ${coin.score}`);
-      console.log(`Signal: ${coin.signal}`);
-      console.log(`5m Momentum: ${coin.priceChange5m}%`);
-      console.log(`1h Momentum: ${coin.priceChange1h}%`);
-      console.log(`5m Buys/Sells: ${coin.buys5m}/${coin.sells5m}`);
+      console.log(`${entryCoin.symbol} - ${entryCoin.name}`);
+      console.log(`Score: ${entryCoin.score}`);
+      console.log(`Signal: ${entryCoin.signal}`);
+      console.log(`5m Momentum: ${entryCoin.priceChange5m}%`);
+      console.log(`1h Momentum: ${entryCoin.priceChange1h}%`);
+      console.log(`5m Buys/Sells: ${entryCoin.buys5m}/${entryCoin.sells5m}`);
 
-      const trade = buy(coin);
+      const trade = buy(entryCoin);
       if (trade.success) {
         openTokens.add(coin.tokenAddress);
         if (tokenCooldowns.delete(coin.tokenAddress)) persistReentryGuards(tokenCooldowns, reentryStateFile);

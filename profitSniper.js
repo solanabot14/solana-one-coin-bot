@@ -6,14 +6,16 @@ const { createPaperTrader } = require("./paperTrader");
 const { reconcileProfitSniperAccount } = require("./profitSniperReconcile");
 const { createBot } = require("./bot");
 const strategy = require("./profitSniperStrategy");
+const { createSniperEntryGuard } = require("./profitSniperEntryGuard");
 const { constants } = strategy;
-const { MAX_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MIN_VOLUME_5M_USD,
-  MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M, MIN_MOMENTUM_5M, MAX_MOMENTUM_5M, HARD_STOP_PERCENT,
+const { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MAX_VOLUME_TO_LIQUIDITY, MIN_VOLUME_5M_USD,
+  MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M, MIN_MOMENTUM_5M, MAX_MOMENTUM_5M,
+  MAX_MOMENTUM_1H, MAX_MOMENTUM_24H, HARD_STOP_PERCENT,
   TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
   TAKE_PROFIT_2_SELL_PERCENT, TRAILING_STOP_PERCENT, PROFIT_FLOOR_AFTER_TP1_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD } = constants;
 const MAX_OPEN_POSITIONS = 3;
 const SCAN_INTERVAL_MS = 30000;
-const POSITION_MONITOR_MS = 5000;
+const POSITION_MONITOR_MS = 2000;
 const MINIMUM_LIQUIDITY_LOCK_PERCENT = 30;
 const profitSniperLockChecker = require("./lpLockChecker").createLpLockChecker({
   minimumLockedPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT
@@ -41,11 +43,16 @@ function estimateExecutionCosts({ amountUsd, liquidityUsd }) {
 const { qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit, selectUniqueMintCandidates } = strategy;
 
 let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, source: "GeckoTerminal new pools + DexScreener + RugCheck" };
+const entryGuard = createSniperEntryGuard();
 
 async function discoverCandidates(options = {}) {
   const candidates = await launchSniper.discoverLaunchCandidates({ ...options, minimumLiquidityUsd: MIN_LIQUIDITY_USD, minimumVolume24hUsd: MIN_VOLUME_24H_USD });
   const now = Date.now();
-  const evaluated = candidates.map(coin => ({ coin, failures: getMomentumFailureReasons(coin, now) }));
+  const evaluated = candidates.map(coin => {
+    const failures = getMomentumFailureReasons(coin, now);
+    if (!failures.length && !entryGuard.observe(coin, now).ready) failures.push("poolStability");
+    return { coin, failures };
+  });
   const rejectedGates = {};
   for (const item of evaluated) {
     for (const reason of item.failures) rejectedGates[reason] = (rejectedGates[reason] || 0) + 1;
@@ -122,7 +129,8 @@ const bot = createBot({
   allowUnknownLiquidityLock: false,
   useReentryGuards: true,
   useSimpleCooldown: false,
-  exitDecision: chooseExit
+  exitDecision: chooseExit,
+  validateEntry: entryGuard.validate
 });
 
 async function closePosition(positionId) {
@@ -190,13 +198,18 @@ module.exports = {
   estimateExecutionCosts,
   thresholds: {
     maximumPairAgeMinutes: 30,
+    minimumPairAgeMinutes: MIN_PAIR_AGE_MS / 60000,
     minimumLiquidityUsd: MIN_LIQUIDITY_USD,
     minimumVolume24hUsd: MIN_VOLUME_24H_USD,
+    maximumVolumeToLiquidity: MAX_VOLUME_TO_LIQUIDITY,
+    minimumStablePoolObservations: 3,
     minimumVolume5mUsd: MIN_VOLUME_5M_USD,
     minimumTransactions5m: MIN_TRANSACTIONS_5M,
     minimumBuyRatio5m: MIN_BUY_RATIO_5M,
     minimumMomentum5mPercent: MIN_MOMENTUM_5M,
     maximumMomentum5mPercent: MAX_MOMENTUM_5M,
+    maximumMomentum1hPercent: MAX_MOMENTUM_1H,
+    maximumMomentum24hPercent: MAX_MOMENTUM_24H,
     minimumLiquidityLockPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT,
     maximumOpenPositions: MAX_OPEN_POSITIONS,
     minimumTradeUsd: MINIMUM_TRADE_USD
