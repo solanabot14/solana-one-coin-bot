@@ -453,6 +453,7 @@ for (const method of [
 	"sell",
 	"updateHigh",
 	"positionKey",
+	"writeOff",
 	"getPortfolio"
 ]) {
 	module.exports[method] =
