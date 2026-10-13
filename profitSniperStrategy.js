@@ -10,11 +10,11 @@ const HARD_STOP_PERCENT = -8;
 const MIN_EXIT_LIQUIDITY_USD = 1000;
 const BLOCKED_TOKEN_ADDRESSES = new Set(["EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J"]);
 const TAKE_PROFIT_1_PERCENT = 10;
-const TAKE_PROFIT_1_SELL_PERCENT = 45;
+const TAKE_PROFIT_1_SELL_PERCENT = 50;
 const TAKE_PROFIT_2_PERCENT = 20;
-const TAKE_PROFIT_2_SELL_PERCENT = 45 / 55 * 100;
-const TRAILING_STOP_PERCENT = 10;
-const PROFIT_FLOOR_AFTER_TP1_PERCENT = 0;
+const TAKE_PROFIT_2_SELL_PERCENT = 100;
+const TRAILING_STOP_PERCENT = 0;
+const PROFIT_FLOOR_AFTER_TP1_PERCENT = 2;
 const COMPOUND_RATES = [0.10, 0.125, 0.15];
 const MINIMUM_TRADE_USD = 10;
 
@@ -72,27 +72,18 @@ function chooseExit({ position, currentPrice, freshData }) {
   }
   const profitPercent = (price - entryPrice) / entryPrice * 100;
 
+  // A position carrying the former second-target flag already passed +20%.
+  // Exit all remaining units under the restored strategy instead of leaving a runner.
   if (position.secondTakeProfitDone) {
-    const highestPrice = Number(position.highestPrice) || price;
-    const dropFromHighPercent = highestPrice > 0
-      ? (highestPrice - price) / highestPrice * 100
-      : 0;
-    if (dropFromHighPercent + 1e-9 >= TRAILING_STOP_PERCENT) {
-      return { percent: 100, reason: "TRAILING STOP -10% FROM HIGH" };
-    }
-    return null;
+    return { percent: 100, reason: "ORIGINAL TAKE PROFIT 2 - EXIT REMAINDER" };
   }
 
   if (position.firstTakeProfitDone) {
     if (profitPercent <= PROFIT_FLOOR_AFTER_TP1_PERCENT) {
-      return { percent: 100, reason: "BREAKEVEN STOP AFTER TP1" };
+      return { percent: 100, reason: "PROFIT FLOOR AFTER TP1 +2%" };
     }
     if (profitPercent + 1e-9 >= TAKE_PROFIT_2_PERCENT) {
-      return {
-        percent: TAKE_PROFIT_2_SELL_PERCENT,
-        reason: "TAKE PROFIT 2 - SELL 45% OF ORIGINAL POSITION",
-        takeProfit: "secondTakeProfitDone"
-      };
+      return { percent: 100, reason: "TAKE PROFIT 2 - EXIT REMAINDER AT +20%" };
     }
     return null;
   }
@@ -101,7 +92,7 @@ function chooseExit({ position, currentPrice, freshData }) {
   if (profitPercent + 1e-9 >= TAKE_PROFIT_1_PERCENT) {
     return {
       percent: TAKE_PROFIT_1_SELL_PERCENT,
-      reason: "TAKE PROFIT 1 - SELL 45% OF ORIGINAL POSITION",
+      reason: "TAKE PROFIT 1 - SELL 50% OF ORIGINAL POSITION",
       takeProfit: "firstTakeProfitDone"
     };
   }
