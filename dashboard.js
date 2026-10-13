@@ -8,7 +8,7 @@ const { getTokenData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
 const scanner = require("./scanner");
 const janSlotEngine = require("./janSlotEngine");
-const janMvpBot = require("./janMvpBot");
+const janMvpBot = require("./janMvpBot");\nconst geminiBot = require("./geminiBot");\nconst geminiTrader = require("./geminiTrader");
 const { createRuntimeState } = require("./runtimeState");
 
 function getConfig(env = process.env) {
@@ -274,7 +274,7 @@ th,td{
 
 <div class="tabs" role="tablist" aria-label="Dashboard views">
   <button class="tab-button active" id="botTab" type="button">Current Bot</button>
-  <button class="tab-button" id="slotTab" type="button">Swarm</button>
+  <button class="tab-button" id="slotTab" type="button">Swarm</button>\n  <button class="tab-button" id="geminiTab" type="button">Gemini Bot · Paper</button>
 </div>
 
 <div id="botPanel" class="tab-panel active">
@@ -743,7 +743,7 @@ th,td{
 
 </div>
 
-<div id="slotPanel" class="tab-panel">
+<div id="geminiPanel" class="tab-panel">\n<div class="card section"><h2>Gemini Bot <span class="badge">PAPER ONLY</span></h2><p class="muted">Independent scanner and paper account. Gemini does not submit on-chain swaps.</p><div class="controls"><div id="geminiStatus" class="status">GEMINI OFFLINE</div><button class="start" id="geminiStart">START GEMINI</button><button class="stop" id="geminiStop">STOP GEMINI</button></div></div>\n<div class="grid section"><div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value" id="geminiStarting">—</div></div><div class="metric"><div class="metric-label">Cash</div><div class="metric-value" id="geminiCash">—</div></div><div class="metric"><div class="metric-label">Equity</div><div class="metric-value" id="geminiEquity">—</div></div><div class="metric"><div class="metric-label">Realized P/L</div><div class="metric-value" id="geminiPnl">—</div></div><div class="metric"><div class="metric-label">Open Position</div><div class="metric-value" id="geminiOpen">None</div></div><div class="metric"><div class="metric-label">Last Scan</div><div class="metric-value" id="geminiScan">—</div></div></div>\n<div class="card section"><h2>Gemini Position</h2><div id="geminiPosition" class="empty">No open Gemini position.</div></div>\n<div class="card section"><h2>Recent Paper Fills</h2><div style="overflow-x:auto"><table><thead><tr><th>Time</th><th>Side</th><th>Coin</th><th>Price</th><th>Amount</th><th>P/L</th><th>Reason</th><th>Chart</th></tr></thead><tbody id="geminiHistory"></tbody></table></div></div>\n<div class="card section"><h2>Recent Safety Rejections</h2><div style="overflow-x:auto"><table><thead><tr><th>Time</th><th>Coin</th><th>Reason</th><th>Details</th></tr></thead><tbody id="geminiRejections"></tbody></table></div></div>\n</div>\n\n<div id="slotPanel" class="tab-panel">
 
 <div class="card section">
   <h2>Swarm</h2>
@@ -859,7 +859,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const hostname = new URL("http://" + req.headers.host).hostname;
         if (!["127.0.0.1", "localhost", "[::1]"].includes(hostname)) return json(res, { error: "Invalid host" }, 403);
       }
-      if (route === "/api/start" || route === "/api/stop" || route === "/api/manual-exit") {
+      if (route === "/api/gemini/start" || route === "/api/gemini/stop") {\n        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }\n        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);\n        if (route.endsWith("/start")) geminiBot.start(); else geminiBot.stop();\n        return json(res, { running: geminiBot.getStatus() });\n      }\n      if (route === "/api/start" || route === "/api/stop" || route === "/api/manual-exit") {
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
         if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
 
@@ -913,7 +913,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         });
       }
       if (req.method !== "GET") return json(res, { error: "Method not allowed" }, 405);
-      if (route === "/api/status") return json(res, { running: controls.getBotStatus(), error: controls.getLastError() });
+      if (route === "/api/status") return json(res, { running: controls.getBotStatus(), error: controls.getLastError() });\n      if (route === "/api/gemini/status") return json(res, { running: geminiBot.getStatus(), error: geminiBot.getLastError() });\n      if (route === "/api/gemini/data") {\n        const state = geminiTrader.getState();\n        let live = null;\n        if (state.position) {\n          const fresh = await marketData(state.position.tokenAddress, { pairAddress: state.position.pairAddress || undefined });\n          const price = Number(fresh?.priceUsd);\n          if (Number.isFinite(price) && price > 0) live = { priceUsd: price, pnlPercent: (price / state.position.entryPrice - 1) * 100, currentValueUsd: state.position.quantity * price, holdMs: Math.max(0, Date.now() - Date.parse(state.position.entryTime)) };\n        }\n        return json(res, { ...state, running: geminiBot.getStatus(), live, totalRealizedPnlUsd: state.history.filter(x => x.type === "SELL").reduce((s,x)=>s + (Number(x.pnlUsd)||0),0) });\n      }
       if (route === "/api/jan/status") return json(res, { running: janControls.getStatus(), error: janControls.getLastError() });
       if (route === "/api/data") {
         const data = await buildDashboardData(portfolio(), marketData);
