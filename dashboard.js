@@ -4,7 +4,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const bot = require("./bot");
-const { getPortfolio, positionKey } = require("./paperTrader");
+const paperTrader = require("./paperTrader");
+const { getPortfolio, positionKey } = paperTrader;
 const { getTokenData, getTokensData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
 const swarm = require("./janMvpBot");
@@ -545,16 +546,16 @@ function createDashboardServer({ config = getConfig(), controls = pubxControls,
               const price = Number(quote && quote.priceUsd) || 0;
               const liquidity = Number(quote && quote.liquidityUsd) || 0;
               const result = price > 0 && liquidity > 0
-                ? controller.closePosition(key, price, liquidity, "MANUAL PAPER CLOSE")
-                : controller.writeOffPosition(key, "MANUAL PAPER CLOSE · ZERO-RECOVERY WRITE-OFF");
+                ? controller.sell(price, 100, { expectedPosition: key, reason: "MANUAL PAPER CLOSE" })
+                : { success: false, message: "No valid market quote and liquidity for paper close." };
               results.push({ ...result, bot: label, symbol: position.symbol, writeOff: !(price > 0 && liquidity > 0) });
             } catch (error) {
               results.push({ success: false, bot: label, symbol: position.symbol, message: error.message });
             }
           }
         }
-        await closeAccount("PubX V3.1", portfolio(), bot);
-        await closeAccount("Bit V3.1 40% TP1", experimentPortfolio(), experiment);
+        await closeAccount("PubX V3.1", portfolio(), paperTrader);
+        await closeAccount("Bit V3.1 40% TP1", experimentPortfolio(), pullbackBot);
         const closedCount = results.filter(result => result.success).length;
         return json(res, { success: results.every(result => result.success), closedCount, results });
       }
