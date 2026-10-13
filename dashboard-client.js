@@ -122,7 +122,8 @@
       { id:'candle', name:'Bit V 3.1 40% TP1', label:'Bit V 3.1 40% TP1', data:api.candleBreakout, status:api.candleBreakoutStatus, mode:'PAPER' },
       { id:'lab', name:'B3.1 Lab', label:'B3.1 Lab', data:api.profitabilityLab, status:{ running:api.profitabilityLab && api.profitabilityLab.running }, mode:'PAPER', limited:true },
       { id:'profit-sniper', name:'Profit Sniper', label:'Profit Sniper', data:api.profitSniper, status:api.profitSniperStatus, mode:'PAPER' },
-      { id:'wallet-copy', name:'Decu Wallet Follow', label:'Decu Wallet Follow', data:api.walletCopy, status:api.walletCopyStatus, mode:'PAPER' }
+      { id:'wallet-copy', name:'Decu Wallet Follow', label:'Decu Wallet Follow', data:api.walletCopy, status:api.walletCopyStatus, mode:'PAPER' },
+      { id:'gemini', name:'Gemini Bot', label:'Gemini Bot', data:api.gemini, status:api.geminiStatus, mode:'PAPER' }
     ];
     systems = input.map(function (s) {
       var d = s.data || {};
@@ -193,7 +194,7 @@
   function kpi(label,value,note,cls,primary) {
     return '<div class="kpi-card '+(primary?'kpi-primary':'')+'"><div class="kpi-label">'+label+'</div><div class="kpi-value mono '+(cls||'')+'">'+value+'</div>'+(note?'<div class="kpi-note">'+note+'</div>':'')+'</div>';
   }
-  function systemIcon(id){return id==='v31'?'V3':id==='candle'?'B3':id==='lab'?'LB':id==='buy-test'?'BUY':id==='exit-test'?'XT':'SW';}
+  function systemIcon(id){return id==='gemini'?'G':id==='v31'?'V3':id==='candle'?'B3':id==='lab'?'LB':id==='buy-test'?'BUY':id==='exit-test'?'XT':'SW';}
   function systemRow(s) {
     var m=metrics(s.trades);
     return '<tr class="click-row" data-open-system="'+s.id+'"><td><div class="system-name"><span class="system-mark">'+systemIcon(s.id)+'</span>'+esc(s.label)+' <span class="badge">PAPER</span></div></td><td>'+int(m.trades)+'</td><td>'+int(m.wins)+'</td><td>'+int(m.losses)+'</td><td>'+metric(m.winRate,function(x){return x.toFixed(1)+'%';})+'</td><td>'+money(m.grossProfit)+'</td><td>−'+money(m.grossLoss)+'</td><td class="'+signClass(m.netPnl)+'">'+money(m.netPnl)+'</td><td>'+pct(m.returnPercent)+'</td><td>'+money(m.averageTrade)+'</td><td>'+money(m.averageWin)+'</td><td>'+money(m.averageLoss)+'</td><td>'+metric(m.profitFactor,function(x){return x===Infinity?'∞':x.toFixed(2);})+'</td><td>'+money(m.best)+'</td><td>'+money(m.worst)+'</td><td>'+duration(m.averageHoldMs)+'</td><td>'+money(m.capitalDeployed)+'</td><td><span class="status-line '+(s.running?'':'offline')+'"><i></i>'+(s.running?'RUNNING':'STOPPED')+'</span></td></tr>';
@@ -331,7 +332,7 @@
     var tab=(path.split('/')[3]||'overview').toUpperCase(); state.botTab=tab;
     var tabs=['OVERVIEW','LIVE','PERFORMANCE','ANALYTICS','TRANSACTIONS'];
     if(system.id==='profit-sniper') tabs.push('ARCHIVE');
-    var base=id==='candle'?'/trading/candle-breakout':id==='lab'?'/trading/b31-lab':id==='buy-test'?'/trading/buy-priority-test':id==='exit-test'?'/trading/buy-priority-exit-test':id==='profit-sniper'?'/trading/profit-sniper':id==='wallet-copy'?'/trading/wallet-copy':'/trading/v31';
+    var base=id==='candle'?'/trading/candle-breakout':id==='lab'?'/trading/b31-lab':id==='buy-test'?'/trading/buy-priority-test':id==='exit-test'?'/trading/buy-priority-exit-test':id==='profit-sniper'?'/trading/profit-sniper':id==='wallet-copy'?'/trading/wallet-copy':id==='gemini'?'/trading/gemini':'/trading/v31';
     var tabHtml='<div class="tab-row">'+tabs.map(function(x){return '<button data-route="'+base+(x==='OVERVIEW'?'':'/'+x.toLowerCase())+'" class="'+(x===tab?'active':'')+'">'+x+'</button>';}).join('')+'</div>';
     var m=metrics(system.trades), content='';
     if(tab==='OVERVIEW') content='<div class="kpi-grid">'+kpi('CURRENT EQUITY',money(system.equity),'Current account equity')+kpi('REALIZED P&L',money(realizedTotal(realizedEventsFor(system))),'Recorded sale events',signClass(realizedTotal(realizedEventsFor(system))))+kpi("TODAY'S P&L",money(todayPnl(realizedEventsFor(system))),'Realized exits')+kpi('RETURN',pct(system.totalPnlPercent),'From starting balance',signClass(system.totalPnlPercent))+kpi('WIN RATE',metric(m.winRate,function(x){return x.toFixed(1)+'%';}))+kpi('TRADES',int(m.trades),'Known closed trades')+kpi('OPEN POSITIONS',int(system.positions.length),'Currently observed')+kpi((system.id==='buy-test'||system.id==='exit-test')?'EXPECTANCY / TRADE':'AVG TRADE',money(m.averageTrade),'Per closed trade',signClass(m.averageTrade))+kpi('PROFIT FACTOR',metric(m.profitFactor,function(x){return x===Infinity?'∞':x.toFixed(2);}))+'</div><div class="grid-2"><div class="panel"><div class="panel-head"><div><div class="panel-title">REALIZED P&L CURVE</div><div class="panel-subtitle">Built from recorded exits</div></div></div><div class="chart-wrap">'+svgLine(cumulative(system.trades),system.name)+'</div></div><div class="panel"><div class="panel-head"><div><div class="panel-title">WIN / LOSS</div><div class="panel-subtitle">Count and dollar contribution</div></div></div>'+splitContribution(system.trades)+'</div></div>';
