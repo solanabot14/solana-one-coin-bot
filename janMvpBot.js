@@ -346,6 +346,30 @@ function createJanMvpBot({
     }
   }
 
+  async function closeAllPositions(reason = "MANUAL PAPER CLOSE") {
+    const slots = trader.getDashboardState().slots || [];
+    const results = [];
+    for (const slot of slots) {
+      const position = slot && slot.position;
+      if (!position) continue;
+      try {
+        const quote = await getTokenData(position.tokenAddress, { pairAddress: position.pairAddress });
+        const currentPrice = Number(quote && quote.priceUsd) || Number(slot.live && slot.live.currentPrice) || 0;
+        if (!(currentPrice > 0)) {
+          results.push({ success: false, slotId: slot.id, symbol: position.symbol, message: "No current price; position left open." });
+          continue;
+        }
+        const expectedPosition = trader.positionKey(position);
+        const result = trader.sell(slot.id, currentPrice, 100, { expectedPosition, reason });
+        results.push({ ...result, slotId: slot.id, symbol: position.symbol });
+      } catch (error) {
+        results.push({ success: false, slotId: slot.id, symbol: position.symbol, message: error.message });
+      }
+    }
+    const closedCount = results.filter(result => result.success).length;
+    return { success: results.every(result => result.success), closedCount, results };
+  }
+
   function start() {
     if (activeSession) return;
     lastError = null;
@@ -388,7 +412,8 @@ function createJanMvpBot({
         })
       };
     },
-    getState: () => trader.getState()
+    getState: () => trader.getState(),
+    closeAllPositions
   };
 }
 
