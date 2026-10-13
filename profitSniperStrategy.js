@@ -8,12 +8,12 @@ const MIN_MOMENTUM_5M = 0.05;
 const MAX_MOMENTUM_5M = 20;
 const HARD_STOP_PERCENT = -8;
 const MIN_EXIT_LIQUIDITY_USD = 1000;
-const TAKE_PROFIT_1_PERCENT = 20;
-const TAKE_PROFIT_1_SELL_PERCENT = 50;
-const TAKE_PROFIT_2_PERCENT = 30;
-const TAKE_PROFIT_2_SELL_PERCENT = 80;
+const TAKE_PROFIT_1_PERCENT = 10;
+const TAKE_PROFIT_1_SELL_PERCENT = 45;
+const TAKE_PROFIT_2_PERCENT = 20;
+const TAKE_PROFIT_2_SELL_PERCENT = 45 / 55 * 100;
 const TRAILING_STOP_PERCENT = 10;
-const PROFIT_FLOOR_AFTER_TP1_PERCENT = 2;
+const PROFIT_FLOOR_AFTER_TP1_PERCENT = 0;
 const COMPOUND_RATES = [0.10, 0.125, 0.15];
 const MINIMUM_TRADE_USD = 10;
 
@@ -71,7 +71,7 @@ function chooseExit({ position, currentPrice, freshData }) {
     const dropFromHighPercent = highestPrice > 0
       ? (highestPrice - price) / highestPrice * 100
       : 0;
-    if (dropFromHighPercent >= TRAILING_STOP_PERCENT) {
+    if (dropFromHighPercent + 1e-9 >= TRAILING_STOP_PERCENT) {
       return { percent: 100, reason: "TRAILING STOP -10% FROM HIGH" };
     }
     return null;
@@ -79,12 +79,12 @@ function chooseExit({ position, currentPrice, freshData }) {
 
   if (position.firstTakeProfitDone) {
     if (profitPercent <= PROFIT_FLOOR_AFTER_TP1_PERCENT) {
-      return { percent: 100, reason: "PROFIT FLOOR AFTER TP1 +2%" };
+      return { percent: 100, reason: "BREAKEVEN STOP AFTER TP1" };
     }
-    if (profitPercent >= TAKE_PROFIT_2_PERCENT) {
+    if (profitPercent + 1e-9 >= TAKE_PROFIT_2_PERCENT) {
       return {
         percent: TAKE_PROFIT_2_SELL_PERCENT,
-        reason: "TAKE PROFIT 2 - SELL 40% OF ORIGINAL POSITION",
+        reason: "TAKE PROFIT 2 - SELL 45% OF ORIGINAL POSITION",
         takeProfit: "secondTakeProfitDone"
       };
     }
@@ -92,10 +92,10 @@ function chooseExit({ position, currentPrice, freshData }) {
   }
 
   if (profitPercent <= HARD_STOP_PERCENT) return { percent: 100, reason: "HARD STOP -8%" };
-  if (profitPercent >= TAKE_PROFIT_1_PERCENT) {
+  if (profitPercent + 1e-9 >= TAKE_PROFIT_1_PERCENT) {
     return {
       percent: TAKE_PROFIT_1_SELL_PERCENT,
-      reason: "TAKE PROFIT 1 - SELL 50% OF ORIGINAL POSITION",
+      reason: "TAKE PROFIT 1 - SELL 45% OF ORIGINAL POSITION",
       takeProfit: "firstTakeProfitDone"
     };
   }

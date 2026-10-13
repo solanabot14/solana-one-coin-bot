@@ -82,8 +82,9 @@ async function discoverCandidates(options = {}) {
 }
 
 const trader = createPaperTrader(statePath(), fs, {
-  strategyVersion: "Paper-Profit-Sniper-v1",
-  startingBalance: 100,
+  strategyVersion: "Paper-Profit-Sniper-v2-45-45-10",
+  startingBalance: 200,
+  sessionResetId: "profit-sniper-45-45-10-2026-10-13",
   maxOpenPositions: MAX_OPEN_POSITIONS,
   getBuySizing,
   estimateExecutionCosts
@@ -98,10 +99,11 @@ const bot = createBot({
   notifier: quietNotifier,
   checkLiquidityLock: profitSniperLockChecker.getLockStatus,
   batchPositionPrices: true,
+  lockPositionPair: true,
   positionMonitorMs: POSITION_MONITOR_MS,
   scannerIntervalMs: SCAN_INTERVAL_MS,
   botLabel: "Paper Profit Sniper",
-  reentryStateFile: statePath("profitSniperReentryState.json"),
+  reentryStateFile: statePath("profitSniperReentryState-v2.json"),
   maxOpenPositions: MAX_OPEN_POSITIONS,
   maxCandidateAgeMinutes: 30,
   minimumLiquidityUsd: MIN_LIQUIDITY_USD,
@@ -151,8 +153,8 @@ function getStatus() {
     allowUnknownLiquidityLockInPaper: false,
     minimumLiquidityLockPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT,
     strategy: { hardStopPercent: HARD_STOP_PERCENT, tp1Percent: TAKE_PROFIT_1_PERCENT,
-      tp1SellPercent: TAKE_PROFIT_1_SELL_PERCENT, tp1OriginalPositionSellPercent: 50,
-      tp2Percent: TAKE_PROFIT_2_PERCENT, tp2OriginalPositionSellPercent: 40,
+      tp1SellPercent: TAKE_PROFIT_1_SELL_PERCENT, tp1OriginalPositionSellPercent: 45,
+      tp2Percent: TAKE_PROFIT_2_PERCENT, tp2OriginalPositionSellPercent: 45,
       tp2SellRemainingPercent: TAKE_PROFIT_2_SELL_PERCENT, runnerOriginalPositionPercent: 10,
       trailingStopPercent: TRAILING_STOP_PERCENT,
       postTp1FloorPercent: PROFIT_FLOOR_AFTER_TP1_PERCENT, compoundRates: COMPOUND_RATES,

@@ -52,6 +52,7 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, {
 	getBuySizing = null,
 	maxOpenPositions = null,
 	startingBalance = 100,
+	sessionResetId = null,
 	estimateExecutionCosts = null
 } = {}) {
 	const positionLimit = Number.isInteger(maxOpenPositions) && maxOpenPositions > 0 ? maxOpenPositions : 2;
@@ -94,6 +95,18 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, {
 		}
 
 		state = next;
+	}
+
+	// Reset once; archive open snapshots without inventing sales or realized P&L.
+	if (sessionResetId && state.sessionId !== sessionResetId) {
+		const previous = structuredClone(state);
+		const archives = previous.archivedSessions || [];
+		delete previous.archivedSessions;
+		const resetAt = new Date().toISOString();
+		commit({ startingBalance, cashBalance: startingBalance, positions: [], history: [],
+			sessionId: sessionResetId, sessionStartedAt: resetAt,
+			archivedSessions: [...archives, { ...previous, archivedAt: resetAt,
+				archiveReason: "Paper reset; open positions are archived snapshots, not realized exits" }] });
 	}
 
 	const fail = message => ({

@@ -108,3 +108,14 @@ test("dashboard mark-to-market requests the position's saved pair", async () => 
 	assert.ok(account.livePositions[0].live.pnl > 17);
 	assert.ok(account.livePositions[0].live.pnlPercent > 135);
 });
+
+test("same-name tokens cannot substitute for the requested mint, including cached alternate pools", async t => {
+ const previousGet=axios.get; t.after(()=>{axios.get=previousGet;});
+ const mint='identity-mint', pool='saved-pool';
+ const wrong={...pair('clone-mint',999999,999),baseToken:{address:'clone-mint',name:'Same',symbol:'SAME'},pairAddress:pool};
+ const correct={...pair(mint,25000,1),baseToken:{address:mint,name:'Same',symbol:'SAME'},pairAddress:'alternate-pool'};
+ axios.get=async()=>({data:[wrong,correct]});
+ const fallback=await getTokenData(mint,{pairAddress:pool,allowAlternatePairQuote:true});
+ assert.equal(fallback.tokenAddress,mint); assert.equal(fallback.pairAddress,'alternate-pool');
+ assert.equal(await getTokenData(mint,{pairAddress:pool}),null);
+});

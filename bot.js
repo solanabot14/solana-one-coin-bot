@@ -97,6 +97,7 @@ function createBot({
   getTokenData = market.getTokenData,
   getTokensData = market.getTokensData,
   batchPositionPrices = false,
+  lockPositionPair = false,
   discoverCandidates = scanner.discoverCandidates,
   timers = globalThis,
   notifier = telegram,
@@ -384,7 +385,8 @@ function createBot({
     let batchPrices = null;
     if (batchPositionPrices && snapshots.length) {
       try {
-        batchPrices = await getTokensData(snapshots.map(position => position.tokenAddress), { signal: session.signal });
+        batchPrices = await getTokensData(snapshots.map(position => position.tokenAddress), { signal: session.signal,
+          ...(lockPositionPair ? { pairAddresses: new Map(snapshots.map(p => [p.tokenAddress, p.pairAddress])) } : {}) });
       } catch (error) {
         if (isActive(session)) console.warn("Batched position price refresh failed:", error.message);
         return;
@@ -394,10 +396,11 @@ function createBot({
       if (!isActive(session)) return;
       const expectedPosition = positionKey(snapshot);
       const tokenAddress = snapshot.tokenAddress;
-      const freshData = batchPrices ? (batchPrices.get(tokenAddress) || null) : await getTokenData(tokenAddress, { signal: session.signal });
+      const freshData = batchPrices ? (batchPrices.get(tokenAddress) || null) : await getTokenData(tokenAddress, { signal: session.signal, ...(lockPositionPair ? { pairAddress: snapshot.pairAddress } : {}) });
       let position = getPositions().find(item => positionKey(item) === expectedPosition);
       if (!isActive(session) || !position || !freshData) continue;
 
+      if (lockPositionPair && (!position.pairAddress || freshData.pairAddress !== position.pairAddress || freshData.tokenAddress !== tokenAddress)) continue;
       const currentPrice = Number(freshData.priceUsd);
       if (!Number.isFinite(currentPrice) || currentPrice <= 0) continue;
       updateHigh(expectedPosition, currentPrice);

@@ -43,6 +43,7 @@ async function requestTokenPairsWithRetry(addresses, signal) {
 
 function dataFromPair(pair) {
 	return {
+		tokenAddress: pair.baseToken?.address,
 		name: pair.baseToken?.name,
 		symbol: pair.baseToken?.symbol,
 		priceUsd: pair.priceUsd,
@@ -102,7 +103,7 @@ async function getTokensData(tokenAddresses, { signal, pairAddresses, allowAlter
 	for (const address of addresses) {
 		const preferredPair = preferredPairAddress(address, pairAddresses) || null;
 		const cached = readCachedTokenData(address, preferredPair);
-		if (cached !== undefined) results.set(address, cached);
+		if (cached !== undefined && (allowAlternatePairQuote || !cached?.pairAddressMismatch)) results.set(address, cached);
 		else missing.push(address);
 	}
 

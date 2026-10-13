@@ -63,3 +63,16 @@ test("manual position close sells the full remaining paper position by ID", () =
   assert.equal(calls[0][1], 100);
   assert.deepEqual(calls[0][2], { expectedPosition: "carlo-position", reason: "MANUAL EMERGENCY EXIT", liquidityUsd: 15000 });
 });
+
+test("pair-locked monitor rejects another pool or another mint with the same symbol", async t => {
+ for(const quote of [{tokenAddress:'mint',pairAddress:'other'},{tokenAddress:'clone',pairAddress:'pool'},{tokenAddress:'mint',pairAddress:'pool'}]) {
+  const p={id:'id',tokenAddress:'mint',pairAddress:'pool',symbol:'SAME',entryPrice:100,highestPrice:100,quantity:1,amountInvested:100};
+  let sells=0, options;
+  const bot=createBot({trader:{getPortfolio:()=>({positions:[p],history:[],cashBalance:0}),positionKey:p=>p.id,updateHigh:()=>true,sell:()=>{sells++;return {success:true};},buy:()=>({success:false})},
+   lockPositionPair:true,batchPositionPrices:true,getTokensData:async(a,o)=>{options=o;return new Map([['mint',{...quote,priceUsd:90,liquidityUsd:10000}]]);},
+   discoverCandidates:async()=>[],timers:{setInterval(){return 1;},clearInterval(){}},notifier:{notifyTrade:async()=>{},notifyCritical:async()=>{}},reentryStateFile:null});
+  bot.startBot();await new Promise(resolve=>setImmediate(resolve));bot.stopBot();
+  assert.equal(options.pairAddresses.get('mint'),'pool');
+  assert.equal(sells,quote.tokenAddress==='mint'&&quote.pairAddress==='pool'?1:0);
+ }
+});
