@@ -74,6 +74,18 @@ async function getGeckoPools(signal) {
   }).filter(pool => pool.tokenAddress && pool.pairAddress);
 }
 
+async function getDexProfiles(signal) {
+  const { data } = await retry(() => axios.get(
+    "https://api.dexscreener.com/token-profiles/latest/v1",
+    { timeout: 12000, signal }
+  ));
+  const rows = Array.isArray(data) ? data : [];
+  return rows.filter(row => row.chainId === "solana" && row.tokenAddress).map(row => ({
+    tokenAddress: row.tokenAddress, pairAddress: null, symbol: row.description || row.header || "Unknown",
+    poolCreatedAt: null, liquidityUsd: 0, source: "DexScreener"
+  }));
+}
+
 async function getDexPairs(tokenAddress, signal) {
   const { data } = await retry(() => axios.get(
     "https://api.dexscreener.com/latest/dex/tokens/" + encodeURIComponent(tokenAddress),
@@ -90,4 +102,4 @@ async function getPairDetails(pairAddress, signal) {
   return Array.isArray(data?.pairs) ? data.pairs[0] || null : null;
 }
 
-module.exports = { getMintSafety, getHolderConcentration, getGeckoPools, getDexPairs, getPairDetails };
+module.exports = { getMintSafety, getHolderConcentration, getGeckoPools, getDexProfiles, getDexPairs, getPairDetails };
