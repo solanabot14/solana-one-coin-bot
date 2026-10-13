@@ -119,6 +119,7 @@ function mapLaunchPair(pair, descriptor) {
       pair.pairAddress !== descriptor.poolAddress ||
       pair.baseToken?.address !== descriptor.tokenAddress) return null;
   const data = {
+    chainId: pair.chainId,
     name: pair.baseToken?.name,
     symbol: pair.baseToken?.symbol,
     priceUsd: pair.priceUsd,
@@ -299,6 +300,7 @@ module.exports = {
   getStatus,
   getPortfolio: trader.getPortfolio,
   discoverLaunchCandidates,
+  mapLaunchPair,
   qualifiesLaunchCandidate,
   estimateExecutionCosts,
   thresholds: {
