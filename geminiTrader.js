@@ -70,7 +70,7 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     console.log("[" + (reason.startsWith("TP") ? "SELL " + reason : "SELL") + "] Gemini PAPER", p.symbol, reason, "$" + value.toFixed(2));
     return { success: true, trade };
   }
-  function recordRejection(candidate, reason, details = {}) {
+  function updatePosition(patch) {\n    if (!state.position || state.position.id !== patch?.id) return false;\n    const next = structuredClone(state);\n    next.position = { ...next.position, ...patch };\n    commit(next);\n    return true;\n  }\n  function recordRejection(candidate, reason, details = {}) {
     const next = structuredClone(state);
     next.rejections.unshift({ time: new Date().toISOString(), symbol: candidate.symbol || "Unknown", tokenAddress: candidate.tokenAddress || null, reason, details });
     next.rejections = next.rejections.slice(0, 200);
@@ -79,8 +79,8 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     console.log("[REJECTED: " + reason + "] Gemini", candidate.symbol || candidate.tokenAddress || "unknown");
   }
   function setScanTime() { const next = structuredClone(state); next.lastScanAt = new Date().toISOString(); commit(next); }
-  return { buy, sell, recordRejection, setScanTime, getState: () => structuredClone(state), file };
+  return { buy, sell, recordRejection, setScanTime, updatePosition, getState: () => structuredClone(state), file };
 }
 let instance;
 const current = () => instance ||= createGeminiTrader();
-module.exports = { createGeminiTrader, defaultFile, getState: (...a) => current().getState(...a), buy: (...a) => current().buy(...a), sell: (...a) => current().sell(...a), recordRejection: (...a) => current().recordRejection(...a), setScanTime: (...a) => current().setScanTime(...a) };
+module.exports = { createGeminiTrader, defaultFile, getState: (...a) => current().getState(...a), buy: (...a) => current().buy(...a), sell: (...a) => current().sell(...a), recordRejection: (...a) => current().recordRejection(...a), setScanTime: (...a) => current().setScanTime(...a), updatePosition: (...a) => current().updatePosition(...a) };
