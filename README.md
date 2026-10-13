@@ -52,6 +52,24 @@ The health endpoint checks HTTP service availability, not market-data freshness 
 
 See Railway's [networking guidance](https://docs.railway.com/networking/troubleshooting/application-failed-to-respond) and [volume documentation](https://docs.railway.com/volumes).
 
+## Gemini Bot (paper only)
+
+Gemini is an independent scanner and paper account. It does not connect a wallet or submit swaps. Start and stop it with its own dashboard tab; the existing OG and Swarm controls remain separate.
+
+Gemini discovers Solana pools from GeckoTerminal new pools and DexScreener latest token profiles, deduplicates by mint, and requests current DexScreener pair data. It requires all checks: liquidity at least $5,000, pool age 2–120 minutes, revoked mint authority, disabled freeze authority, at least 15 five-minute transactions, buy ratio strictly above 55%, and top 10 non-pool holders below 35%. Missing or unparseable safety evidence rejects the candidate and records a reason. RugCheck holder fields can change; verify the report format before relying on this gate.
+
+Paper position default is $10 per trade with a $200 starting balance. Exit rules are 50% of original quantity at +50%, 30% at +100%, and the remaining 20% via a 15% trailing stop after TP1 (so an early runner reversal is protected). Hard stop is -20%. After 15 minutes, the whole remaining position exits when return is between -5% and +10%. Paper fills use DexScreener prices and do not model actual execution, fees, or market impact.
+
+Gemini state is stored separately in `gemini-paper-state.json` on the Railway volume (or `DATA_DIR` locally). Gemini remains stopped after process restart; start it explicitly in the dashboard.
+
+Optional variables:
+- `RPC_URL` (fallback `SOLANA_RPC_URL`): Solana RPC for mint-authority checks.
+- `GEMINI_STARTING_BALANCE_USD` (default 200), `GEMINI_TRADE_SIZE_USD` (default 10).
+- `GEMINI_SCAN_MS` (default 30,000), `GEMINI_MONITOR_MS` (default 3,000).
+- `SLIPPAGE_BPS` (paper display only; default 300; no swaps are sent).
+
+Run `npm test` for the existing suite and Gemini filter/allocation coverage.
+
 ## Files
 
 | File | Responsibility |
