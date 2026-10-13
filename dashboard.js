@@ -9,6 +9,7 @@ const { buildDashboardData } = require("./dashboardData");
 const scanner = require("./scanner");
 const janSlotEngine = require("./janSlotEngine");
 const janMvpBot = require("./janMvpBot");\nconst geminiBot = require("./geminiBot");\nconst geminiTrader = require("./geminiTrader");
+const { buildGeminiAnalytics } = require("./geminiAnalytics");
 const { createRuntimeState } = require("./runtimeState");
 
 function getConfig(env = process.env) {
@@ -913,7 +914,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         });
       }
       if (req.method !== "GET") return json(res, { error: "Method not allowed" }, 405);
-      if (route === "/api/status") return json(res, { running: controls.getBotStatus(), error: controls.getLastError() });\n      if (route === "/api/gemini/status") return json(res, { running: geminiBot.getStatus(), error: geminiBot.getLastError() });\n      if (route === "/api/gemini/data") {\n        const state = geminiTrader.getState();\n        let live = null;\n        if (state.position) {\n          const fresh = await marketData(state.position.tokenAddress, { pairAddress: state.position.pairAddress || undefined });\n          const price = Number(fresh?.priceUsd);\n          if (Number.isFinite(price) && price > 0) live = { priceUsd: price, pnlPercent: (price / state.position.entryPrice - 1) * 100, currentValueUsd: state.position.quantity * price, holdMs: Math.max(0, Date.now() - Date.parse(state.position.entryTime)) };\n        }\n        return json(res, { ...state, running: geminiBot.getStatus(), live, totalRealizedPnlUsd: state.history.filter(x => x.type === "SELL").reduce((s,x)=>s + (Number(x.pnlUsd)||0),0) });\n      }
+      if (route === "/api/status") return json(res, { running: controls.getBotStatus(), error: controls.getLastError() });\n      if (route === "/api/gemini/status") return json(res, { running: geminiBot.getStatus(), error: geminiBot.getLastError() });\n      if (route === "/api/gemini/data") {\n        const state = geminiTrader.getState();\n        let live = null;\n        if (state.position) {\n          const fresh = await marketData(state.position.tokenAddress, { pairAddress: state.position.pairAddress || undefined });\n          const price = Number(fresh?.priceUsd);\n          if (Number.isFinite(price) && price > 0) live = { priceUsd: price, pnlPercent: (price / state.position.entryPrice - 1) * 100, currentValueUsd: state.position.quantity * price, holdMs: Math.max(0, Date.now() - Date.parse(state.position.entryTime)) };\n        }\n        const analytics = buildGeminiAnalytics(state, live);\n        return json(res, { ...state, running: geminiBot.getStatus(), live, analytics });\n      }
       if (route === "/api/jan/status") return json(res, { running: janControls.getStatus(), error: janControls.getLastError() });
       if (route === "/api/data") {
         const data = await buildDashboardData(portfolio(), marketData);
