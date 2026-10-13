@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createSniperEntryGuard, hasCatastrophicLoss, evaluatePoolReport } = require("../profitSniperEntryGuard");
+const { getMomentumFailureReasons } = require("../profitSniperStrategy");
 
 const start = 1_800_000_000_000;
 const candidate = {
@@ -37,6 +38,46 @@ test("requires three observations over time and resets after liquidity falls", (
   assert.equal(guard.observe(candidate).ready, true);
   advance(30_000);
   assert.equal(guard.observe({ ...candidate, liquidityUsd: 20_000 }).ready, false);
+});
+
+test("observations collected before the two-minute age gate can be used at the gate", async () => {
+  const young = { ...candidate, pairCreatedAt: start - 30_000 };
+  const { guard, advance, portfolio } = rig({ freshPair: { ...pair, pairCreatedAt: young.pairCreatedAt } });
+  assert.deepEqual(getMomentumFailureReasons(young, start), ["age"]);
+  guard.observe(young);
+  advance(30_000); guard.observe(young);
+  advance(30_000);
+  assert.equal(guard.observe(young).ready, true);
+  assert.deepEqual(getMomentumFailureReasons(young, start + 60_000), ["age"]);
+  advance(30_000);
+  assert.deepEqual(getMomentumFailureReasons(young, start + 90_000), []);
+  assert.equal((await guard.validate(young, { portfolio })).allowed, true);
+});
+
+test("a liquidity dip below the entry floor clears earlier observations", async () => {
+  const { guard, advance, portfolio } = rig();
+  guard.observe(candidate);
+  advance(30_000); guard.observe(candidate);
+  advance(30_000); assert.equal(guard.observe(candidate).ready, true);
+  advance(30_000); assert.equal(guard.observe({ ...candidate, liquidityUsd: 100 }).ready, false);
+  advance(30_000); assert.equal(guard.observe(candidate).ready, false);
+  assert.equal((await guard.validate(candidate, { portfolio })).allowed, false);
+});
+
+test("fresh pair and full pool report checks start together", async () => {
+  let resolvePair;
+  let reportStarted = false;
+  let now = start;
+  const guard = createSniperEntryGuard({ clock: () => now,
+    fetchPair: () => new Promise(resolve => { resolvePair = resolve; }),
+    fetchReport: async () => { reportStarted = true; return report; } });
+  guard.observe(candidate);
+  now += 30_000; guard.observe(candidate);
+  now += 30_000; guard.observe(candidate);
+  const validation = guard.validate(candidate, { portfolio: { history: [] } });
+  assert.equal(reportStarted, true);
+  resolvePair([pair]);
+  assert.equal((await validation).allowed, true);
 });
 
 test("fresh exact-pool quote and pool-specific reserve are required immediately before buying", async () => {
@@ -105,4 +146,31 @@ test("bot waits for the last entry recheck and uses its fresh quote", async () =
   assert.equal(buys.length, 1);
   assert.equal(buys[0].priceUsd, 1.01);
   approved.stopBot();
+});
+
+test("full Profit Sniper slots keep discovery observations warm without buying", async () => {
+  const { createBot } = require("../bot");
+  let scans = 0;
+  let buys = 0;
+  const positions = Array.from({ length: 3 }, (_, index) =>
+    ({ id: index + 1, tokenAddress: "mint-" + index }));
+  const trader = {
+    buy: () => { buys++; return { success: true }; },
+    sell: () => ({ success: false }), updateHigh: () => true,
+    positionKey: position => position.id,
+    getPortfolio: () => ({ cashBalance: 100, positions, history: [] })
+  };
+  const bot = createBot({ trader, scanWhenFull: true,
+    maxOpenPositions: 3,
+    discoverCandidates: async () => { scans++; return [candidate]; },
+    getTokenData: async () => null,
+    requireLiquidityLock: false, acceptedSignals: ["BUY"],
+    notifier: { notifyTrade: async () => {}, notifyCritical: async () => {} },
+    timers: { setInterval: () => 1, clearInterval: () => {} },
+    reentryStateFile: null });
+  bot.startBot();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(scans, 1);
+  assert.equal(buys, 0);
+  bot.stopBot();
 });

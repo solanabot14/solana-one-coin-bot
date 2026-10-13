@@ -71,6 +71,12 @@ function qualifiesLaunchCandidate(data, now = Date.now(), minimumLiquidityUsd = 
     transactions5m >= MIN_TRANSACTIONS_5M && buyRatio5m >= MIN_BUY_RATIO_5M;
 }
 
+function qualifiesPoolObservation(data, now = Date.now()) {
+  const ageMs = now - Number(data?.pairCreatedAt);
+  return data?.chainId === "solana" && Boolean(data.tokenAddress && data.pairAddress) &&
+    Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= MAX_PAIR_AGE_MS;
+}
+
 function estimateExecutionCosts({ amountUsd, liquidityUsd }) {
   const amount = Number(amountUsd);
   const liquidity = Number(liquidityUsd);
@@ -175,7 +181,8 @@ function measureCandidateGates(candidates, now = Date.now(), minimumLiquidityUsd
   return gates;
 }
 
-async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQUIDITY_USD, minimumVolume24hUsd = MIN_VOLUME_24H_USD } = {}) {
+async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQUIDITY_USD, minimumVolume24hUsd = MIN_VOLUME_24H_USD,
+  includeObservationCandidates = false } = {}) {
   const now = Date.now();
   const diagnostics = {
     updatedAt: new Date(now).toISOString(),
@@ -245,7 +252,9 @@ async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQU
       " | 5m volume: " + gates.volume5m + " | 5m trades: " + gates.transactions5m +
       " | buy flow: " + gates.buyRatio5m + " | eligible: " + gates.eligible +
       " | activity-qualified signals: " + signalSummary);
-    return eligibleCandidates;
+    return includeObservationCandidates
+      ? mapped.filter(candidate => qualifiesPoolObservation(candidate, now))
+      : eligibleCandidates;
   } catch (error) {
     diagnostics.error = error.message;
     diagnostics.gates = measureCandidateGates([], now, minimumLiquidityUsd, minimumVolume24hUsd);
@@ -302,6 +311,7 @@ module.exports = {
   discoverLaunchCandidates,
   mapLaunchPair,
   qualifiesLaunchCandidate,
+  qualifiesPoolObservation,
   estimateExecutionCosts,
   thresholds: {
     maximumPairAgeMinutes: 30,

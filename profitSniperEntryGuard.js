@@ -75,12 +75,13 @@ function createSniperEntryGuard({
 
   function observe(coin, now = clock()) {
     if (!coin?.tokenAddress || !coin.pairAddress) return { ready: false, reason: "missing exact pool identity" };
+    const key = coin.tokenAddress + ":" + coin.pairAddress;
     const liquidity = Number(coin.liquidityUsd);
     const price = Number(coin.priceUsd);
     if (!(liquidity >= constants.MIN_LIQUIDITY_USD) || !(price > 0)) {
+      observations.delete(key);
       return { ready: false, reason: "invalid liquidity or price" };
     }
-    const key = coin.tokenAddress + ":" + coin.pairAddress;
     const previous = observations.get(key);
     const reset = !previous || now - previous.lastAt > MAX_OBSERVATION_GAP_MS ||
       liquidity < previous.liquidity * MIN_LIQUIDITY_RETENTION ||
@@ -110,7 +111,9 @@ function createSniperEntryGuard({
         clock() - observed.lastAt > MAX_OBSERVATION_GAP_MS) {
       return { allowed: false, reason: "exact pool did not hold liquidity across three scans" };
     }
-    const pairs = await fetchPair(coin.pairAddress, signal);
+    const [pairs, report] = await Promise.all([
+      fetchPair(coin.pairAddress, signal), fetchReport(coin.tokenAddress, signal)
+    ]);
     const pair = (Array.isArray(pairs) ? pairs : [])
       .find(item => item.chainId === "solana" && item.pairAddress === coin.pairAddress &&
         item.baseToken?.address === coin.tokenAddress);
@@ -126,7 +129,6 @@ function createSniperEntryGuard({
         price > Number(coin.priceUsd) * MAX_PRICE_INCREASE) {
       return { allowed: false, reason: "pool liquidity or price changed before purchase" };
     }
-    const report = await fetchReport(coin.tokenAddress, signal);
     const poolRisk = evaluatePoolReport(report, coin, liquidity);
     if (poolRisk) return { allowed: false, reason: poolRisk };
     return { allowed: true, coin: { ...fresh,

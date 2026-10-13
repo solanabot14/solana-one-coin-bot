@@ -46,11 +46,13 @@ let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, so
 const entryGuard = createSniperEntryGuard();
 
 async function discoverCandidates(options = {}) {
-  const candidates = await launchSniper.discoverLaunchCandidates({ ...options, minimumLiquidityUsd: MIN_LIQUIDITY_USD, minimumVolume24hUsd: MIN_VOLUME_24H_USD });
+  const candidates = await launchSniper.discoverLaunchCandidates({ ...options, minimumLiquidityUsd: MIN_LIQUIDITY_USD,
+    minimumVolume24hUsd: MIN_VOLUME_24H_USD, includeObservationCandidates: true });
   const now = Date.now();
   const evaluated = candidates.map(coin => {
+    const poolStability = entryGuard.observe(coin, now);
     const failures = getMomentumFailureReasons(coin, now);
-    if (!failures.length && !entryGuard.observe(coin, now).ready) failures.push("poolStability");
+    if (!failures.length && !poolStability.ready) failures.push("poolStability");
     return { coin, failures };
   });
   const rejectedGates = {};
@@ -77,14 +79,14 @@ async function discoverCandidates(options = {}) {
     source: "GeckoTerminal new pools + DexScreener + RugCheck",
     poolsReceived: scanState?.poolsReceived ?? null,
     recentPools: scanState?.poolsTracked ?? null,
-    activityQualified: candidates.length,
+    activityQualified: candidates.filter(coin => launchSniper.qualifiesLaunchCandidate(coin, now, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD)).length,
     momentumQualified: qualified.length,
     momentumRejectedGates: rejectedGates,
     candidateSamples: samples,
     selectedByScore: qualified.slice(0, MAX_OPEN_POSITIONS).map(coin => ({ symbol: coin.symbol || null, tokenAddress: coin.tokenAddress, pairAddress: coin.pairAddress, score: Number(coin.score) || 0 })),
     error: scanState?.error || null
   };
-  console.log("PROFIT SNIPER SCAN | activity-qualified: " + candidates.length +
+  console.log("PROFIT SNIPER SCAN | pools observed: " + candidates.length +
     " | momentum-qualified: " + qualified.length +
     " | rejected gates: " + (Object.keys(rejectedGates).length ? JSON.stringify(rejectedGates) : "none") +
     " | candidate samples: " + JSON.stringify(samples));
@@ -117,6 +119,7 @@ const bot = createBot({
   lockPositionPair: true,
   positionMonitorMs: POSITION_MONITOR_MS,
   scannerIntervalMs: SCAN_INTERVAL_MS,
+  scanWhenFull: true,
   botLabel: "Paper Profit Sniper",
   reentryStateFile: statePath("profitSniperReentryState-v3.json"),
   maxOpenPositions: MAX_OPEN_POSITIONS,

@@ -104,6 +104,7 @@ function createBot({
   checkLiquidityLock = getLockStatus,
   positionMonitorMs = POSITION_MONITOR_MS,
   scannerIntervalMs = SCANNER_INTERVAL_MS,
+  scanWhenFull = false,
   botLabel = "New V3.1 Version - Original Entries",
   reentryStateFile = defaultReentryStateFile(),
   maxOpenPositions = MAX_OPEN_POSITIONS,
@@ -259,7 +260,7 @@ function createBot({
   async function runScanner(session) {
     console.log("\nStarting automatic Solana scan...\n");
     if (entriesPausedByBalance()) return;
-    if (getPositions().length >= maxOpenPositions) {
+    if (!scanWhenFull && getPositions().length >= maxOpenPositions) {
       console.log("All " + maxOpenPositions + " " + botLabel + " slots are occupied. Skipping new entry.");
       return;
     }
@@ -269,6 +270,10 @@ function createBot({
       minimumLiquidityUsd,
       minimumVolume24hUsd
     });
+    if (getPositions().length >= maxOpenPositions) {
+      console.log("All " + maxOpenPositions + " " + botLabel + " slots are occupied. Pool observations updated; skipping new entry.");
+      return;
+    }
     const maxAgeMinutes = Number(maxCandidateAgeMinutes);
     const candidates = Number.isFinite(maxAgeMinutes) && maxAgeMinutes > 0
       ? discoveredCandidates.filter(coin => {

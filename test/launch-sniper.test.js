@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { mapLaunchPair, qualifiesLaunchCandidate, thresholds } = require("../launchSniper");
+const { mapLaunchPair, qualifiesLaunchCandidate, qualifiesPoolObservation, thresholds } = require("../launchSniper");
 
 const now = 1_800_000_000_000;
 function candidate(overrides = {}) {
@@ -34,6 +34,15 @@ test("accepts a fresh, liquid pair with active buy flow", () => {
   assert.equal(qualifiesLaunchCandidate(candidate({ volume24h: 10000 }), now, 15000, 10000), true);
   assert.equal(qualifiesLaunchCandidate(candidate({ volume24h: 10000 }), now, 15000), false);
   assert.equal(qualifiesLaunchCandidate(candidate({ liquidityUsd: 15000 }), now), false);
+});
+
+test("a young or inactive exact pool can be observed before it qualifies for entry", () => {
+  const young = { ...candidate({ pairCreatedAt: now - 30_000, volume5m: 0, liquidityUsd: 15_000 }),
+    chainId: "solana", tokenAddress: "mint-A", pairAddress: "pool-A", priceUsd: 1 };
+  assert.equal(qualifiesPoolObservation(young, now), true);
+  assert.equal(qualifiesLaunchCandidate(young, now, 15_000, 5_000), false);
+  assert.equal(qualifiesPoolObservation({ ...young, liquidityUsd: 0.50 }, now), true);
+  assert.equal(qualifiesPoolObservation({ ...young, pairAddress: null }, now), false);
 });
 
 test("rejects missing or stale pair age", () => {
