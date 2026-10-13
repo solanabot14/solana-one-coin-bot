@@ -98,5 +98,7 @@ module.exports = {
   getStatus: bot.getBotStatus,
   getLastError: bot.getLastError,
   getPortfolio: trader.getPortfolio,
+  positionKey: trader.positionKey,
+  sell: trader.sell,
   getStrategyStatus: bot.getStrategyStatus
 };
