@@ -65,7 +65,7 @@ async function getGeckoPools(signal) {
       pairAddress: a.address || row.id?.split("_").at(-1),
       symbol: a.name || "Unknown",
       poolCreatedAt: a.pool_created_at || a.created_at || null,
-      liquidityUsd: Number(a.reserve_in_usd) || 0,
+      liquidityUsd: Number(a.reserve_in_usd) || 0,\n      priceUsd: Number(a.base_token_price_usd) || 0,
       volume5m: Number(a.volume_usd?.m5) || 0,
       buys5m: Number(a.transactions?.m5?.buys) || 0,
       sells5m: Number(a.transactions?.m5?.sells) || 0,
