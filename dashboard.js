@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const bot = require("./bot");
-const { getPortfolio } = require("./paperTrader");
+const { getPortfolio, positionKey } = require("./paperTrader");
 const { getTokenData, getTokensData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
 const swarm = require("./janMvpBot");
@@ -531,6 +531,33 @@ function createDashboardServer({ config = getConfig(), controls = pubxControls,
     try {
       const route = new URL(req.url, "http://localhost").pathname;
       if (req.method === "GET" && route === "/healthz") return json(res, { ok: true });
+      if (route === "/api/close-all-paper-positions") {
+        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        const results = [];
+        async function closeAccount(label, account, controller) {
+          const positions = account.positions || (account.position ? [account.position] : []);
+          for (const position of positions) {
+            const key = positionKey(position);
+            try {
+              let quote = null;
+              try { quote = await marketData(position.tokenAddress, { pairAddress: position.pairAddress }); } catch (_) {}
+              const price = Number(quote && quote.priceUsd) || 0;
+              const liquidity = Number(quote && quote.liquidityUsd) || 0;
+              const result = price > 0 && liquidity > 0
+                ? controller.closePosition(key, price, liquidity, "MANUAL PAPER CLOSE")
+                : controller.writeOffPosition(key, "MANUAL PAPER CLOSE · ZERO-RECOVERY WRITE-OFF");
+              results.push({ ...result, bot: label, symbol: position.symbol, writeOff: !(price > 0 && liquidity > 0) });
+            } catch (error) {
+              results.push({ success: false, bot: label, symbol: position.symbol, message: error.message });
+            }
+          }
+        }
+        await closeAccount("PubX V3.1", portfolio(), bot);
+        await closeAccount("Bit V3.1 40% TP1", experimentPortfolio(), experiment);
+        const closedCount = results.filter(result => result.success).length;
+        return json(res, { success: results.every(result => result.success), closedCount, results });
+      }
       if (!authorized(req, config)) {
         res.setHeader("WWW-Authenticate", 'Basic realm="Trading dashboard", charset="UTF-8"');
         return json(res, { error: "Authentication required" }, 401);
