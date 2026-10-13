@@ -28,17 +28,24 @@ async function getMintSafety(tokenAddress, signal) {
 }
 
 function extractTop10Concentration(report) {
-  const holderList = [report?.topHolders, report?.holders, report?.token?.topHolders]
-    .find(Array.isArray);
-  if (!holderList || holderList.length < 10) return null;
-  const top10 = holderList.slice(0, 10)
-    .filter(h => h && h.isPool !== true && h.isLiquidityPool !== true && h.owner !== "pool")
-    .slice(0, 10);
-  if (top10.length < 10) return null;
-  const values = top10.map(h => Number(h.pct ?? h.percentage ?? h.share ?? h.amountPct));
-  if (values.some(v => !Number.isFinite(v) || v < 0)) return null;
-  // RugCheck pct is reported in percentage points (e.g. 2.5 means 2.5%).
-  return values.reduce((a, b) => a + b, 0);
+  const holderList = [report?.topHolders, report?.holders, report?.token?.topHolders].find(Array.isArray);
+  if (!holderList) return null;
+  const knownAccounts = report?.knownAccounts || {};
+  const nonPoolHolders = holderList.filter(holder => {
+    if (!holder) return false;
+    if (holder.isPool === true || holder.isLiquidityPool === true) return false;
+    const addresses = [holder.address, holder.owner].filter(Boolean);
+    if (addresses.some(address => String(address).toLowerCase() === "pool")) return false;
+    return !addresses.some(address => {
+      const type = String(knownAccounts[address]?.type || knownAccounts[address]?.name || "").toUpperCase();
+      return /AMM|POOL|LIQUIDITY|DEX/.test(type);
+    });
+  });
+  if (nonPoolHolders.length < 10) return null;
+  const top10 = nonPoolHolders.slice(0, 10);
+  const values = top10.map(holder => Number(holder.pct ?? holder.percentage ?? holder.share ?? holder.amountPct));
+  if (values.some(value => !Number.isFinite(value) || value < 0)) return null;
+  return values.reduce((sum, value) => sum + value, 0);
 }
 
 async function getHolderConcentration(tokenAddress, signal) {
@@ -103,4 +110,4 @@ async function getPairDetails(pairAddress, signal) {
   return Array.isArray(data?.pairs) ? data.pairs[0] || null : null;
 }
 
-module.exports = { getMintSafety, getHolderConcentration, getGeckoPools, getDexProfiles, getDexPairs, getPairDetails };
+module.exports = { getMintSafety, getHolderConcentration, extractTop10Concentration, getGeckoPools, getDexProfiles, getDexPairs, getPairDetails };
