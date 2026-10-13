@@ -12,6 +12,9 @@ const buyPriorityLock85 = require("./buyPriorityLock85");
 const launchSniper = require("./launchSniper");
 const profitSniper = require("./profitSniper");
 const walletCopy = require("./walletCopy");
+const geminiBot = require("./geminiBot");
+const geminiTrader = require("./geminiTrader");
+const { buildGeminiAnalytics } = require("./geminiAnalytics");
 
 function getConfig(env = process.env) {
   const railway = !!env.RAILWAY_ENVIRONMENT_ID;
@@ -245,6 +248,13 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       if (config.localOnly) {
         const hostname = new URL("http://" + req.headers.host).hostname;
         if (!["127.0.0.1", "localhost", "[::1]"].includes(hostname)) return json(res, { error: "Invalid host" }, 403);
+      }
+      if (route === "/api/gemini/start" || route === "/api/gemini/stop") {
+        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
+        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        if (route.endsWith("/start")) geminiBot.start(); else geminiBot.stop();
+        return json(res, { running: geminiBot.getStatus(), error: geminiBot.getLastError() });
       }
       if (route === "/api/start" || route === "/api/stop") {
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
