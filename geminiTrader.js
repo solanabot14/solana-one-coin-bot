@@ -65,13 +65,21 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     };
     next.history.unshift(trade);
     if (reason === "TP1 +50%") next.position.tp1Done = true;
-    if (reason === "TP2 +100%") next.position.tp2Done = true;\n    if (next.position) next.position.remainingPercent = Math.max(0, next.position.quantity / next.position.originalQuantity * 100);
+    if (reason === "TP2 +100%") next.position.tp2Done = true;
+    if (next.position) next.position.remainingPercent = Math.max(0, next.position.quantity / next.position.originalQuantity * 100);
     if (next.position.quantity <= p.originalQuantity * 0.000001) next.position = null;
     commit(next);
     console.log("[" + (reason.startsWith("TP") ? "SELL " + reason : "SELL") + "] Gemini PAPER", p.symbol, reason, "$" + value.toFixed(2));
     return { success: true, trade };
   }
-  function updatePosition(patch) {\n    if (!state.position || state.position.id !== patch?.id) return false;\n    const next = structuredClone(state);\n    next.position = { ...next.position, ...patch };\n    commit(next);\n    return true;\n  }\n  function recordRejection(candidate, reason, details = {}) {
+  function updatePosition(patch) {
+    if (!state.position || state.position.id !== patch?.id) return false;
+    const next = structuredClone(state);
+    next.position = { ...next.position, ...patch };
+    commit(next);
+    return true;
+  }
+  function recordRejection(candidate, reason, details = {}) {
     const next = structuredClone(state);
     next.rejections.unshift({ time: new Date().toISOString(), symbol: candidate.symbol || "Unknown", tokenAddress: candidate.tokenAddress || null, reason, details });
     next.rejections = next.rejections.slice(0, 200);
