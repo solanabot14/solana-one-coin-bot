@@ -5,6 +5,8 @@ const { qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, cho
 function candidate(overrides = {}) {
   return {
     tokenAddress: "Token111",
+    pairAddress: "Pool111",
+    chainId: "solana",
     pairCreatedAt: Date.now() - 5 * 60 * 1000,
     liquidityUsd: 25000,
     volume24h: 30000,
@@ -28,6 +30,19 @@ test("fresh, active, upward momentum candidates pass; stale, weak, or overheated
   assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 5, sells5m: 7 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ signal: "AVOID" })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ signal: "WAIT" })), true);
+});
+
+test("same ticker is distinguished by mint and duplicate pools collapse to the best exact mint", () => {
+  const { selectUniqueMintCandidates } = require("../profitSniperStrategy");
+  const sameTicker = [
+    candidate({ symbol: "MOON", tokenAddress: "mint-A", pairAddress: "pool-A", score: 2 }),
+    candidate({ symbol: "MOON", tokenAddress: "mint-B", pairAddress: "pool-B", score: 3 }),
+    candidate({ symbol: "MOON", tokenAddress: "mint-A", pairAddress: "pool-A2", score: 4 })
+  ];
+  const selected = selectUniqueMintCandidates(sameTicker);
+  assert.equal(selected.length, 2);
+  assert.equal(selected.find(x => x.tokenAddress === "mint-A").pairAddress, "pool-A2");
+  assert.equal(selected.find(x => x.tokenAddress === "mint-B").pairAddress, "pool-B");
 });
 
 test("trade sizing follows the 10%, 12.5%, 15% cycle and resets after the third entry", () => {
