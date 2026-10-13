@@ -1,4 +1,4 @@
-const { getGeckoPools, getDexPairs, getPairDetails } = require("./geminiSources");
+const { getGeckoPools, getDexProfiles, getDexPairs, getPairDetails } = require("./geminiSources");
 const { retry } = require("./geminiHttp");
 const { evaluateCandidate } = require("./geminiFilter");
 const traderDefault = require("./geminiTrader");
@@ -31,7 +31,7 @@ function slippageFor(pair) {
   const change = Math.abs(Number(pair?.priceChange?.m5) || 0);
   return Math.min(1000, Math.max(200, 200 + Math.round(change * 20) + Math.max(0, 15 - tx) * 20));
 }
-function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetcher = getGeckoPools, pairFetcher = getDexPairs, pairDetails = getPairDetails, filter = evaluateCandidate } = {}) {
+function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetcher = getGeckoPools, profileFetcher = getDexProfiles, pairFetcher = getDexPairs, pairDetails = getPairDetails, filter = evaluateCandidate } = {}) {
   let session = null, scanInterval = null, monitorInterval = null, busyScan = false, busyMonitor = false, lastError = null;
   const isActive = s => session === s && !s.controller.signal.aborted;
   async function candidateForPool(pool, signal) {
