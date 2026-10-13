@@ -38,7 +38,7 @@ function estimateExecutionCosts({ amountUsd, liquidityUsd }) {
   return { feesUsd: poolFeeUsd + solanaFeeUsd, slippageUsd, poolFeeUsd, solanaFeeUsd, priorityFeeUsd: 0 };
 }
 
-const { qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit } = strategy;
+const { qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit, selectUniqueMintCandidates } = strategy;
 
 let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, source: "GeckoTerminal new pools + DexScreener + RugCheck" };
 
@@ -50,11 +50,13 @@ async function discoverCandidates(options = {}) {
   for (const item of evaluated) {
     for (const reason of item.failures) rejectedGates[reason] = (rejectedGates[reason] || 0) + 1;
   }
-  const qualified = evaluated.filter(item => item.failures.length === 0).map(item => item.coin)
-    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0) || Number(b.volume5m || 0) - Number(a.volume5m || 0))
-    .map(coin => ({ ...coin, signal: "BUY", reasons: [...(coin.reasons || []), "Profit Sniper activity + momentum filters passed"] }));
+  const qualified = selectUniqueMintCandidates(evaluated.filter(item => item.failures.length === 0).map(item => item.coin)
+    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0) || Number(b.volume5m || 0) - Number(a.volume5m || 0)))
+    .map(coin => ({ ...coin, signal: "BUY", reasons: [...(coin.reasons || []), "Profit Sniper activity + momentum filters passed", "Exact identity: Solana mint " + coin.tokenAddress + "; pool " + coin.pairAddress] }));
   const samples = evaluated.slice(0, 3).map(({ coin, failures }) => ({
     symbol: coin.symbol || null,
+    tokenAddress: coin.tokenAddress || null,
+    pairAddress: coin.pairAddress || null,
     momentum5m: Number(coin.priceChange5m),
     volume5m: Number(coin.volume5m),
     buys5m: Number(coin.buys5m),
@@ -72,7 +74,7 @@ async function discoverCandidates(options = {}) {
     momentumQualified: qualified.length,
     momentumRejectedGates: rejectedGates,
     candidateSamples: samples,
-    selectedByScore: qualified.slice(0, MAX_OPEN_POSITIONS).map(coin => coin.symbol || coin.tokenAddress),
+    selectedByScore: qualified.slice(0, MAX_OPEN_POSITIONS).map(coin => ({ symbol: coin.symbol || null, tokenAddress: coin.tokenAddress, pairAddress: coin.pairAddress, score: Number(coin.score) || 0 })),
     error: scanState?.error || null
   };
   console.log("PROFIT SNIPER SCAN | activity-qualified: " + candidates.length +
@@ -88,7 +90,7 @@ if (reconciliation.reason === "account-differs-from-audited-ledger") {
   console.error("Profit Sniper reconciliation skipped: saved account changed; scanner must stay paused.");
 }
 const trader = createPaperTrader(statePath(), fs, {
-  strategyVersion: "Paper-Profit-Sniper-v2-45-45-10",
+  strategyVersion: "Paper-Profit-Sniper-original-10-20",
   startingBalance: 200,
   sessionResetId: "profit-sniper-45-45-10-2026-10-13",
   maxOpenPositions: MAX_OPEN_POSITIONS,
@@ -161,9 +163,9 @@ function getStatus() {
     allowUnknownLiquidityLockInPaper: false,
     minimumLiquidityLockPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT,
     strategy: { hardStopPercent: HARD_STOP_PERCENT, tp1Percent: TAKE_PROFIT_1_PERCENT,
-      tp1SellPercent: TAKE_PROFIT_1_SELL_PERCENT, tp1OriginalPositionSellPercent: 45,
-      tp2Percent: TAKE_PROFIT_2_PERCENT, tp2OriginalPositionSellPercent: 45,
-      tp2SellRemainingPercent: TAKE_PROFIT_2_SELL_PERCENT, runnerOriginalPositionPercent: 10,
+      tp1SellPercent: TAKE_PROFIT_1_SELL_PERCENT, tp1OriginalPositionSellPercent: 50,
+      tp2Percent: TAKE_PROFIT_2_PERCENT, tp2OriginalPositionSellPercent: 50,
+      tp2SellRemainingPercent: TAKE_PROFIT_2_SELL_PERCENT, runnerOriginalPositionPercent: 0,
       trailingStopPercent: TRAILING_STOP_PERCENT,
       postTp1FloorPercent: PROFIT_FLOOR_AFTER_TP1_PERCENT, compoundRates: COMPOUND_RATES,
       maxOpenPositions: MAX_OPEN_POSITIONS, minimumTradeUsd: MINIMUM_TRADE_USD },
