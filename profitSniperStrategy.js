@@ -20,7 +20,7 @@ const TAKE_PROFIT_2_PERCENT = 20;
 const TAKE_PROFIT_2_SELL_PERCENT = 100;
 const TRAILING_STOP_PERCENT = 0;
 const PROFIT_FLOOR_AFTER_TP1_PERCENT = 2;
-const COMPOUND_RATES = [0.10, 0.125, 0.15];
+const COMPOUND_RATES = [];
 const MINIMUM_TRADE_USD = 10;
 
 function getMomentumFailureReasons(coin, now = Date.now()) {
@@ -77,12 +77,8 @@ function selectUniqueMintCandidates(candidates = []) {
   return [...bestByMint.values()];
 }
 
-function getBuySizing(state) {
-  const positions = Array.isArray(state.positions) ? state.positions : (state.position ? [state.position] : []);
-  const equity = Number(state.cashBalance || 0) + positions.reduce((sum, position) => sum + Number(position.amountInvested || 0), 0);
-  const successfulEntries = (Array.isArray(state.history) ? state.history : []).filter(row => row && row.type === "BUY").length;
-  const compoundRate = COMPOUND_RATES[successfulEntries % COMPOUND_RATES.length];
-  return { amountInvested: Math.max(MINIMUM_TRADE_USD, equity * compoundRate), compoundRate };
+function getBuySizing() {
+  return { amountInvested: MINIMUM_TRADE_USD };
 }
 
 function chooseExit({ position, currentPrice, freshData }) {
@@ -147,3 +143,4 @@ module.exports = {
   getBuySizing,
   chooseExit
 };
+

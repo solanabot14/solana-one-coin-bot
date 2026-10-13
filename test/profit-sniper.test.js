@@ -48,12 +48,12 @@ test("same ticker is distinguished by mint and duplicate pools collapse to the b
   assert.equal(selected.find(x => x.tokenAddress === "mint-B").pairAddress, "pool-B");
 });
 
-test("trade sizing follows the 10%, 12.5%, 15% cycle and resets after the third entry", () => {
-  const makeState = entries => ({ cashBalance: 100, positions: [], history: Array.from({ length: entries }, () => ({ type: "BUY" })) });
-  assert.deepEqual(getBuySizing(makeState(0)), { amountInvested: 10, compoundRate: 0.1 });
-  assert.deepEqual(getBuySizing(makeState(1)), { amountInvested: 12.5, compoundRate: 0.125 });
-  assert.deepEqual(getBuySizing(makeState(2)), { amountInvested: 15, compoundRate: 0.15 });
-  assert.deepEqual(getBuySizing(makeState(3)), { amountInvested: 10, compoundRate: 0.1 });
+test("trade sizing stays fixed at $10 regardless of equity or past entries", () => {
+  for (const cashBalance of [10, 100, 200, 6000]) {
+    for (const entries of [0, 1, 2, 3, 20]) {
+      assert.deepEqual(getBuySizing({ cashBalance, positions: [], history: Array.from({length: entries}, () => ({type: "BUY"})) }), { amountInvested: 10 });
+    }
+  }
 });
 
 test("low liquidity forces a full paper exit while unavailable liquidity data is ignored", () => {
@@ -109,3 +109,4 @@ test("an inflated quote cannot credit more than the pool could support", () => {
     freshData: { liquidityUsd: 15000 } }),
     { percent: 100, writeOff: true, reason: "UNEXECUTABLE QUOTE: POSITION EXCEEDS POOL CAPACITY" });
 });
+

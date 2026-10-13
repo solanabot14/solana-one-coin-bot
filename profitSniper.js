@@ -17,9 +17,7 @@ const MAX_OPEN_POSITIONS = 3;
 const SCAN_INTERVAL_MS = 30000;
 const POSITION_MONITOR_MS = 2000;
 const MINIMUM_LIQUIDITY_LOCK_PERCENT = 30;
-const profitSniperLockChecker = require("./lpLockChecker").createLpLockChecker({
-  minimumLockedPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT
-});
+const prebuy = require("./profitSniperPrebuy").createEntryGuard();
 
 function statePath(fileName = "profitSniperTradingData.json") {
   if (process.env.RAILWAY_ENVIRONMENT_ID && !process.env.RAILWAY_VOLUME_MOUNT_PATH) {
@@ -114,7 +112,7 @@ const bot = createBot({
   getTokenData: market.getTokenData,
   discoverCandidates,
   notifier: quietNotifier,
-  checkLiquidityLock: profitSniperLockChecker.getLockStatus,
+  checkLiquidityLock: prebuy.checkLiquidityLock,
   batchPositionPrices: true,
   lockPositionPair: true,
   positionMonitorMs: POSITION_MONITOR_MS,
@@ -133,7 +131,10 @@ const bot = createBot({
   useReentryGuards: true,
   useSimpleCooldown: false,
   exitDecision: chooseExit,
-  validateEntry: entryGuard.validate
+  validateEntry: async (coin, options) => {
+    const stable = await entryGuard.validate(coin, options);
+    return stable.allowed ? prebuy.prepareEntry(stable.coin, options) : stable;
+  }
 });
 
 async function closePosition(positionId) {
@@ -173,13 +174,15 @@ function getStatus() {
     positionMonitorIntervalMs: POSITION_MONITOR_MS,
     allowUnknownLiquidityLockInPaper: false,
     minimumLiquidityLockPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT,
+    entryVerification: prebuy.getStatus(),
     strategy: { hardStopPercent: HARD_STOP_PERCENT, tp1Percent: TAKE_PROFIT_1_PERCENT,
       tp1SellPercent: TAKE_PROFIT_1_SELL_PERCENT, tp1OriginalPositionSellPercent: 50,
       tp2Percent: TAKE_PROFIT_2_PERCENT, tp2OriginalPositionSellPercent: 50,
       tp2SellRemainingPercent: TAKE_PROFIT_2_SELL_PERCENT, runnerOriginalPositionPercent: 0,
       trailingStopPercent: TRAILING_STOP_PERCENT,
       postTp1FloorPercent: PROFIT_FLOOR_AFTER_TP1_PERCENT, compoundRates: COMPOUND_RATES,
-      maxOpenPositions: MAX_OPEN_POSITIONS, minimumTradeUsd: MINIMUM_TRADE_USD },
+      maxOpenPositions: MAX_OPEN_POSITIONS, minimumTradeUsd: MINIMUM_TRADE_USD,
+      sizingMode: "fixed", fixedTradeUsd: MINIMUM_TRADE_USD },
     scanDiagnostics: lastScanDiagnostics
   };
 }
@@ -218,3 +221,4 @@ module.exports = {
     minimumTradeUsd: MINIMUM_TRADE_USD
   }
 };
+

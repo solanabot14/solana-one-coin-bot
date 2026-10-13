@@ -315,7 +315,7 @@ function createBot({
       if (!tokenLossGuard.allows(coin)) continue;
       let lock = null;
       if (requireLiquidityLock) {
-        lock = await checkLiquidityLock(coin.tokenAddress);
+        lock = await checkLiquidityLock(coin.tokenAddress, { coin, signal: session.signal });
         if (!isActive(session)) return;
         if (!liquidityLockAllowsEntry(lock, minimumEntryLockPercent, allowUnknownLiquidityLock)) {
           const rawLockPercent = lock?.lockedPercent;
@@ -362,6 +362,7 @@ function createBot({
             console.log(`ENTRY RECHECK | ${coin.symbol || coin.tokenAddress} | skipped | ${validation?.reason || "unavailable"}`);
             continue;
           }
+          if (entriesPausedByBalance() || getPositions().length >= maxOpenPositions) break;
           entryCoin = validation.coin || coin;
           if (lockPositionPair && (entryCoin.tokenAddress !== coin.tokenAddress ||
               entryCoin.pairAddress !== coin.pairAddress)) {
@@ -614,3 +615,4 @@ module.exports = {
   percentOfRemainingToReachOriginalTarget,
   ...createBot()
 };
+
