@@ -8,7 +8,9 @@ const { getTokenData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
 const scanner = require("./scanner");
 const janSlotEngine = require("./janSlotEngine");
-const janMvpBot = require("./janMvpBot");\nconst geminiBot = require("./geminiBot");\nconst geminiTrader = require("./geminiTrader");
+const janMvpBot = require("./janMvpBot");
+const geminiBot = require("./geminiBot");
+const geminiTrader = require("./geminiTrader");
 const { buildGeminiAnalytics } = require("./geminiAnalytics");
 const { createRuntimeState } = require("./runtimeState");
 
@@ -275,7 +277,8 @@ th,td{
 
 <div class="tabs" role="tablist" aria-label="Dashboard views">
   <button class="tab-button active" id="botTab" type="button">Current Bot</button>
-  <button class="tab-button" id="slotTab" type="button">Swarm</button>\n  <button class="tab-button" id="geminiTab" type="button">Gemini Bot · Paper</button>
+  <button class="tab-button" id="slotTab" type="button">Swarm</button>
+  <button class="tab-button" id="geminiTab" type="button">Gemini Bot · Paper</button>
 </div>
 
 <div id="botPanel" class="tab-panel active">
@@ -906,7 +909,13 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const hostname = new URL("http://" + req.headers.host).hostname;
         if (!["127.0.0.1", "localhost", "[::1]"].includes(hostname)) return json(res, { error: "Invalid host" }, 403);
       }
-      if (route === "/api/gemini/start" || route === "/api/gemini/stop") {\n        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }\n        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);\n        if (route.endsWith("/start")) geminiBot.start(); else geminiBot.stop();\n        return json(res, { running: geminiBot.getStatus() });\n      }\n      if (route === "/api/start" || route === "/api/stop" || route === "/api/manual-exit") {
+      if (route === "/api/gemini/start" || route === "/api/gemini/stop") {
+        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        if (route.endsWith("/start")) geminiBot.start(); else geminiBot.stop();
+        return json(res, { running: geminiBot.getStatus() });
+      }
+      if (route === "/api/start" || route === "/api/stop" || route === "/api/manual-exit") {
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
         if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
 
@@ -960,7 +969,9 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         });
       }
       if (req.method !== "GET") return json(res, { error: "Method not allowed" }, 405);
-      if (route === "/api/status") return json(res, { running: controls.getBotStatus(), error: controls.getLastError() });\n      if (route === "/api/gemini/status") return json(res, { running: geminiBot.getStatus(), error: geminiBot.getLastError() });\n      if (route === "/api/gemini/data") {
+      if (route === "/api/status") return json(res, { running: controls.getBotStatus(), error: controls.getLastError() });
+      if (route === "/api/gemini/status") return json(res, { running: geminiBot.getStatus(), error: geminiBot.getLastError() });
+      if (route === "/api/gemini/data") {
         const state = geminiTrader.getState();
         let live = null;
         if (state.position) {
