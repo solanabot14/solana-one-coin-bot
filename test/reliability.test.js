@@ -181,6 +181,30 @@ test("network configuration requires credentials and respects Railway port", () 
   assert.equal(config.host, "0.0.0.0");
 });
 
+test("LP lock fallback admits only twice-confirmed WAIT signals when RugCheck is unavailable", async t => {
+  async function runEntry(signal, lock, tokenAddress) {
+    const { trader } = account(t);
+    const timers = fakeTimers();
+    const candidate = { ...coin, tokenAddress, signal, priceChange5m: 1.5,
+      volume5m: 2000, buys5m: 6, sells5m: 2, liquidityUsd: 60000 };
+    const bot = createBot({ trader, timers, discoverCandidates: async () => [candidate],
+      checkLiquidityLock: async () => lock });
+    bot.startBot();
+    await settle();
+    await timers.run(120000);
+    await settle();
+    bot.stopBot();
+    return trader.getPortfolio().history.filter(item => item.type === "BUY").length;
+  }
+
+  assert.equal(await runEntry("WAIT",
+    { allowed: false, lockedPercent: null, reason: "LOCK_STATUS_UNAVAILABLE" }, "unknown-wait"), 1);
+  assert.equal(await runEntry("WAIT",
+    { allowed: false, lockedPercent: 45, reason: "LIQUIDITY_NOT_LOCKED_ENOUGH" }, "low-lock-wait"), 0);
+  assert.equal(await runEntry("STRONG BUY",
+    { allowed: false, lockedPercent: null, reason: "LOCK_STATUS_UNAVAILABLE" }, "unknown-buy"), 0);
+});
+
 test("hard stop and both momentum exits keep their original behavior", async t => {
   for (const [quote, reason] of [
     [{ priceUsd: 0.89 }, "HARD STOP"],
