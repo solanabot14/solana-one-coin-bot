@@ -368,7 +368,8 @@
     var error=scan.error?'<div class="notice">'+esc(scan.error)+'</div>':'';
     var lockFloor=status.minimumLiquidityLockPercent==null?'—':esc(status.minimumLiquidityLockPercent)+'%';
     var lockPolicy=status.allowUnknownLiquidityLockInPaper?'Unknown allowed':'Unknown blocks';
-    var verificationNote=verification.confirmationMs?'<div class="footer-note">Compounding paper entries · fresh pool checks with a 7.5-second confirmation wait · $10,000 minimum liquidity · reject drops over 20% · exact pool lock and reserves required'+(check?' · Last check: '+esc(check.symbol)+' — '+esc(check.reason):'')+'</div>':'';
+    var minimumLiquidity=status.minimumLiquidityUsd==null?'not reported':'$'+Number(status.minimumLiquidityUsd).toLocaleString('en-US');
+    var verificationNote=verification.confirmationMs?'<div class="footer-note">Compounding paper entries · fresh pool checks with a 7.5-second confirmation wait · '+minimumLiquidity+' minimum liquidity · reject drops over 20% · exact pool lock and reserves required'+(check?' · Last check: '+esc(check.symbol)+' — '+esc(check.reason):'')+'</div>':'';
     return '<div class="panel section-gap"><div class="panel-head"><div><div class="panel-title">PROFIT SNIPER · SCANNER</div><div class="panel-subtitle">'+esc(source)+'</div></div><span class="badge">'+(status.running?'SCANNING':'STOPPED')+'</span></div><div class="kpi-grid">'+kpi('AUTO SCAN',status.running?'ON':'OFF','Every 30 seconds')+kpi('POSITION CHECK',esc((Number(status.positionMonitorIntervalMs)||5000)/1000)+' sec','Up to 3 open slots')+kpi('LP LOCK FLOOR',lockFloor,'RugCheck confirmed · '+lockPolicy)+kpi('RECENT POOLS',pools,'Pools within the 72-hour window')+kpi('MOMENTUM QUALIFIED',candidateCount,'Awaiting pool verification')+kpi('LAST SCAN',esc(last),'Puerto Rico time')+'</div>'+error+verificationNote+'</div>';
   }
   function walletCopyStatusPanel(system) {

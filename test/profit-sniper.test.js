@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit } = require("../profitSniperStrategy");
+const { constants, qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit } = require("../profitSniperStrategy");
 function candidate(overrides = {}) {
   return { tokenAddress: "Token111", pairAddress: "Pool111", chainId: "solana",
     pairCreatedAt: Date.now() - 5 * 60 * 1000, liquidityUsd: 15000, volume24h: 6000,
@@ -18,7 +18,9 @@ test("0-72h pools use direct activity and momentum gates, not the shared signal 
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 250000 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 13 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 4, sells5m: 4 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ liquidityUsd: 9999 })), false);
+  assert.equal(constants.MIN_LIQUIDITY_USD, 7500);
+  assert.equal(qualifiesMomentumCandidate(candidate({ liquidityUsd: 7500 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ liquidityUsd: 7499 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume5m: 299 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 3, sells5m: 2 })), false);
 });

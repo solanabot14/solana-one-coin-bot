@@ -183,6 +183,7 @@ function getStatus() {
     scanIntervalMs: SCAN_INTERVAL_MS,
     positionMonitorIntervalMs: POSITION_MONITOR_MS,
     allowUnknownLiquidityLockInPaper: false,
+    minimumLiquidityUsd: MIN_LIQUIDITY_USD,
     minimumLiquidityLockPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT,
     entryVerification: prebuy.getStatus(),
     strategy: { hardStopPercent: HARD_STOP_PERCENT, tp1Percent: TAKE_PROFIT_1_PERCENT,
