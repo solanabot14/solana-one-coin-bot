@@ -40,12 +40,30 @@ function getMomentumFailureReasons(coin, now = Date.now()) {
   if (buyRatio < MIN_BUY_RATIO_5M) failures.push("buyRatio5m");
   if (!Number.isFinite(momentum5m) || momentum5m < MIN_MOMENTUM_5M || momentum5m > MAX_MOMENTUM_5M) failures.push("momentum5m");
   if (!coin.tokenAddress) failures.push("tokenAddress");
+  if (coin.chainId !== "solana") failures.push("chainId");
+  if (!coin.pairAddress) failures.push("pairAddress");
   if (BLOCKED_TOKEN_ADDRESSES.has(coin.tokenAddress)) failures.push("blockedTokenAddress");
   return failures;
 }
 
 function qualifiesMomentumCandidate(coin, now = Date.now()) {
   return getMomentumFailureReasons(coin, now).length === 0;
+}
+
+function selectUniqueMintCandidates(candidates = []) {
+  const bestByMint = new Map();
+  for (const coin of candidates) {
+    if (!coin || coin.chainId !== "solana" || !coin.tokenAddress || !coin.pairAddress) continue;
+    const mint = String(coin.tokenAddress);
+    const current = bestByMint.get(mint);
+    const score = Number(coin.score) || 0;
+    const volume = Number(coin.volume5m) || 0;
+    if (!current || score > (Number(current.score) || 0) ||
+        (score === (Number(current.score) || 0) && volume > (Number(current.volume5m) || 0))) {
+      bestByMint.set(mint, coin);
+    }
+  }
+  return [...bestByMint.values()];
 }
 
 function getBuySizing(state) {
@@ -105,6 +123,7 @@ module.exports = {
     TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
     TAKE_PROFIT_2_SELL_PERCENT, TRAILING_STOP_PERCENT, PROFIT_FLOOR_AFTER_TP1_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD },
   qualifiesMomentumCandidate,
+  selectUniqueMintCandidates,
   getMomentumFailureReasons,
   getBuySizing,
   chooseExit
