@@ -91,7 +91,12 @@ async function discoverCandidates(options = {}) {
   return qualified;
 }
 
-const reconciliation = reconcileProfitSniperAccount(statePath());
+const SESSION_RESET_ID = "profit-sniper-reset-200-2026-10-13T144522Z";
+const savedSessionIsCurrent = fs.existsSync(statePath()) &&
+  JSON.parse(fs.readFileSync(statePath(), "utf8")).sessionId === SESSION_RESET_ID;
+const reconciliation = savedSessionIsCurrent
+  ? { applied: false, reason: "already-applied" }
+  : reconcileProfitSniperAccount(statePath());
 const reconciliationReady = reconciliation.applied || ["already-applied", "no-account"].includes(reconciliation.reason);
 if (reconciliation.reason === "account-differs-from-audited-ledger") {
   console.error("Profit Sniper reconciliation skipped: saved account changed; scanner must stay paused.");
@@ -99,7 +104,7 @@ if (reconciliation.reason === "account-differs-from-audited-ledger") {
 const trader = createPaperTrader(statePath(), fs, {
   strategyVersion: "Paper-Profit-Sniper-original-10-20",
   startingBalance: 200,
-  sessionResetId: "profit-sniper-45-45-10-2026-10-13",
+  sessionResetId: SESSION_RESET_ID,
   maxOpenPositions: MAX_OPEN_POSITIONS,
   getBuySizing,
   estimateExecutionCosts
@@ -119,7 +124,7 @@ const bot = createBot({
   scannerIntervalMs: SCAN_INTERVAL_MS,
   scanWhenFull: true,
   botLabel: "Paper Profit Sniper",
-  reentryStateFile: statePath("profitSniperReentryState-v3.json"),
+  reentryStateFile: statePath("profitSniperReentryState-reset-20261013T144522Z.json"),
   maxOpenPositions: MAX_OPEN_POSITIONS,
   maxCandidateAgeMinutes: 30,
   minimumLiquidityUsd: MIN_LIQUIDITY_USD,
