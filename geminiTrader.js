@@ -58,6 +58,7 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     const trade = {
       type: "SELL", id: randomUUID(), positionId: p.id, tokenAddress: p.tokenAddress,
       pairAddress: p.pairAddress, symbol: p.symbol, entryPrice: p.entryPrice, exitPrice: price,
+      maxGainPercent: p.entryPrice > 0 ? (Number(p.highestPrice || p.entryPrice) / p.entryPrice - 1) * 100 : 0,
       quantity: qty, amountUsd: value, costBasisUsd: basis, pnlUsd: value - basis,
       pnlPercent: (price / p.entryPrice - 1) * 100, percentOfOriginalSold: qty / p.originalQuantity * 100,
       reason, time: new Date().toISOString(), mode: "PAPER"
