@@ -313,11 +313,13 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const lock85Account = buyPriorityLock85.buildDashboardAccount();
         const profitSniperAccount = profitSniper.getPortfolio();
         const walletCopyAccount = walletCopy.getPortfolio();
+        const geminiState = geminiTrader.getState();
         const addresses = [...new Set([
           ...(baseAccount.positions || (baseAccount.position ? [baseAccount.position] : [])).map(p => p.tokenAddress),
           ...(lock85Account.positions || []).map(p => p.tokenAddress),
           ...(profitSniperAccount.positions || []).map(p => p.tokenAddress),
-          ...(walletCopyAccount.positions || []).map(p => p.tokenAddress)
+          ...(walletCopyAccount.positions || []).map(p => p.tokenAddress),
+          ...(geminiState.position ? [geminiState.position.tokenAddress] : [])
         ].filter(Boolean))];
         const sharedQuotes = batchMarketData && addresses.length
           ? await batchMarketData(addresses)
@@ -334,7 +336,47 @@ function createDashboardServer({ config = getConfig(), controls = bot,
               return pairQuoteCache.get(key);
             }
           : marketData;
-        const [v31, candleBreakout, profitabilityLab, lock85, profitSniperData, walletCopyData] = await Promise.all([
+        const [v31, candleBreakout, profitabilityLab, lock85, profitSniperData, walletCopyData, geminiData] = await Promise.all([
+          buildDashboardData(baseAccount, sharedMarketData),
+          fetchCandleBreakoutDashboard(),
+          fetchProfitabilityLabDashboard(),
+          buildDashboardData(lock85Account, sharedMarketData),
+          buildDashboardData(profitSniperAccount, sharedMarketData, { allowAlternatePairQuote: true }),
+          buildDashboardData(walletCopyAccount, sharedMarketData),
+          (async () => {
+            let live = null;
+            const position = geminiState.position;
+            if (position) {
+              const quote = await sharedMarketData(position.tokenAddress, { pairAddress: position.pairAddress || undefined });
+              const priceUsd = Number(quote?.priceUsd);
+              if (priceUsd > 0 && Number.isFinite(priceUsd)) {
+                const currentValueUsd = position.quantity * priceUsd;
+                live = { priceUsd, currentValueUsd, pnl: currentValueUsd - position.amountInvestedUsd,
+                  pnlPercent: position.amountInvestedUsd > 0 ? (currentValueUsd - position.amountInvestedUsd) / position.amountInvestedUsd * 100 : 0,
+                  holdTimeMs: Math.max(0, Date.now() - Date.parse(position.entryTime)), pairAddress: position.pairAddress };
+              }
+            }
+            const geminiAnalytics = buildGeminiAnalytics(geminiState, live);
+            const completedTrades = geminiAnalytics.completedTrades.map(t => ({
+              ...t, pnl: t.pnlUsd, amountInvested: t.investedUsd, pnlPercent: t.returnPercent,
+              exitPrice: t.averageExitPrice, holdTimeMs: t.holdTimeMs,
+              exitReason: t.exitReasons.join(", ")
+            }));
+            const history = geminiState.history.map(row => ({
+              ...row, pnl: row.pnlUsd, amountInvested: row.costBasisUsd || row.amountUsd,
+              pnlPercent: row.pnlPercent, entryTime: row.entryTime || (row.type === "BUY" ? row.time : null),
+              exitTime: row.type === "SELL" ? row.time : null
+            }));
+            return {
+              startingBalance: geminiState.startingBalanceUsd, cashBalance: geminiState.cashUsd,
+              equity: geminiAnalytics.equityUsd, totalPnl: geminiAnalytics.totalPnlUsd,
+              totalPnlPercent: geminiState.startingBalanceUsd > 0 ? geminiAnalytics.totalPnlUsd / geminiState.startingBalanceUsd * 100 : 0,
+              completedTrades, history,
+              livePositions: position ? [{ position, live, pnl: live?.pnl ?? null }] : [],
+              running: geminiBot.getStatus(), lastScanAt: geminiState.lastScanAt
+            };
+          })()
+        ]);
           buildDashboardData(baseAccount, sharedMarketData),
           fetchCandleBreakoutDashboard(),
           fetchProfitabilityLabDashboard(),
@@ -354,7 +396,9 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           profitSniper: profitSniperData,
           profitSniperStatus: profitSniper.getStatus(),
           walletCopy: walletCopyData,
-          walletCopyStatus: walletCopy.getStatus()
+          walletCopyStatus: walletCopy.getStatus(),
+          gemini: geminiData,
+          geminiStatus: { running: geminiBot.getStatus(), error: geminiBot.getLastError() }
         });
       }
       if (route === "/trading/launch-sniper") { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); return res.end(fs.readFileSync(path.join(__dirname, "launchSniperPanel.html"), "utf8")); }
@@ -387,6 +431,7 @@ if (require.main === module) {
   if (profitSniper.reconciliationReady) profitSniper.startBot();
   server.listen(config.port, config.host, () => {
     walletCopy.startBot();
+    geminiBot.start();
     console.log("Dashboard listening on " + config.host + ":" + config.port);
   });
   const shutdown = () => {
@@ -396,6 +441,7 @@ if (require.main === module) {
     launchSniper.stopBot();
     profitSniper.stopBot();
     walletCopy.stopBot();
+    geminiBot.stop();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 12000).unref();
   };
