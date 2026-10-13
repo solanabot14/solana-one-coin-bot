@@ -17,8 +17,11 @@ const MIN_BUY_RATIO_5M = 0.55;
 const DEXSCREENER_PAIR_API = "https://api.dexscreener.com/latest/dex/pairs/solana";
 const MAX_PAIR_ADDRESSES_PER_REQUEST = 30;
 const MAX_TRACKED_NEW_POOLS = 60;
+const MAX_TRACKED_MATURE_POOLS = 90;
 const PAIR_REQUEST_TIMEOUT_MS = 10000;
 const trackedLaunchPools = new Map();
+const trackedMaturePools = new Map();
+const MAX_MATURE_PAIR_AGE_MS = 72 * 60 * 60 * 1000;
 let lastScanDiagnostics = null;
 
 function statePath(fileName = "launchSniperPaperTradingData.json") {
@@ -53,7 +56,7 @@ function describeNewPool(pool) {
   return { poolAddress, tokenAddress, createdAt };
 }
 
-function qualifiesLaunchCandidate(data, now = Date.now(), minimumLiquidityUsd = MIN_LIQUIDITY_USD, minimumVolume24hUsd = MIN_VOLUME_24H_USD) {
+function qualifiesLaunchCandidate(data, now = Date.now(), minimumLiquidityUsd = MIN_LIQUIDITY_USD, minimumVolume24hUsd = MIN_VOLUME_24H_USD, maximumPairAgeMs = MAX_PAIR_AGE_MS) {
   if (!data || typeof data !== "object") return false;
   const createdAt = Number(data.pairCreatedAt);
   const ageMs = now - createdAt;
@@ -64,17 +67,17 @@ function qualifiesLaunchCandidate(data, now = Date.now(), minimumLiquidityUsd = 
   const sells5m = Number(data.sells5m);
   const transactions5m = buys5m + sells5m;
   const buyRatio5m = transactions5m > 0 ? buys5m / transactions5m : 0;
-  return Number.isFinite(createdAt) && ageMs >= 0 && ageMs <= MAX_PAIR_AGE_MS &&
+  return Number.isFinite(createdAt) && ageMs >= 0 && ageMs <= maximumPairAgeMs &&
     Number.isFinite(liquidity) && liquidity >= minimumLiquidityUsd &&
     Number.isFinite(volume24h) && volume24h >= minimumVolume24hUsd &&
     Number.isFinite(volume5m) && volume5m >= MIN_VOLUME_5M_USD &&
     transactions5m >= MIN_TRANSACTIONS_5M && buyRatio5m >= MIN_BUY_RATIO_5M;
 }
 
-function qualifiesPoolObservation(data, now = Date.now()) {
+function qualifiesPoolObservation(data, now = Date.now(), maximumPairAgeMs = MAX_PAIR_AGE_MS) {
   const ageMs = now - Number(data?.pairCreatedAt);
   return data?.chainId === "solana" && Boolean(data.tokenAddress && data.pairAddress) &&
-    Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= MAX_PAIR_AGE_MS;
+    Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= maximumPairAgeMs;
 }
 
 function estimateExecutionCosts({ amountUsd, liquidityUsd }) {
@@ -141,13 +144,13 @@ function mapLaunchPair(pair, descriptor) {
     pairAddress: descriptor.poolAddress,
     pairCreatedAt: descriptor.createdAt,
     newPoolCreatedAt: new Date(descriptor.createdAt).toISOString(),
-    discoverySource: "GECKOTERMINAL_NEW_POOL"
+    discoverySource: descriptor.discoverySource || "GECKOTERMINAL_NEW_POOL"
   };
   const analysis = analyzePaperLaunchCandidate(data);
   return { ...data, score: analysis.score, signal: analysis.signal, reasons: analysis.reasons };
 }
 
-function measureCandidateGates(candidates, now = Date.now(), minimumLiquidityUsd = MIN_LIQUIDITY_USD, minimumVolume24hUsd = MIN_VOLUME_24H_USD) {
+function measureCandidateGates(candidates, now = Date.now(), minimumLiquidityUsd = MIN_LIQUIDITY_USD, minimumVolume24hUsd = MIN_VOLUME_24H_USD, maximumPairAgeMs = MAX_PAIR_AGE_MS) {
   const gates = {
     pairsMatched: candidates.length,
     age: 0,
@@ -161,7 +164,7 @@ function measureCandidateGates(candidates, now = Date.now(), minimumLiquidityUsd
   for (const data of candidates) {
     const createdAt = Number(data.pairCreatedAt);
     const ageMs = now - createdAt;
-    if (!Number.isFinite(createdAt) || ageMs < 0 || ageMs > MAX_PAIR_AGE_MS) continue;
+    if (!Number.isFinite(createdAt) || ageMs < 0 || ageMs > maximumPairAgeMs) continue;
     gates.age++;
     if (!(Number(data.liquidityUsd) >= minimumLiquidityUsd)) continue;
     gates.liquidity++;
@@ -182,11 +185,14 @@ function measureCandidateGates(candidates, now = Date.now(), minimumLiquidityUsd
 }
 
 async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQUIDITY_USD, minimumVolume24hUsd = MIN_VOLUME_24H_USD,
-  includeObservationCandidates = false } = {}) {
+  includeObservationCandidates = false, includeMaturePools = false, maximumPairAgeMs } = {}) {
+  maximumPairAgeMs = Number.isFinite(Number(maximumPairAgeMs))
+    ? Number(maximumPairAgeMs)
+    : includeMaturePools ? MAX_MATURE_PAIR_AGE_MS : MAX_PAIR_AGE_MS;
   const now = Date.now();
   const diagnostics = {
     updatedAt: new Date(now).toISOString(),
-    source: "GeckoTerminal new pools + DexScreener pair data",
+    source: includeMaturePools ? "GeckoTerminal new + trending + top pools + exact DexScreener pairs" : "GeckoTerminal new pools + DexScreener pair data",
     poolsReceived: 0,
     poolsInAgeWindow: 0,
     poolsTracked: 0,
@@ -195,30 +201,37 @@ async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQU
     error: null
   };
   try {
-    const freshPools = await geckoTerminal.getNewSolanaPools({ signal });
-    diagnostics.poolsReceived = Array.isArray(freshPools) ? freshPools.length : 0;
-    for (const pool of Array.isArray(freshPools) ? freshPools : []) {
-      const descriptor = describeNewPool(pool);
-      if (!descriptor || descriptor.createdAt > now + 60000 ||
-          now - descriptor.createdAt > MAX_PAIR_AGE_MS) continue;
-      trackedLaunchPools.set(descriptor.poolAddress, descriptor);
+    const trackedPools = includeMaturePools ? trackedMaturePools : trackedLaunchPools;
+    const feeds = [["GECKOTERMINAL_NEW_POOL", await geckoTerminal.getNewSolanaPools({ signal })]];
+    if (includeMaturePools) {
+      const [trending, top] = await Promise.all([
+        geckoTerminal.getTrendingSolanaPools({ signal, duration: "24h" }),
+        geckoTerminal.getTopSolanaPools({ signal })
+      ]);
+      feeds.push(["GECKOTERMINAL_TRENDING_POOL", trending], ["GECKOTERMINAL_TOP_POOL", top]);
     }
-    for (const [address, descriptor] of trackedLaunchPools) {
-      if (descriptor.createdAt > now + 60000 || now - descriptor.createdAt > MAX_PAIR_AGE_MS) {
-        trackedLaunchPools.delete(address);
+    diagnostics.poolsReceived = feeds.reduce((sum, [, pools]) => sum + (Array.isArray(pools) ? pools.length : 0), 0);
+    for (const [source, pools] of feeds) {
+      for (const pool of Array.isArray(pools) ? pools : []) {
+        const descriptor = describeNewPool(pool);
+        if (!descriptor || descriptor.createdAt > now + 60000 ||
+            now - descriptor.createdAt > maximumPairAgeMs) continue;
+        trackedPools.set(descriptor.poolAddress, { ...descriptor, discoverySource: source });
       }
     }
-    if (trackedLaunchPools.size > MAX_TRACKED_NEW_POOLS) {
-      const newest = [...trackedLaunchPools.values()]
-        .sort((a, b) => b.createdAt - a.createdAt)
-        .slice(0, MAX_TRACKED_NEW_POOLS);
-      trackedLaunchPools.clear();
-      for (const descriptor of newest) trackedLaunchPools.set(descriptor.poolAddress, descriptor);
+    for (const [address, descriptor] of trackedPools) {
+      if (descriptor.createdAt > now + 60000 || now - descriptor.createdAt > maximumPairAgeMs) trackedPools.delete(address);
+    }
+    const maxTrackedPools = includeMaturePools ? MAX_TRACKED_MATURE_POOLS : MAX_TRACKED_NEW_POOLS;
+    if (trackedPools.size > maxTrackedPools) {
+      const newest = [...trackedPools.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, maxTrackedPools);
+      trackedPools.clear();
+      for (const descriptor of newest) trackedPools.set(descriptor.poolAddress, descriptor);
     }
 
-    diagnostics.poolsInAgeWindow = trackedLaunchPools.size;
-    diagnostics.poolsTracked = trackedLaunchPools.size;
-    if (signal?.aborted || !trackedLaunchPools.size) {
+    diagnostics.poolsInAgeWindow = trackedPools.size;
+    diagnostics.poolsTracked = trackedPools.size;
+    if (signal?.aborted || !trackedPools.size) {
       diagnostics.gates = measureCandidateGates([], now, minimumLiquidityUsd, minimumVolume24hUsd);
       lastScanDiagnostics = diagnostics;
       console.log("PAPER LAUNCH SCAN | pools received: " + diagnostics.poolsReceived +
@@ -226,15 +239,15 @@ async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQU
       return [];
     }
 
-    const descriptors = [...trackedLaunchPools.values()];
+    const descriptors = [...trackedPools.values()];
     const dexPairs = await fetchDexPairs(descriptors.map(pool => pool.poolAddress), signal);
     diagnostics.dexPairsReturned = dexPairs.length;
     const descriptorByPool = new Map(descriptors.map(pool => [pool.poolAddress, pool]));
     const mapped = dexPairs
       .map(pair => mapLaunchPair(pair, descriptorByPool.get(pair?.pairAddress)))
       .filter(Boolean);
-    const gates = measureCandidateGates(mapped, now, minimumLiquidityUsd, minimumVolume24hUsd);
-    const eligibleCandidates = mapped.filter(candidate => qualifiesLaunchCandidate(candidate, now, minimumLiquidityUsd, minimumVolume24hUsd));
+    const gates = measureCandidateGates(mapped, now, minimumLiquidityUsd, minimumVolume24hUsd, maximumPairAgeMs);
+    const eligibleCandidates = mapped.filter(candidate => qualifiesLaunchCandidate(candidate, now, minimumLiquidityUsd, minimumVolume24hUsd, maximumPairAgeMs));
     const signalCounts = {};
     for (const candidate of eligibleCandidates) {
       signalCounts[candidate.signal] = (signalCounts[candidate.signal] || 0) + 1;
@@ -253,7 +266,7 @@ async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQU
       " | buy flow: " + gates.buyRatio5m + " | eligible: " + gates.eligible +
       " | activity-qualified signals: " + signalSummary);
     return includeObservationCandidates
-      ? mapped.filter(candidate => qualifiesPoolObservation(candidate, now))
+      ? mapped.filter(candidate => qualifiesPoolObservation(candidate, now, maximumPairAgeMs))
       : eligibleCandidates;
   } catch (error) {
     diagnostics.error = error.message;

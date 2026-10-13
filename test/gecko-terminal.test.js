@@ -91,3 +91,22 @@ test("spaces uncached pool requests below the public endpoint's approximate rate
 	assert.ok(requestTimes[1] - requestTimes[0] >= 7500);
 	assert.ok(requestTimes[2] - requestTimes[1] >= 7500);
 });
+
+test("fetches and caches mature-pool discovery feeds", async () => {
+  const nowMs = 1_800_000_000_000;
+  const calls = [];
+  const client = createGeckoTerminalClient({
+    clock: () => nowMs,
+    requestSpacingMs: 0,
+    httpGet: async (url, options) => {
+      calls.push({ url, params: options.params });
+      return { data: { data: [{ id: "solana_pool-A", attributes: { address: "pool-A" } }] } };
+    }
+  });
+  assert.equal((await client.getTrendingSolanaPools())[0].attributes.address, "pool-A");
+  assert.equal((await client.getTopSolanaPools())[0].attributes.address, "pool-A");
+  assert.match(calls[0].url, /networks\/solana\/trending_pools$/);
+  assert.equal(calls[0].params.duration, "24h");
+  assert.match(calls[1].url, /networks\/solana\/pools$/);
+  assert.equal(calls[1].params.page, 1);
+});

@@ -3,7 +3,7 @@ const { constants, getMomentumFailureReasons } = require("./profitSniperStrategy
 const CONFIRMATION_MS = 7500;
 const MAX_SAMPLE_AGE_MS = 5000;
 const MAX_LIQUIDITY_DROP = 0.20;
-const MIN_LOCK_PERCENT = 70;
+const MIN_LOCK_PERCENT = 50;
 
 function number(value) {
   return value === null || value === undefined || value === "" ? NaN : Number(value);

@@ -112,6 +112,7 @@ function createBot({
   minimumLiquidityUsd = 25000,
   minimumVolume24hUsd = 100000,
   minimumLiquidityLockPercent = ENTRY_MIN_LP_LOCK_PERCENT,
+  reentryMinimumLpLockPercent = REENTRY_MIN_LP_LOCK_PERCENT,
   acceptedSignals = ["STRONG BUY"],
   requireLiquidityLock = true,
   allowUnknownLiquidityLock = false,
@@ -230,7 +231,7 @@ function createBot({
     const liquidityUsd = Number(coin.liquidityUsd) || 0;
     const peakLiquidityUsd = Math.max(Number(guard.peakLiquidityUsd) || 0, liquidityUsd);
     const liquidityHealthy = liquidityUsd > 0 && liquidityUsd >= peakLiquidityUsd * (1 - REENTRY_MAX_LIQUIDITY_DRAWDOWN);
-    const lpHealthy = Boolean(lock?.allowed) && Number(lock.lockedPercent) >= REENTRY_MIN_LP_LOCK_PERCENT;
+    const lpHealthy = Boolean(lock?.allowed) && Number(lock.lockedPercent) >= reentryMinimumLpLockPercent;
     const active = lpHealthy && volume5m >= REENTRY_MIN_VOLUME_5M &&
       momentum5m >= REENTRY_MIN_MOMENTUM_5M && momentum5m < REENTRY_MAX_MOMENTUM_5M &&
       transactions5m >= REENTRY_MIN_TRANSACTIONS_5M &&
@@ -459,18 +460,24 @@ function createBot({
       };
 
       if (typeof exitDecision === "function") {
-        const action = exitDecision({ position, freshData, currentPrice, profitPercent, now: Date.now() });
+        const history = getPortfolio().history;
+        const exitProgress = getOriginalPositionExitProgress(position, history);
+        const action = exitDecision({ position, freshData, currentPrice, profitPercent, exitProgress, history, now: Date.now() });
         if (action) {
+          const targetPercent = Number(action.targetOriginalPositionPercent);
+          const salePercent = Number.isFinite(targetPercent)
+            ? percentOfRemainingToReachOriginalTarget(position, history, targetPercent)
+            : (action.percent ?? 100);
           const result = action.writeOff && typeof trader.writeOff === "function"
             ? trader.writeOff(expectedPosition, action.reason)
-            : sell(currentPrice, action.percent ?? 100, {
+            : salePercent > 0 ? sell(currentPrice, salePercent, {
             expectedPosition,
             reason: action.reason,
             takeProfit: action.takeProfit,
             liquidityUsd: freshData.liquidityUsd
-          });
+          }) : { success: false, message: "Exit target is already satisfied." };
           if (result.success) {
-            if ((action.percent ?? 100) === 100 && useReentryGuards) syncClosedTokenGuards();
+            if ((salePercent >= 100 || action.percent === 100) && useReentryGuards) syncClosedTokenGuards();
             void notifier.notifyTrade(action.reason, result.trade);
           }
         }

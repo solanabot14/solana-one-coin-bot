@@ -42,8 +42,8 @@ function createGeckoTerminalClient({
 	const cache = new Map();
 	let requestQueue = Promise.resolve();
 	let lastRequestAt = 0;
-	let newPoolsCache = null;
-	let newPoolsRequest = null;
+	const feedCache = new Map();
+	const feedRequests = new Map();
 
 	function queueRequest(run) {
 		const request = requestQueue.then(async () => {
@@ -57,18 +57,22 @@ function createGeckoTerminalClient({
 		return request;
 	}
 
-	async function getNewSolanaPools({ signal } = {}) {
-		if (newPoolsCache && clock() - newPoolsCache.at < NEW_POOLS_CACHE_MS) {
-			return structuredClone(newPoolsCache.pools);
-		}
-		if (newPoolsRequest) return structuredClone(await newPoolsRequest);
-
-		newPoolsRequest = queueRequest({
+	async function getPoolFeed(feed, { signal, duration = "24h" } = {}) {
+		const key = feed === "trending" ? feed + ":" + duration : feed;
+		const cached = feedCache.get(key);
+		if (cached && clock() - cached.at < NEW_POOLS_CACHE_MS) return structuredClone(cached.pools);
+		if (feedRequests.has(key)) return structuredClone(await feedRequests.get(key));
+		const endpoint = feed === "new" ? "new_pools"
+			: feed === "trending" ? "trending_pools" : "pools";
+		const params = { include: "base_token,quote_token" };
+		if (feed === "trending") params.duration = duration;
+		if (feed === "top") params.page = 1;
+		const request = queueRequest({
 			signal,
 			execute: async () => {
-				const url = `${API_BASE}/networks/solana/new_pools`;
+				const url = `${API_BASE}/networks/solana/${endpoint}`;
 				const response = await httpGet(url, {
-					params: { include: "base_token,quote_token" },
+					params,
 					headers: { Accept: "application/json;version=20230203" },
 					timeout: 10000,
 					signal
@@ -76,10 +80,23 @@ function createGeckoTerminalClient({
 				return Array.isArray(response?.data?.data) ? response.data.data : [];
 			}
 		}).then(pools => {
-			newPoolsCache = { at: clock(), pools };
+			feedCache.set(key, { at: clock(), pools });
 			return pools;
-		}).finally(() => { newPoolsRequest = null; });
-		return structuredClone(await newPoolsRequest);
+		}).finally(() => { feedRequests.delete(key); });
+		feedRequests.set(key, request);
+		return structuredClone(await request);
+	}
+
+	async function getNewSolanaPools(options = {}) {
+		return getPoolFeed("new", options);
+	}
+
+	async function getTrendingSolanaPools(options = {}) {
+		return getPoolFeed("trending", options);
+	}
+
+	async function getTopSolanaPools(options = {}) {
+		return getPoolFeed("top", options);
 	}
 
 	async function getPoolCandles(poolAddress, tokenAddress, { signal } = {}) {
@@ -111,7 +128,7 @@ function createGeckoTerminalClient({
 		}
 	}
 
-	return { getPoolCandles, getNewSolanaPools };
+	return { getPoolCandles, getNewSolanaPools, getTrendingSolanaPools, getTopSolanaPools };
 }
 
 const client = createGeckoTerminalClient();
@@ -122,5 +139,7 @@ module.exports = {
 	createGeckoTerminalClient,
 	normalizeCandles,
 	getPoolCandles: client.getPoolCandles,
-	getNewSolanaPools: client.getNewSolanaPools
+	getNewSolanaPools: client.getNewSolanaPools,
+	getTrendingSolanaPools: client.getTrendingSolanaPools,
+	getTopSolanaPools: client.getTopSolanaPools
 };

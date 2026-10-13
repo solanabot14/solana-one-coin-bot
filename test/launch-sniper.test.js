@@ -45,9 +45,15 @@ test("a young or inactive exact pool can be observed before it qualifies for ent
   assert.equal(qualifiesPoolObservation({ ...young, pairAddress: null }, now), false);
 });
 
-test("rejects missing or stale pair age", () => {
-  assert.equal(qualifiesLaunchCandidate(candidate({ pairCreatedAt: undefined }), now), false);
+test("the default launch lane stays at 30 minutes and mature discovery accepts pools through 72 hours", () => {
   assert.equal(qualifiesLaunchCandidate(candidate({ pairCreatedAt: now - 31 * 60 * 1000 }), now), false);
+  assert.equal(qualifiesLaunchCandidate(candidate({ pairCreatedAt: now - 71 * 60 * 60 * 1000 }), now,
+    thresholds.minimumLiquidityUsd, thresholds.minimumVolume24hUsd, 72 * 60 * 60 * 1000), true);
+  assert.equal(qualifiesPoolObservation(candidate({ chainId: "solana", tokenAddress: "mint-A", pairAddress: "pool-A",
+    pairCreatedAt: now - 71 * 60 * 60 * 1000 }), now, 72 * 60 * 60 * 1000), true);
+  assert.equal(qualifiesPoolObservation(candidate({ pairCreatedAt: now - 73 * 60 * 60 * 1000 }), now,
+    72 * 60 * 60 * 1000), false);
+  assert.equal(qualifiesLaunchCandidate(candidate({ pairCreatedAt: undefined }), now), false);
   assert.equal(qualifiesLaunchCandidate(candidate({ pairCreatedAt: now + 1000 }), now), false);
 });
 

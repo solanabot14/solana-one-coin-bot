@@ -16,7 +16,8 @@ const { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD,
 const MAX_OPEN_POSITIONS = 3;
 const SCAN_INTERVAL_MS = 30000;
 const POSITION_MONITOR_MS = 2000;
-const MINIMUM_LIQUIDITY_LOCK_PERCENT = 70;
+const MINIMUM_LIQUIDITY_LOCK_PERCENT = 50;
+const MAX_PAIR_AGE_MINUTES = 72 * 60;
 const prebuy = require("./profitSniperPrebuy").createEntryGuard();
 
 function statePath(fileName = "profitSniperTradingData.json") {
@@ -40,17 +41,17 @@ function estimateExecutionCosts({ amountUsd, liquidityUsd }) {
 
 const { qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit, selectUniqueMintCandidates } = strategy;
 
-let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, source: "GeckoTerminal new pools + DexScreener + RugCheck" };
+let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, source: "GeckoTerminal new, trending and top pools (0-72h) + exact DexScreener pairs + RugCheck" };
 const entryGuard = createSniperEntryGuard();
 
 async function discoverCandidates(options = {}) {
   const candidates = await launchSniper.discoverLaunchCandidates({ ...options, minimumLiquidityUsd: MIN_LIQUIDITY_USD,
-    minimumVolume24hUsd: MIN_VOLUME_24H_USD, includeObservationCandidates: true });
+    minimumVolume24hUsd: MIN_VOLUME_24H_USD, includeObservationCandidates: true,
+    includeMaturePools: true, maximumPairAgeMs: MAX_PAIR_AGE_MINUTES * 60 * 1000 });
   const now = Date.now();
   const evaluated = candidates.map(coin => {
     const poolStability = entryGuard.observe(coin, now);
     const failures = getMomentumFailureReasons(coin, now);
-    if (!["BUY", "STRONG BUY"].includes(coin.signal)) failures.push("signal");
     if (!failures.length && !poolStability.ready) failures.push("poolStability");
     return { coin, failures };
   });
@@ -60,7 +61,9 @@ async function discoverCandidates(options = {}) {
   }
   const qualified = selectUniqueMintCandidates(evaluated.filter(item => item.failures.length === 0).map(item => item.coin)
     .sort((a, b) => Number(b.score || 0) - Number(a.score || 0) || Number(b.volume5m || 0) - Number(a.volume5m || 0)))
-    .map(coin => ({ ...coin, reasons: [...(coin.reasons || []), "Original BUY/STRONG BUY signal, activity + momentum filters passed", "Exact identity: Solana mint " + coin.tokenAddress + "; pool " + coin.pairAddress] }));
+    .map(coin => ({ ...coin, signal: "ORDER FLOW BUY",
+      reasons: [...(coin.reasons || []), "Direct order-flow, activity and momentum gates passed",
+        "Exact identity: Solana mint " + coin.tokenAddress + "; pool " + coin.pairAddress] }));
   const samples = evaluated.slice(0, 3).map(({ coin, failures }) => ({
     symbol: coin.symbol || null,
     tokenAddress: coin.tokenAddress || null,
@@ -75,10 +78,10 @@ async function discoverCandidates(options = {}) {
   lastScanDiagnostics = {
     state: "scan_complete",
     updatedAt: new Date(now).toISOString(),
-    source: "GeckoTerminal new pools + DexScreener + RugCheck",
+    source: "GeckoTerminal new, trending and top pools (0-72h) + exact DexScreener pairs + RugCheck",
     poolsReceived: scanState?.poolsReceived ?? null,
-    recentPools: scanState?.poolsTracked ?? null,
-    activityQualified: candidates.filter(coin => launchSniper.qualifiesLaunchCandidate(coin, now, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD)).length,
+    recentPools: candidates.length,
+    activityQualified: candidates.filter(coin => launchSniper.qualifiesLaunchCandidate(coin, now, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MAX_PAIR_AGE_MINUTES * 60 * 1000)).length,
     momentumQualified: qualified.length,
     momentumRejectedGates: rejectedGates,
     candidateSamples: samples,
@@ -127,11 +130,12 @@ const bot = createBot({
   botLabel: "Paper Profit Sniper",
   reentryStateFile: statePath("profitSniperReentryState-reset-20261013T144522Z.json"),
   maxOpenPositions: MAX_OPEN_POSITIONS,
-  maxCandidateAgeMinutes: 30,
+  maxCandidateAgeMinutes: MAX_PAIR_AGE_MINUTES,
   minimumLiquidityUsd: MIN_LIQUIDITY_USD,
   minimumVolume24hUsd: MIN_VOLUME_24H_USD,
   minimumLiquidityLockPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT,
-  acceptedSignals: ["BUY", "STRONG BUY"],
+  reentryMinimumLpLockPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT,
+  acceptedSignals: ["ORDER FLOW BUY"],
   requireLiquidityLock: true,
   allowUnknownLiquidityLock: false,
   useReentryGuards: true,
@@ -182,9 +186,9 @@ function getStatus() {
     minimumLiquidityLockPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT,
     entryVerification: prebuy.getStatus(),
     strategy: { hardStopPercent: HARD_STOP_PERCENT, tp1Percent: TAKE_PROFIT_1_PERCENT,
-      tp1SellPercent: TAKE_PROFIT_1_SELL_PERCENT, tp1OriginalPositionSellPercent: 50,
-      tp2Percent: TAKE_PROFIT_2_PERCENT, tp2OriginalPositionSellPercent: 50,
-      tp2SellRemainingPercent: TAKE_PROFIT_2_SELL_PERCENT, runnerOriginalPositionPercent: 0,
+      tp1SellPercent: TAKE_PROFIT_1_SELL_PERCENT, tp1OriginalPositionSellPercent: TAKE_PROFIT_1_SELL_PERCENT,
+      tp2Percent: TAKE_PROFIT_2_PERCENT, tp2OriginalPositionSellPercent: 40,
+      tp2SellRemainingPercent: TAKE_PROFIT_2_SELL_PERCENT, runnerOriginalPositionPercent: 20,
       trailingStopPercent: TRAILING_STOP_PERCENT,
       postTp1FloorPercent: PROFIT_FLOOR_AFTER_TP1_PERCENT, compoundRates: COMPOUND_RATES,
       maxOpenPositions: MAX_OPEN_POSITIONS, minimumTradeUsd: MINIMUM_TRADE_USD,
@@ -209,7 +213,7 @@ module.exports = {
   chooseExit,
   estimateExecutionCosts,
   thresholds: {
-    maximumPairAgeMinutes: 30,
+    maximumPairAgeMinutes: MAX_PAIR_AGE_MINUTES,
     minimumPairAgeMinutes: MIN_PAIR_AGE_MS / 60000,
     minimumLiquidityUsd: MIN_LIQUIDITY_USD,
     minimumVolume24hUsd: MIN_VOLUME_24H_USD,
