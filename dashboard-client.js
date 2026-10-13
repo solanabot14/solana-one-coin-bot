@@ -367,11 +367,11 @@ function renderSlotSimulation(d) {
 }
 
 function showTab(name) {
-	const botActive = name === "bot";
-	$("botPanel").className = "tab-panel" + (botActive ? " active" : "");
-	$("slotPanel").className = "tab-panel" + (!botActive ? " active" : "");
-	$("botTab").className = "tab-button" + (botActive ? " active" : "");
-	$("slotTab").className = "tab-button" + (!botActive ? " active" : "");
+  for (const key of ["bot","slot","gemini"]) {
+    const active = name === key;
+    $(key + "Panel").className = "tab-panel" + (active ? " active" : "");
+    $(key + "Tab").className = "tab-button" + (active ? " active" : "");
+  }
 }
 
 function renderData(d) {
@@ -424,7 +424,38 @@ $("stopButton").addEventListener("click", () => control("stop"));
 $("botTab").addEventListener("click", () => showTab("bot"));
 $("slotTab").addEventListener("click", () => showTab("slot"));
 
-async function pollStatus() { await refreshStatus(); await refreshJanStatus(); setTimeout(pollStatus, 2000); }
+
+async function refreshGemini() {
+  try {
+    const [d, status] = await Promise.all([request("/api/gemini/data"), request("/api/gemini/status")]);
+    $("geminiStatus").textContent = status.running ? "GEMINI ONLINE · PAPER" : "GEMINI OFFLINE";
+    $("geminiStatus").className = "status" + (status.running ? " online" : "");
+    $("geminiStarting").textContent = money(d.startingBalanceUsd);
+    $("geminiCash").textContent = money(d.cashUsd);
+    const position = d.position;
+    const priceNow = Number(d.live?.priceUsd || position?.entryPrice || 0);
+    const value = position ? Number(position.quantity) * priceNow : 0;
+    $("geminiEquity").textContent = money(Number(d.cashUsd) + value);
+    $("geminiPnl").textContent = money(d.totalRealizedPnlUsd);
+    $("geminiOpen").textContent = position ? escapeHtml(position.symbol) : "None";
+    $("geminiScan").textContent = d.lastScanAt ? new Date(d.lastScanAt).toLocaleTimeString() : "—";
+    $("geminiPosition").innerHTML = position ? '<div class="grid"><div class="metric"><div class="metric-label">Coin</div><div class="metric-value">' + escapeHtml(position.symbol) + '</div></div><div class="metric"><div class="metric-label">Entry</div><div class="metric-value">' + price(position.entryPrice) + '</div></div><div class="metric"><div class="metric-label">Current</div><div class="metric-value">' + price(priceNow) + '</div></div><div class="metric"><div class="metric-label">Return</div><div class="metric-value">' + pct(d.live?.pnlPercent || 0) + '</div></div><div class="metric"><div class="metric-label">Remaining</div><div class="metric-value">' + Number(position.remainingPercent).toFixed(0) + '%</div></div></div><div class="reasons">TP1 +50%: ' + (position.tp1Done ? "DONE" : "WAITING") + ' · TP2 +100%: ' + (position.tp2Done ? "DONE" : "WAITING") + ' · Runner trail: 15%<br>Hard stop: −20% · Time exit: 15m between −5% and +10%</div>' : "No open Gemini position.";
+    $("geminiHistory").innerHTML = (d.history || []).slice(0,25).map(x => '<tr><td>' + escapeHtml(new Date(x.time).toLocaleString()) + '</td><td>' + escapeHtml(x.type) + '</td><td>' + escapeHtml(x.symbol) + '</td><td>' + price(x.exitPrice || x.entryPrice) + '</td><td>' + money(x.amountUsd) + '</td><td>' + (x.pnlUsd == null ? "—" : money(x.pnlUsd)) + '</td><td>' + escapeHtml(x.reason || "PAPER BUY") + '</td><td>' + (x.pairAddress ? '<a class="small-link" target="_blank" rel="noopener noreferrer" href="https://dexscreener.com/solana/' + encodeURIComponent(x.pairAddress) + '">Chart</a>' : "—") + '</td></tr>').join("") || '<tr><td colspan="8">No paper fills yet.</td></tr>';
+    $("geminiRejections").innerHTML = (d.rejections || []).slice(0,30).map(x => '<tr><td>' + escapeHtml(new Date(x.time).toLocaleTimeString()) + '</td><td>' + escapeHtml(x.symbol) + '</td><td>' + escapeHtml(x.reason) + '</td><td>' + escapeHtml(JSON.stringify(x.details)) + '</td></tr>').join("") || '<tr><td colspan="4">No rejections recorded.</td></tr>';
+    if (status.error) $("geminiStatus").title = status.error;
+  } catch (error) { $("geminiPosition").textContent = "Gemini data unavailable: " + error.message; }
+}
+async function geminiControl(action) {
+  $("geminiStart").disabled = $("geminiStop").disabled = true;
+  try { await request("/api/gemini/" + action, {method:"POST", headers:{"X-Bot-Control":"1"}}); await refreshGemini(); }
+  catch (error) { $("geminiPosition").textContent = error.message; }
+  finally { $("geminiStart").disabled = $("geminiStop").disabled = false; }
+}
+$("geminiTab").addEventListener("click", () => showTab("gemini"));
+$("geminiStart").addEventListener("click", () => geminiControl("start"));
+$("geminiStop").addEventListener("click", () => geminiControl("stop"));
+
+async function pollStatus() { await refreshStatus(); await refreshJanStatus(); await refreshGemini(); setTimeout(pollStatus, 2000); }
 async function pollData() { await refreshData(); setTimeout(pollData, 5000); }
 pollStatus();
 pollData();
