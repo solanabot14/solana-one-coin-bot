@@ -321,7 +321,7 @@ if (require.main === module) {
   swarm.start();
   buyPriorityLock85.startBot();
   launchSniper.startBot();
-  profitSniper.startBot();
+  // Pause Profit Sniper while correcting invalid paper fills.\n  // Re-enable only after account reconciliation and price safeguards are deployed.
   server.listen(config.port, config.host, () => {
     walletCopy.startBot();
     console.log("Dashboard listening on " + config.host + ":" + config.port);
