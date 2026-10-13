@@ -430,9 +430,57 @@ function stopBot() {
 }
 function getPortfolio() { return portfolio(); }
 function getStatus() { return status(); }
+async function closeAllPositions(reason = "MANUAL PAPER CLOSE") {
+  const results = [];
+  for (const position of [...state.positions]) {
+    const mint = position.tokenAddress;
+    try {
+      let quote = null;
+      try { quote = await marketData(mint, { pairAddress: position.pairAddress }); } catch (_) {}
+      const price = Number(quote && quote.priceUsd) || 0;
+      const quantity = Math.max(0, Number(position.quantity) || 0);
+      const originalQuantity = Math.max(quantity, Number(position.originalQuantity) || 0);
+      const liquidity = Number(quote && quote.liquidityUsd) || 0;
+      const grossValue = price > 0 ? quantity * price : 0;
+      const impactRate = liquidity > 0 && grossValue > 0
+        ? grossValue / (liquidity / 2 + grossValue)
+        : (grossValue > 0 ? 1 : 0);
+      const poolFee = grossValue * POOL_FEE_RATE;
+      const slippage = grossValue * impactRate;
+      const netValue = Math.max(0, grossValue - poolFee - slippage - (grossValue > 0 ? NETWORK_FEE_USD : 0));
+      const costBasis = originalQuantity > 0
+        ? Number(position.amountInvested || 0) * quantity / originalQuantity
+        : Number(position.amountInvested || 0);
+      const complete = quantity >= Number(position.quantity || 0) * (1 - 1e-10);
+      state.cashBalance = round(state.cashBalance + netValue);
+      state.history.push({
+        type: "SELL", id: position.id + ":manual-close:" + Date.now(),
+        positionId: position.positionId, tokenAddress: mint, symbol: position.symbol,
+        name: position.name, pairAddress: position.pairAddress,
+        strategyVersion: position.strategyVersion, entryTime: position.entryTime,
+        exitTime: new Date().toISOString(), entryPrice: position.entryPrice,
+        exitPrice: price, quantitySold: quantity, percentSold: complete ? 100 : 0,
+        saleValue: netValue, pnl: netValue - costBasis, amountInvested: costBasis,
+        entryLiquidityUsd: position.entryLiquidityUsd, highestPrice: Math.max(Number(position.highestPrice) || 0, price),
+        reason: liquidity > 0 && price > 0 ? reason : reason + " · ZERO-RECOVERY PAPER WRITE-OFF",
+        manualClose: true, estimatedFeesUsd: poolFee + (grossValue > 0 ? NETWORK_FEE_USD : 0),
+        estimatedSlippageUsd: slippage, grossPnl: grossValue - costBasis
+      });
+      position.quantity = 0;
+      state.positions = state.positions.filter(item => item !== position);
+      state.stats.sells++;
+      results.push({ success: true, symbol: position.symbol, writeOff: !(liquidity > 0 && price > 0), saleValue: netValue });
+    } catch (error) {
+      results.push({ success: false, symbol: position.symbol, message: error.message });
+    }
+  }
+  saveState();
+  const closedCount = results.filter(result => result.success).length;
+  return { success: results.every(result => result.success), closedCount, results };
+}
 
 module.exports = {
   WALLET, STARTING_BALANCE, TRADE_SIZE, MAX_POSITIONS,
-  startBot, stopBot, getPortfolio, getStatus, authenticateWebhook, handleWebhookPayload,
+  startBot, stopBot, getPortfolio, getStatus, closeAllPositions, authenticateWebhook, handleWebhookPayload,
   swapDeltas, processTransaction, pollOnce, setMarketData: fn => { marketData = fn; }
 };
