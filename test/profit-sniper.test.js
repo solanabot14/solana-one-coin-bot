@@ -45,34 +45,30 @@ test("low liquidity forces a full paper exit while unavailable liquidity data is
   assert.equal(chooseExit({ position, currentPrice: 100, freshData: {} }), null);
 });
 
-test("exit ladder sells 45% at +10%, 45% of original at +20%, then trails the final 10% by 10%", () => {
+test("original exits sell half at +10%, exit the remainder at +20%, protect at +2%, and stop at -8%", () => {
   const position = { entryPrice: 100, firstTakeProfitDone: false };
   assert.deepEqual(chooseExit({ position, currentPrice: 92 }), { percent: 100, reason: "HARD STOP -8%" });
   assert.equal(chooseExit({ position, currentPrice: 109 }), null);
   assert.deepEqual(chooseExit({ position, currentPrice: 110 }), {
-    percent: 45,
-    reason: "TAKE PROFIT 1 - SELL 45% OF ORIGINAL POSITION",
+    percent: 50,
+    reason: "TAKE PROFIT 1 - SELL 50% OF ORIGINAL POSITION",
     takeProfit: "firstTakeProfitDone"
   });
 
   const afterFirstSale = { ...position, firstTakeProfitDone: true };
-  assert.deepEqual(chooseExit({ position: afterFirstSale, currentPrice: 100 }), {
-    percent: 100, reason: "BREAKEVEN STOP AFTER TP1"
+  assert.deepEqual(chooseExit({ position: afterFirstSale, currentPrice: 102 }), {
+    percent: 100, reason: "PROFIT FLOOR AFTER TP1 +2%"
   });
   assert.equal(chooseExit({ position: afterFirstSale, currentPrice: 119 }), null);
   assert.deepEqual(chooseExit({ position: afterFirstSale, currentPrice: 120 }), {
-    percent: 45 / 55 * 100,
-    reason: "TAKE PROFIT 2 - SELL 45% OF ORIGINAL POSITION",
-    takeProfit: "secondTakeProfitDone"
+    percent: 100, reason: "TAKE PROFIT 2 - EXIT REMAINDER AT +20%"
   });
 
-  const runner = { ...afterFirstSale, secondTakeProfitDone: true, highestPrice: 150 };
-  assert.equal(chooseExit({ position: runner, currentPrice: 136.5 }), null);
-  assert.deepEqual(chooseExit({ position: runner, currentPrice: 135 }), {
-    percent: 100, reason: "TRAILING STOP -10% FROM HIGH"
+  const legacyRunner = { ...afterFirstSale, secondTakeProfitDone: true, highestPrice: 150 };
+  assert.deepEqual(chooseExit({ position: legacyRunner, currentPrice: 110 }), {
+    percent: 100, reason: "ORIGINAL TAKE PROFIT 2 - EXIT REMAINDER"
   });
 });
-
 test("momentum diagnostics name the failed Sniper gate", () => {
   assert.deepEqual(getMomentumFailureReasons(candidate({ priceChange5m: 0 })), ["momentum5m"]);
   assert.deepEqual(getMomentumFailureReasons(candidate({ tokenAddress: "EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J" })), ["blockedTokenAddress"]);
