@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { qualifiesLaunchCandidate, thresholds } = require("../launchSniper");
+const { mapLaunchPair, qualifiesLaunchCandidate, thresholds } = require("../launchSniper");
 
 const now = 1_800_000_000_000;
 function candidate(overrides = {}) {
@@ -14,6 +14,19 @@ function candidate(overrides = {}) {
     ...overrides
   };
 }
+
+test("maps duplicate tickers only to their exact Solana mint and pool", () => {
+  const descriptorA = { tokenAddress: "mint-A", poolAddress: "pool-A", createdAt: now - 1000 };
+  const descriptorB = { tokenAddress: "mint-B", poolAddress: "pool-B", createdAt: now - 1000 };
+  const pairA = { chainId: "solana", pairAddress: "pool-A",
+    baseToken: { address: "mint-A", symbol: "SAME", name: "Same" },
+    priceUsd: "1", liquidity: { usd: 20000 }, volume: { m5: 2000, h24: 0 },
+    priceChange: { m5: 1 }, txns: { m5: { buys: 8, sells: 4 } } };
+  assert.equal(mapLaunchPair(pairA, descriptorA).tokenAddress, "mint-A");
+  assert.equal(mapLaunchPair(pairA, descriptorA).pairAddress, "pool-A");
+  assert.equal(mapLaunchPair(pairA, descriptorB), null);
+  assert.equal(mapLaunchPair({ ...pairA, baseToken: { ...pairA.baseToken, address: "mint-B" } }, descriptorA), null);
+});
 
 test("accepts a fresh, liquid pair with active buy flow", () => {
   assert.equal(qualifiesLaunchCandidate(candidate(), now), true);
