@@ -16,7 +16,7 @@ const { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD,
 const MAX_OPEN_POSITIONS = 3;
 const SCAN_INTERVAL_MS = 30000;
 const POSITION_MONITOR_MS = 2000;
-const MINIMUM_LIQUIDITY_LOCK_PERCENT = 30;
+const MINIMUM_LIQUIDITY_LOCK_PERCENT = 70;
 const prebuy = require("./profitSniperPrebuy").createEntryGuard();
 
 function statePath(fileName = "profitSniperTradingData.json") {
@@ -50,6 +50,7 @@ async function discoverCandidates(options = {}) {
   const evaluated = candidates.map(coin => {
     const poolStability = entryGuard.observe(coin, now);
     const failures = getMomentumFailureReasons(coin, now);
+    if (!["BUY", "STRONG BUY"].includes(coin.signal)) failures.push("signal");
     if (!failures.length && !poolStability.ready) failures.push("poolStability");
     return { coin, failures };
   });
@@ -59,7 +60,7 @@ async function discoverCandidates(options = {}) {
   }
   const qualified = selectUniqueMintCandidates(evaluated.filter(item => item.failures.length === 0).map(item => item.coin)
     .sort((a, b) => Number(b.score || 0) - Number(a.score || 0) || Number(b.volume5m || 0) - Number(a.volume5m || 0)))
-    .map(coin => ({ ...coin, signal: "BUY", reasons: [...(coin.reasons || []), "Profit Sniper activity + momentum filters passed", "Exact identity: Solana mint " + coin.tokenAddress + "; pool " + coin.pairAddress] }));
+    .map(coin => ({ ...coin, reasons: [...(coin.reasons || []), "Original BUY/STRONG BUY signal, activity + momentum filters passed", "Exact identity: Solana mint " + coin.tokenAddress + "; pool " + coin.pairAddress] }));
   const samples = evaluated.slice(0, 3).map(({ coin, failures }) => ({
     symbol: coin.symbol || null,
     tokenAddress: coin.tokenAddress || null,
@@ -187,7 +188,7 @@ function getStatus() {
       trailingStopPercent: TRAILING_STOP_PERCENT,
       postTp1FloorPercent: PROFIT_FLOOR_AFTER_TP1_PERCENT, compoundRates: COMPOUND_RATES,
       maxOpenPositions: MAX_OPEN_POSITIONS, minimumTradeUsd: MINIMUM_TRADE_USD,
-      sizingMode: "fixed", fixedTradeUsd: MINIMUM_TRADE_USD },
+      sizingMode: "compounding" },
     scanDiagnostics: lastScanDiagnostics
   };
 }

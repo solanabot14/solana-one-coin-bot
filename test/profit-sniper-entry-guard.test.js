@@ -40,17 +40,15 @@ test("requires three observations over time and resets after liquidity falls", (
   assert.equal(guard.observe({ ...candidate, liquidityUsd: 20_000 }).ready, false);
 });
 
-test("observations collected before the two-minute age gate can be used at the gate", async () => {
+test("a new pool can qualify without a two-minute age floor after stability checks", async () => {
   const young = { ...candidate, pairCreatedAt: start - 30_000 };
   const { guard, advance, portfolio } = rig({ freshPair: { ...pair, pairCreatedAt: young.pairCreatedAt } });
-  assert.deepEqual(getMomentumFailureReasons(young, start), ["age"]);
+  assert.deepEqual(getMomentumFailureReasons(young, start), []);
   guard.observe(young);
   advance(30_000); guard.observe(young);
   advance(30_000);
   assert.equal(guard.observe(young).ready, true);
-  assert.deepEqual(getMomentumFailureReasons(young, start + 60_000), ["age"]);
-  advance(30_000);
-  assert.deepEqual(getMomentumFailureReasons(young, start + 90_000), []);
+  assert.deepEqual(getMomentumFailureReasons(young, start + 60_000), []);
   assert.equal((await guard.validate(young, { portfolio })).allowed, true);
 });
 

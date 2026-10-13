@@ -21,18 +21,19 @@ function candidate(overrides = {}) {
 
 test("fresh, active, upward momentum candidates pass; stale, weak, or overheated candidates fail", () => {
   assert.equal(qualifiesMomentumCandidate(candidate()), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 0.1 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 0.25 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 0.1 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: -0.01 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 0 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 4000 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 250000 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 60 * 1000 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 60 * 1000 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 31 * 60 * 1000 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: -1 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 21 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 5, sells5m: 7 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ signal: "AVOID" })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ signal: "WAIT" })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ signal: "AVOID" })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ signal: "WAIT" })), false);
 });
 
 test("same ticker is distinguished by mint and duplicate pools collapse to the best exact mint", () => {
@@ -48,12 +49,16 @@ test("same ticker is distinguished by mint and duplicate pools collapse to the b
   assert.equal(selected.find(x => x.tokenAddress === "mint-B").pairAddress, "pool-B");
 });
 
-test("trade sizing stays fixed at $10 regardless of equity or past entries", () => {
-  for (const cashBalance of [10, 100, 200, 6000]) {
-    for (const entries of [0, 1, 2, 3, 20]) {
-      assert.deepEqual(getBuySizing({ cashBalance, positions: [], history: Array.from({length: entries}, () => ({type: "BUY"})) }), { amountInvested: 10 });
-    }
+test("trade sizing compounds 10%, 12.5%, then 15%, repeating with a $10 minimum", () => {
+  const expectedRates = [0.10, 0.125, 0.15, 0.10, 0.125];
+  for (const [entries, expectedRate] of expectedRates.entries()) {
+    const result = getBuySizing({ cashBalance: 200, positions: [],
+      history: Array.from({length: entries}, () => ({type: "BUY"})) });
+    assert.equal(result.compoundRate, expectedRate);
+    assert.equal(result.amountInvested, Math.max(10, 200 * expectedRate));
   }
+  assert.deepEqual(getBuySizing({ cashBalance: 50, positions: [], history: [] }),
+    { amountInvested: 10, compoundRate: 0.10 });
 });
 
 test("low liquidity forces a full paper exit while unavailable liquidity data is ignored", () => {
