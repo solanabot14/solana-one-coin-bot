@@ -744,7 +744,53 @@ th,td{
 
 </div>
 
-<div id="geminiPanel" class="tab-panel">\n<div class="card section"><h2>Gemini Bot <span class="badge">PAPER ONLY</span></h2><p class="muted">Independent scanner and paper account. Gemini does not submit on-chain swaps.</p><div class="controls"><div id="geminiStatus" class="status">GEMINI OFFLINE</div><button class="start" id="geminiStart">START GEMINI</button><button class="stop" id="geminiStop">STOP GEMINI</button></div></div>\n<div class="grid section"><div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value" id="geminiStarting">—</div></div><div class="metric"><div class="metric-label">Cash</div><div class="metric-value" id="geminiCash">—</div></div><div class="metric"><div class="metric-label">Equity</div><div class="metric-value" id="geminiEquity">—</div></div><div class="metric"><div class="metric-label">Realized P/L</div><div class="metric-value" id="geminiPnl">—</div></div><div class="metric"><div class="metric-label">Open Position</div><div class="metric-value" id="geminiOpen">None</div></div><div class="metric"><div class="metric-label">Last Scan</div><div class="metric-value" id="geminiScan">—</div></div></div>\n<div class="card section"><h2>Gemini Position</h2><div id="geminiPosition" class="empty">No open Gemini position.</div></div>\n<div class="card section"><h2>Recent Paper Fills</h2><div style="overflow-x:auto"><table><thead><tr><th>Time</th><th>Side</th><th>Coin</th><th>Price</th><th>Amount</th><th>P/L</th><th>Reason</th><th>Chart</th></tr></thead><tbody id="geminiHistory"></tbody></table></div></div>\n<div class="card section"><h2>Recent Safety Rejections</h2><div style="overflow-x:auto"><table><thead><tr><th>Time</th><th>Coin</th><th>Reason</th><th>Details</th></tr></thead><tbody id="geminiRejections"></tbody></table></div></div>\n</div>\n\n<div id="slotPanel" class="tab-panel">
+<div id="geminiPanel" class="tab-panel">
+
+<div class="card section">
+  <h2>Gemini Bot <span class="badge">PAPER ONLY</span></h2>
+  <p class="muted">Independent paper account. Gemini does not submit on-chain swaps.</p>
+  <div class="controls"><div id="geminiStatus" class="status">GEMINI OFFLINE</div><button class="start" id="geminiStart">START GEMINI</button><button class="stop" id="geminiStop">STOP GEMINI</button></div>
+</div>
+
+<div class="grid section">
+  <div class="metric"><div class="metric-label">Starting Balance</div><div class="metric-value" id="geminiStarting">—</div></div>
+  <div class="metric"><div class="metric-label">Cash</div><div class="metric-value" id="geminiCash">—</div></div>
+  <div class="metric"><div class="metric-label">Equity</div><div class="metric-value" id="geminiEquity">—</div></div>
+  <div class="metric"><div class="metric-label">Total P/L</div><div class="metric-value" id="geminiPnl">—</div></div>
+  <div class="metric"><div class="metric-label">Completed Positions</div><div class="metric-value" id="geminiTrades">0</div></div>
+  <div class="metric"><div class="metric-label">Win Rate</div><div class="metric-value" id="geminiWinRate">0%</div></div>
+  <div class="metric"><div class="metric-label">Last Scan</div><div class="metric-value" id="geminiScan">—</div></div>
+</div>
+
+<div class="card section">
+  <h2>Overall Performance</h2>
+  <div class="grid">
+    <div class="metric"><div class="metric-label">Winners</div><div class="metric-value green" id="geminiWinners">0</div></div>
+    <div class="metric"><div class="metric-label">Losers</div><div class="metric-value red" id="geminiLosers">0</div></div>
+    <div class="metric"><div class="metric-label">Gross Profit</div><div class="metric-value green" id="geminiGrossProfit">$0.00</div></div>
+    <div class="metric"><div class="metric-label">Gross Loss</div><div class="metric-value red" id="geminiGrossLoss">$0.00</div></div>
+    <div class="metric"><div class="metric-label">Net P/L</div><div class="metric-value" id="geminiNet">$0.00</div></div>
+    <div class="metric"><div class="metric-label">Profit Factor</div><div class="metric-value" id="geminiFactor">—</div></div>
+    <div class="metric"><div class="metric-label">Avg Winner</div><div class="metric-value green" id="geminiAvgWinner">—</div></div>
+    <div class="metric"><div class="metric-label">Avg Loser</div><div class="metric-value red" id="geminiAvgLoser">—</div></div>
+    <div class="metric"><div class="metric-label">Avg Hold Time</div><div class="metric-value" id="geminiAvgHold">—</div></div>
+    <div class="metric"><div class="metric-label">Avg Max Gain</div><div class="metric-value" id="geminiAvgMaxGain">—</div></div>
+  </div>
+</div>
+
+<div class="card section"><h2>Gemini Position</h2><div id="geminiPosition" class="empty">No open Gemini position.</div></div>
+
+<div class="card section">
+  <h2>Completed Positions</h2>
+  <div style="overflow-x:auto"><table><thead><tr><th>Coin</th><th>Entry</th><th>Average Exit</th><th>Invested</th><th>P/L</th><th>Return</th><th>Max Gain</th><th>Hold Time</th><th>Exit Reason</th><th>Chart</th></tr></thead><tbody id="geminiCompleted"></tbody></table></div>
+</div>
+
+<div class="card section"><h2>Recent Paper Fills</h2><div style="overflow-x:auto"><table><thead><tr><th>Time</th><th>Side</th><th>Coin</th><th>Price</th><th>Amount</th><th>P/L</th><th>Reason</th><th>Chart</th></tr></thead><tbody id="geminiHistory"></tbody></table></div></div>
+
+<div class="card section"><h2>Recent Safety Rejections</h2><div style="overflow-x:auto"><table><thead><tr><th>Time</th><th>Coin</th><th>Reason</th><th>Details</th></tr></thead><tbody id="geminiRejections"></tbody></table></div></div>
+</div>
+
+<div id="slotPanel" class="tab-panel">
 
 <div class="card section">
   <h2>Swarm</h2>
