@@ -239,7 +239,9 @@
     var rows=[];
     systems.forEach(function(system){(system.positions||[]).forEach(function(position){rows.push(livePositionRow(system.label,position,''));});});
     swarmSlots().forEach(function(slot){if(slot.position)rows.push(livePositionRow('Swarm',slot,slot.genesisId||slot.swarmId||''));});
-    return '<div class="table-panel live-trading-panel"><div class="table-head"><div><h2>LIVE TRADING NOW</h2><span class="sub">Open paper positions by bot · refreshed with dashboard data</span></div><span class="badge">LIVE POSITIONS</span></div>'+table(['BOT','GENESIS / SWARM','COIN','INVESTED','ENTRY PRICE','CURRENT PRICE','UNREALIZED P&L','RETURN','HOLD TIME','DEXSCREENER'],rows,'No open positions in the latest bot feeds')+'</div>';
+    var closeAllButton=rows.length?'<button type="button" class="control-button" data-control="close-all-paper-positions">CLOSE ALL PAPER POSITIONS</button>':'';
+    var notice=state.controlNotice?'<div class="notice">'+esc(state.controlNotice)+'</div>':'';
+    return '<div class="table-panel live-trading-panel"><div class="table-head"><div><h2>LIVE TRADING NOW</h2><span class="sub">Open paper positions by bot · refreshed with dashboard data</span></div><span class="badge">LIVE POSITIONS</span></div>'+closeAllButton+notice+table(['BOT','GENESIS / SWARM','COIN','INVESTED','ENTRY PRICE','CURRENT PRICE','UNREALIZED P&L','RETURN','HOLD TIME','DEXSCREENER'],rows,'No open positions in the latest bot feeds')+'</div>';+table(['BOT','GENESIS / SWARM','COIN','INVESTED','ENTRY PRICE','CURRENT PRICE','UNREALIZED P&L','RETURN','HOLD TIME','DEXSCREENER'],rows,'No open positions in the latest bot feeds')+'</div>';
   }
   function comparisonSystems() { var sw=state.swarm||{};return systems.concat([{id:'swarm',name:'Swarm',label:'Swarm · V3.1',mode:'PAPER',account:{startingBalance:n(sw.startingCapital)},trades:swarmTrades(),positions:swarmSlots().filter(function(x){return !!x.position;}).map(function(x){return {position:x.position,live:x.live,pnl:x.live&&x.live.pnl};}),equity:n(sw.totalCapital),totalPnl:n(sw.totalPnl),totalPnlPercent:n(sw.totalPnlPercent),running:!!sw.running,historyLimited:true}]); }
   function table(headers, rows, emptyText) {
@@ -596,9 +598,16 @@
       control.disabled=true;
       request('/api/'+verb,{method:'POST',headers:{'x-bot-control':'1'}})
         .then(function(result){
-          state.controlNotice=result.writeOff
-            ? (result.symbol||'Position')+' closed in paper mode with $0 recovery because no tradable liquidity was available; the slot is free.'
-            : (result.symbol||'Position')+' closed in paper mode; the slot is free.';
+          if(verb==='close-all-paper-positions'){
+            var failures=(result.results||[]).filter(function(row){return !row.success;}).length;
+            state.controlNotice=failures
+              ? 'Closed '+int(result.closedCount)+' paper positions; '+int(failures)+' could not be closed.'
+              : 'Closed '+int(result.closedCount)+' open paper positions.';
+          } else {
+            state.controlNotice=result.writeOff
+              ? (result.symbol||'Position')+' closed in paper mode with $0 recovery because no tradable liquidity was available; the slot is free.'
+              : (result.symbol||'Position')+' closed in paper mode; the slot is free.';
+          }
           return loadData();
         })
         .catch(function(error){
