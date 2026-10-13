@@ -222,7 +222,20 @@ function createBot({
       const lock = await checkLiquidityLock(coin.tokenAddress);
       onLiquidityLockCheck(lock, coin);
       if (!isActive(session)) return;
-      if (!Number.isFinite(Number(lock?.lockedPercent)) || Number(lock.lockedPercent) < ENTRY_MIN_LP_LOCK_PERCENT) {
+      const lockedPercent = Number(lock?.lockedPercent);
+      const lockStatusUnavailable = !Number.isFinite(lockedPercent) ||
+        lock?.reason === "LOCK_STATUS_UNAVAILABLE";
+      const confirmedLowLock = Number.isFinite(lockedPercent) &&
+        lockedPercent < ENTRY_MIN_LP_LOCK_PERCENT;
+
+      // A reported low lock is always unsafe and remains a hard rejection.
+      // If RugCheck has no lock data, only a WAIT setup confirmed on two scans
+      // may use the alternate path; direct BUY signals still need confirmed LP.
+      const confirmedLock = Number.isFinite(lockedPercent) &&
+        lockedPercent >= ENTRY_MIN_LP_LOCK_PERCENT;
+      const momentumConfirmedWithoutLock = lockStatusUnavailable &&
+        coin.signal === "WAIT";
+      if (confirmedLowLock || (!confirmedLock && !momentumConfirmedWithoutLock)) {
         console.log(`LP LOCK GATE | ${coin.symbol} | skipped | ${lock?.reason || "LOCK_STATUS_UNAVAILABLE"}`);
         continue;
       }
