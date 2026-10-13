@@ -4,6 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const fs = require("node:fs");
 const { evaluateCandidate } = require("../geminiFilter");
+const { extractTop10Concentration } = require("../geminiSources");
 const { createGeminiTrader } = require("../geminiTrader");
 const { buildGeminiAnalytics } = require("../geminiAnalytics");
 
@@ -47,6 +48,11 @@ test("Gemini analytics count partial fills as one completed position", () => {
   assert.equal(result.stats.winners, 1);
   assert.equal(result.completedTrades[0].pnlUsd, 2.5);
   assert.equal(result.completedTrades[0].returnPercent, 25);
+});
+test("RugCheck pool accounts are excluded before summing top holder concentration", () => {
+  const topHolders = [{ address: "pool-account", owner: "pool-account", pct: 40 }];
+  for (let i = 0; i < 10; i++) topHolders.push({ address: "holder-" + i, owner: "holder-" + i, pct: 4 });
+  assert.equal(extractTop10Concentration({ topHolders, knownAccounts: { "pool-account": { name: "AMM Pool", type: "AMM" } } }), 40);
 });
 test("Gemini paper sells allocate 50%, then 30%, leaving 20% runner", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gemini-test-"));
