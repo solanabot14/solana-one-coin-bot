@@ -343,7 +343,14 @@
   }
   function renderSessionArchive(system) {
     var sessions=system.account.archivedSessions||[];
-    return '<div class="notice">Previous sessions are preserved for research and excluded from fresh account statistics. Open positions are archived snapshots, not completed sales.</div>'+sessions.map(function(session){
+    var excluded=(system.account.excludedTradeAudits||[]).map(function(audit){
+      return '<tr><td>'+esc(audit.history?.[0]?.symbol||'')+'</td><td>'+esc(audit.tokenAddress)+'</td><td>'+esc(audit.reason)+'</td><td>'+int(audit.history?.length||0)+'</td></tr>';
+    });
+    var excludedEvents=(system.account.excludedTradeAudits||[]).flatMap(function(audit){return (audit.history||[]).map(function(row){
+      return '<tr><td>'+esc(dateTime(row.exitTime||row.entryTime))+'</td><td>'+esc(row.symbol)+'</td><td>'+esc(row.type)+'</td><td>'+money(row.amountInvested)+'</td><td>'+money(row.saleValue)+'</td><td>'+money(row.pnl)+'</td><td>'+esc(row.reason||'')+'</td></tr>';
+    });});
+    return '<div class="notice">Previous sessions and excluded paper trades are preserved for research and excluded from fresh account statistics. Open positions are archived snapshots, not completed sales.</div>'+
+      '<div class="table-panel"><div class="table-head"><h2>EXCLUDED PAPER TRADES</h2></div>'+table(['TOKEN','MINT','REASON','EVENTS'],excluded,'No excluded trades')+table(['TIME','TOKEN','TYPE','INVESTED','RECEIVED','P&L','EXIT'],excludedEvents,'No excluded events')+'</div>'+sessions.map(function(session){
       var rows=(session.history||[]).map(function(row){return '<tr><td>'+esc(dateTime(row.exitTime||row.entryTime))+'</td><td>'+esc(row.symbol)+'</td><td>'+esc(row.tokenAddress)+'</td><td>'+esc(row.pairAddress||'')+'</td><td>'+esc(row.type)+'</td><td>'+money(row.amountInvested)+'</td><td>'+money(row.saleValue)+'</td><td>'+money(row.pnl)+'</td><td>'+esc(row.reason||'')+'</td></tr>';});
       var open=session.positions||(session.position?[session.position]:[]);
       return '<div class="table-panel"><div class="table-head"><h2>ARCHIVED SESSION '+esc(dateTime(session.archivedAt))+'</h2><span>Starting '+money(session.startingBalance)+' / cash '+money(session.cashBalance)+' / '+rows.length+' records</span></div>'+table(['TIME','TOKEN','MINT','POOL','TYPE','INVESTED','RECEIVED','P&L','EXIT'],rows,'No historical transactions')+'<div class="notice">Open snapshots: '+esc(open.map(function(p){return p.symbol+' ['+p.tokenAddress+'] quantity '+p.quantity;}).join('; ')||'None')+'</div></div>';

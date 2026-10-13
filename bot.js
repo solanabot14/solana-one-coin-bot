@@ -433,7 +433,9 @@ function createBot({
       if (typeof exitDecision === "function") {
         const action = exitDecision({ position, freshData, currentPrice, profitPercent, now: Date.now() });
         if (action) {
-          const result = sell(currentPrice, action.percent ?? 100, {
+          const result = action.writeOff && typeof trader.writeOff === "function"
+            ? trader.writeOff(expectedPosition, action.reason)
+            : sell(currentPrice, action.percent ?? 100, {
             expectedPosition,
             reason: action.reason,
             takeProfit: action.takeProfit,

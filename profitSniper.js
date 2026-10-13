@@ -3,6 +3,7 @@ const path = require("node:path");
 const launchSniper = require("./launchSniper");
 const market = require("./dexscreener");
 const { createPaperTrader } = require("./paperTrader");
+const { reconcileProfitSniperAccount } = require("./profitSniperReconcile");
 const { createBot } = require("./bot");
 const strategy = require("./profitSniperStrategy");
 const { constants } = strategy;
@@ -81,6 +82,11 @@ async function discoverCandidates(options = {}) {
   return qualified;
 }
 
+const reconciliation = reconcileProfitSniperAccount(statePath());
+const reconciliationReady = reconciliation.applied || ["already-applied", "no-account"].includes(reconciliation.reason);
+if (reconciliation.reason === "account-differs-from-audited-ledger") {
+  console.error("Profit Sniper reconciliation skipped: saved account changed; scanner must stay paused.");
+}
 const trader = createPaperTrader(statePath(), fs, {
   strategyVersion: "Paper-Profit-Sniper-v2-45-45-10",
   startingBalance: 200,
@@ -103,7 +109,7 @@ const bot = createBot({
   positionMonitorMs: POSITION_MONITOR_MS,
   scannerIntervalMs: SCAN_INTERVAL_MS,
   botLabel: "Paper Profit Sniper",
-  reentryStateFile: statePath("profitSniperReentryState-v2.json"),
+  reentryStateFile: statePath("profitSniperReentryState-v3.json"),
   maxOpenPositions: MAX_OPEN_POSITIONS,
   maxCandidateAgeMinutes: 30,
   minimumLiquidityUsd: MIN_LIQUIDITY_USD,
@@ -132,7 +138,9 @@ async function closePosition(positionId) {
   }
   const price = Number(quote?.priceUsd);
   const liquidityUsd = Number(quote?.liquidityUsd);
-  if (!(price > 0) || !(liquidityUsd > 0)) {
+  const unexecutable = price > 0 && liquidityUsd > 0 &&
+    strategy.chooseExit({ position, currentPrice: price, freshData: quote })?.writeOff;
+  if (!(price > 0) || !(liquidityUsd > 0) || unexecutable) {
     const result = bot.writeOffPosition(trader.positionKey(position), "MANUAL PAPER WRITE-OFF · NO LIQUIDITY");
     return { ...result, symbol: position.symbol, writeOff: !!result.success,
       saleValue: 0, quoteError, quotePairAddress: quote?.pairAddress || null };
@@ -165,6 +173,11 @@ function getStatus() {
 
 module.exports = {
   ...bot,
+  reconciliationReady,
+  startBot: () => {
+    if (!reconciliationReady) throw new Error("Profit Sniper account differs from the audited ledger; scanner remains paused.");
+    return bot.startBot();
+  },
   getStatus,
   getPortfolio: trader.getPortfolio,
   closePosition,

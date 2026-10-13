@@ -76,3 +76,27 @@ test("pair-locked monitor rejects another pool or another mint with the same sym
   assert.equal(sells,quote.tokenAddress==='mint'&&quote.pairAddress==='pool'?1:0);
  }
 });
+
+test("Profit Sniper writes off a collapsed pool without crediting a quoted million-dollar paper sale", async () => {
+  const { chooseExit } = require("../profitSniperStrategy");
+  const position = { id: "collapsed", tokenAddress: "mint", pairAddress: "pool", symbol: "fishy",
+    entryPrice: 0.00001021, highestPrice: 0.00001021, quantity: 1_957_000, amountInvested: 20 };
+  let writes = 0;
+  let sells = 0;
+  const bot = createBot({ trader: {
+    getPortfolio: () => ({ positions: writes ? [] : [position], history: [], cashBalance: 180 }),
+    positionKey: p => p.id, updateHigh: () => true,
+    writeOff: () => { writes++; return { success: true, trade: { saleValue: 0 } }; },
+    sell: () => { sells++; return { success: true }; }, buy: () => ({ success: false })
+  }, exitDecision: chooseExit, lockPositionPair: true, batchPositionPrices: true,
+  getTokensData: async () => new Map([["mint", { tokenAddress: "mint", pairAddress: "pool",
+    priceUsd: 0.6494, liquidityUsd: 0.5 }]]), discoverCandidates: async () => [],
+  timers: { setInterval() { return 1; }, clearInterval() {} },
+  notifier: { notifyTrade: async () => {}, notifyCritical: async () => {} },
+  reentryStateFile: null });
+  bot.startBot();
+  await new Promise(resolve => setImmediate(resolve));
+  bot.stopBot();
+  assert.equal(writes, 1);
+  assert.equal(sells, 0);
+});

@@ -8,6 +8,7 @@ const MIN_MOMENTUM_5M = 0.05;
 const MAX_MOMENTUM_5M = 20;
 const HARD_STOP_PERCENT = -8;
 const MIN_EXIT_LIQUIDITY_USD = 1000;
+const BLOCKED_TOKEN_ADDRESSES = new Set(["EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J"]);
 const TAKE_PROFIT_1_PERCENT = 10;
 const TAKE_PROFIT_1_SELL_PERCENT = 45;
 const TAKE_PROFIT_2_PERCENT = 20;
@@ -39,6 +40,7 @@ function getMomentumFailureReasons(coin, now = Date.now()) {
   if (buyRatio < MIN_BUY_RATIO_5M) failures.push("buyRatio5m");
   if (!Number.isFinite(momentum5m) || momentum5m < MIN_MOMENTUM_5M || momentum5m > MAX_MOMENTUM_5M) failures.push("momentum5m");
   if (!coin.tokenAddress) failures.push("tokenAddress");
+  if (BLOCKED_TOKEN_ADDRESSES.has(coin.tokenAddress)) failures.push("blockedTokenAddress");
   return failures;
 }
 
@@ -59,11 +61,15 @@ function chooseExit({ position, currentPrice, freshData }) {
   const currentLiquidity = Number(liquidityRaw);
   if (liquidityRaw !== null && liquidityRaw !== undefined &&
       Number.isFinite(currentLiquidity) && currentLiquidity <= MIN_EXIT_LIQUIDITY_USD) {
-    return { percent: 100, reason: "EMERGENCY EXIT: LIQUIDITY COLLAPSE" };
+    return { percent: 100, writeOff: true, reason: "EMERGENCY WRITE-OFF: NO EXECUTABLE LIQUIDITY" };
   }
   const entryPrice = Number(position && position.entryPrice);
   const price = Number(currentPrice);
   if (!(entryPrice > 0) || !(price > 0)) return null;
+  if (Number.isFinite(currentLiquidity) && currentLiquidity > 0 &&
+      Number(position.quantity) * price >= currentLiquidity / 2) {
+    return { percent: 100, writeOff: true, reason: "UNEXECUTABLE QUOTE: POSITION EXCEEDS POOL CAPACITY" };
+  }
   const profitPercent = (price - entryPrice) / entryPrice * 100;
 
   if (position.secondTakeProfitDone) {

@@ -40,8 +40,8 @@ test("trade sizing follows the 10%, 12.5%, 15% cycle and resets after the third 
 
 test("low liquidity forces a full paper exit while unavailable liquidity data is ignored", () => {
   const position = { entryPrice: 100 };
-  assert.deepEqual(chooseExit({ position, currentPrice: 1, freshData: { liquidityUsd: 1 } }), { percent: 100, reason: "EMERGENCY EXIT: LIQUIDITY COLLAPSE" });
-  assert.deepEqual(chooseExit({ position, currentPrice: 100, freshData: { liquidityUsd: 1000 } }), { percent: 100, reason: "EMERGENCY EXIT: LIQUIDITY COLLAPSE" });
+  assert.deepEqual(chooseExit({ position, currentPrice: 1, freshData: { liquidityUsd: 1 } }), { percent: 100, writeOff: true, reason: "EMERGENCY WRITE-OFF: NO EXECUTABLE LIQUIDITY" });
+  assert.deepEqual(chooseExit({ position, currentPrice: 100, freshData: { liquidityUsd: 1000 } }), { percent: 100, writeOff: true, reason: "EMERGENCY WRITE-OFF: NO EXECUTABLE LIQUIDITY" });
   assert.equal(chooseExit({ position, currentPrice: 100, freshData: {} }), null);
 });
 
@@ -75,4 +75,11 @@ test("exit ladder sells 45% at +10%, 45% of original at +20%, then trails the fi
 
 test("momentum diagnostics name the failed Sniper gate", () => {
   assert.deepEqual(getMomentumFailureReasons(candidate({ priceChange5m: 0 })), ["momentum5m"]);
+  assert.deepEqual(getMomentumFailureReasons(candidate({ tokenAddress: "EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J" })), ["blockedTokenAddress"]);
+});
+
+test("an inflated quote cannot credit more than the pool could support", () => {
+  assert.deepEqual(chooseExit({ position: { entryPrice: 1, quantity: 100 }, currentPrice: 100,
+    freshData: { liquidityUsd: 15000 } }),
+    { percent: 100, writeOff: true, reason: "UNEXECUTABLE QUOTE: POSITION EXCEEDS POOL CAPACITY" });
 });
