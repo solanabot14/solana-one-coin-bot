@@ -10,17 +10,17 @@ test("0-72h pools use direct activity and momentum gates, not the shared signal 
   assert.equal(qualifiesMomentumCandidate(candidate()), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 71 * 60 * 60 * 1000 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 73 * 60 * 60 * 1000 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 0.15 })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 0.1 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 0.05 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 0.04 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: -0.01 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 0 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 4000 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 2500 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 250000 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 13 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 4, sells5m: 4 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ liquidityUsd: 9999 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ volume5m: 499 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 4, sells5m: 3 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ volume5m: 299 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 3, sells5m: 2 })), false);
 });
 test("same ticker is distinguished by mint and duplicate pools collapse to the best exact mint", () => {
   const { selectUniqueMintCandidates } = require("../profitSniperStrategy");
