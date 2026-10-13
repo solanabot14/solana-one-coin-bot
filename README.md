@@ -52,6 +52,16 @@ The health endpoint checks HTTP service availability, not market-data freshness 
 
 See Railway's [networking guidance](https://docs.railway.com/networking/troubleshooting/application-failed-to-respond) and [volume documentation](https://docs.railway.com/volumes).
 
+## Gemini Bot
+
+Gemini is an independent paper-only Solana meme-coin bot shown in the shared analytics dashboard. It starts and stops with the application and has a separate saved paper account. The dashboard reports Gemini as its own system across home comparisons, per-bot performance, analytics, and transactions.
+
+Gemini scans GeckoTerminal new pools and DexScreener latest profiles, then applies strict filters: at least $5,000 liquidity, pool age 2–120 minutes, mint and freeze authorities disabled, at least 15 transactions in 5 minutes, buy ratio above 55%, and top 10 non-pool holder concentration below 35%. Missing safety evidence is rejected and appears in the rejection log.
+
+Paper exits sell 50% of original quantity at +50%, 30% at +100%, and trail the final 20% by 15% after TP1; hard stop is -20%. At 15 minutes, it exits the remaining quantity when return is between -5% and +10%. No wallet key or on-chain swap is used.
+
+State is stored separately in `gemini-paper-state.json` on the Railway volume. Optional variables include `RPC_URL`, `GEMINI_STARTING_BALANCE_USD` (default $200), `GEMINI_TRADE_SIZE_USD` (default $10), `GEMINI_SCAN_MS` (default 30,000), and `GEMINI_MONITOR_MS` (default 3,000).
+
 ## Files
 
 | File | Responsibility |
