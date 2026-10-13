@@ -64,7 +64,7 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     };
     next.history.unshift(trade);
     if (reason === "TP1 +50%") next.position.tp1Done = true;
-    if (reason === "TP2 +100%") next.position.tp2Done = true;
+    if (reason === "TP2 +100%") next.position.tp2Done = true;\n    if (next.position) next.position.remainingPercent = Math.max(0, next.position.quantity / next.position.originalQuantity * 100);
     if (next.position.quantity <= p.originalQuantity * 0.000001) next.position = null;
     commit(next);
     console.log("[" + (reason.startsWith("TP") ? "SELL " + reason : "SELL") + "] Gemini PAPER", p.symbol, reason, "$" + value.toFixed(2));
