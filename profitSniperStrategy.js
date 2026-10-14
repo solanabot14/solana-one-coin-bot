@@ -8,8 +8,6 @@ const MIN_TRANSACTIONS_5M = 6;
 const MIN_BUY_RATIO_5M = 0.15;
 const MIN_MOMENTUM_5M = 0.05;
 const MAX_MOMENTUM_5M = 35;
-const MAX_MOMENTUM_1H = 1000;
-const MAX_MOMENTUM_24H = 10000;
 const HARD_STOP_PERCENT = -8;
 const MIN_EXIT_LIQUIDITY_USD = 1000;
 const MAX_EXIT_LIQUIDITY_DRAWDOWN = 0.25;
@@ -37,8 +35,6 @@ function getMomentumFailureReasons(coin, now = Date.now()) {
   const transactions5m = buys5m + sells5m;
   const buyRatio = transactions5m > 0 ? buys5m / transactions5m : 0;
   const momentum5m = Number(coin.priceChange5m);
-  const momentum1h = Number(coin.priceChange1h);
-  const momentum24h = Number(coin.priceChange24h);
 
   if (!Number.isFinite(createdAt) || ageMs < MIN_PAIR_AGE_MS || ageMs > MAX_PAIR_AGE_MS) failures.push("age");
   if (!Number.isFinite(liquidity) || liquidity < MIN_LIQUIDITY_USD) failures.push("liquidity");
@@ -49,8 +45,6 @@ function getMomentumFailureReasons(coin, now = Date.now()) {
   if (!Number.isFinite(transactions5m) || transactions5m < MIN_TRANSACTIONS_5M) failures.push("transactions5m");
   if (buyRatio < MIN_BUY_RATIO_5M) failures.push("buyRatio5m");
   if (!Number.isFinite(momentum5m) || momentum5m < MIN_MOMENTUM_5M || momentum5m > MAX_MOMENTUM_5M) failures.push("momentum5m");
-  if (coin.priceChange1h != null && Number.isFinite(momentum1h) && momentum1h > MAX_MOMENTUM_1H) failures.push("momentum1h");
-  if (coin.priceChange24h != null && Number.isFinite(momentum24h) && momentum24h > MAX_MOMENTUM_24H) failures.push("momentum24h");
   if (!coin.tokenAddress) failures.push("tokenAddress");
   if (coin.chainId !== "solana") failures.push("chainId");
   if (!coin.pairAddress) failures.push("pairAddress");
@@ -123,7 +117,7 @@ function chooseExit({ position, currentPrice, freshData, exitProgress }) {
 module.exports = {
   constants: { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MAX_VOLUME_TO_LIQUIDITY, MIN_VOLUME_5M_USD,
     MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M, MIN_MOMENTUM_5M, MAX_MOMENTUM_5M,
-    MAX_MOMENTUM_1H, MAX_MOMENTUM_24H, HARD_STOP_PERCENT, MIN_EXIT_LIQUIDITY_USD,
+    HARD_STOP_PERCENT, MIN_EXIT_LIQUIDITY_USD,
     MAX_EXIT_LIQUIDITY_DRAWDOWN,
     TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
     TAKE_PROFIT_2_SELL_PERCENT, TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT, TRAILING_STOP_PERCENT, PROFIT_FLOOR_AFTER_TP1_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD },
