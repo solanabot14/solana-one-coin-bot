@@ -6,6 +6,8 @@ const { createPaperTrader } = require("./paperTrader");
 const { reconcileProfitSniperAccount } = require("./profitSniperReconcile");
 const { createBot } = require("./bot");
 const strategy = require("./profitSniperStrategy");
+const CONFIG = require("./profitSniperConfig");
+const { createMomentumTracker } = require("./profitSniperMomentum");
 const { createSniperEntryGuard } = require("./profitSniperEntryGuard");
 const { constants } = strategy;
 const { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MAX_VOLUME_TO_LIQUIDITY, MIN_VOLUME_5M_USD,
@@ -14,10 +16,10 @@ const { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD,
   TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
   TAKE_PROFIT_2_SELL_PERCENT, TRAILING_STOP_PERCENT, PROFIT_FLOOR_AFTER_TP1_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD } = constants;
 const MAX_OPEN_POSITIONS = 3;
-const SCAN_INTERVAL_MS = 30000;
+const SCAN_INTERVAL_MS = CONFIG.WATCHLIST_RECHECK_MS;
 const POSITION_MONITOR_MS = 2000;
-const MINIMUM_LIQUIDITY_LOCK_PERCENT = 30;
-const MAX_PAIR_AGE_MINUTES = 1440;
+const MINIMUM_LIQUIDITY_LOCK_PERCENT = CONFIG.MIN_LP_LOCK_PERCENT;
+const MAX_PAIR_AGE_MINUTES = CONFIG.MAX_CANDIDATE_AGE_MINUTES;
 const prebuy = require("./profitSniperPrebuy").createEntryGuard();
 
 function statePath(fileName = "profitSniperTradingData.json") {
@@ -41,57 +43,155 @@ function estimateExecutionCosts({ amountUsd, liquidityUsd }) {
 
 const { qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit, selectUniqueMintCandidates } = strategy;
 
-let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, source: "GeckoTerminal new + trending/top pools (24h) + exact DexScreener pairs + RugCheck; pair age 10m-24h" };
+let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, source: "GeckoTerminal new + trending/top pools (24h) + exact DexScreener pairs + RugCheck; pair age 10m-3h" };
 const entryGuard = createSniperEntryGuard();
+const momentumTracker = createMomentumTracker();
+const ageWatchlist = new Map();
+const cumulativeRejectionCounts = {};
+let ageWatchlistRechecks = 0;
 
 async function discoverCandidates(options = {}) {
-  const candidates = await poolDiscovery.discoverLaunchCandidates({ ...options, minimumLiquidityUsd: MIN_LIQUIDITY_USD,
+  const scanned = await poolDiscovery.discoverLaunchCandidates({ ...options, minimumLiquidityUsd: MIN_LIQUIDITY_USD,
     minimumVolume24hUsd: MIN_VOLUME_24H_USD, includeObservationCandidates: true,
     includeMaturePools: true, includeTrendingPools: true, maximumPairAgeMs: MAX_PAIR_AGE_MINUTES * 60 * 1000 });
   const now = Date.now();
-  const evaluated = candidates.map(coin => {
-    const poolStability = entryGuard.observe(coin, now);
+  const currentKeys = new Set();
+  const candidates = scanned.map(raw => {
+    const key = String(raw.tokenAddress || "") + ":" + String(raw.pairAddress || "");
+    currentKeys.add(key);
+    const momentumPattern = momentumTracker.observe(raw, now);
+    const coin = { ...raw, momentumPattern };
     const failures = getMomentumFailureReasons(coin, now);
-    if (!failures.length && !poolStability.ready) failures.push("poolStability");
-    return { coin, failures };
+    const ageMs = now - Number(coin.pairCreatedAt);
+    if (failures.length === 1 && failures[0] === "age" && ageMs < CONFIG.MIN_PAIR_AGE_MS) {
+      const prior = ageWatchlist.get(key);
+      ageWatchlist.set(key, prior || { addedAt: now, initialLiquidityUsd: Number(coin.liquidityUsd),
+        tokenAddress: coin.tokenAddress, pairAddress: coin.pairAddress, lastSnapshot: coin });
+      const item = ageWatchlist.get(key);
+      item.lastSnapshot = coin;
+      item.lastSeenAt = now;
+      item.rechecks++;
+    } else if (ageWatchlist.has(key)) {
+      const item = ageWatchlist.get(key);
+      item.lastSnapshot = coin;
+      item.lastSeenAt = now;
+      item.rechecks++;
+    }
+    return { key, coin, failures, ageMs, wasWatchlisted: ageWatchlist.has(key) };
   });
-  const rejectedGates = {};
-  for (const item of evaluated) {
-    for (const reason of item.failures) rejectedGates[reason] = (rejectedGates[reason] || 0) + 1;
+
+  const portfolio = trader.getPortfolio();
+  const history = Array.isArray(portfolio?.history) ? portfolio.history : [];
+  const buysByMint = new Map();
+  const stoppedMints = new Set();
+  for (const row of history) {
+    if (!row?.tokenAddress) continue;
+    if (row.type === "BUY") buysByMint.set(row.tokenAddress, (buysByMint.get(row.tokenAddress) || 0) + 1);
+    if (row.type === "SELL" && /HARD STOP|STOP LOSS/i.test(String(row.reason || "")))
+      stoppedMints.add(row.tokenAddress);
   }
-  const qualified = selectUniqueMintCandidates(evaluated.filter(item => item.failures.length === 0).map(item => item.coin)
-    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0) || Number(b.volume5m || 0) - Number(a.volume5m || 0)))
-    .map(coin => ({ ...coin, signal: "ORDER FLOW BUY",
-      reasons: [...(coin.reasons || []), "Direct order-flow, activity and momentum gates passed",
-        "Exact identity: Solana mint " + coin.tokenAddress + "; pool " + coin.pairAddress] }));
-  const samples = evaluated.slice(0, 3).map(({ coin, failures }) => ({
-    symbol: coin.symbol || null,
-    tokenAddress: coin.tokenAddress || null,
-    pairAddress: coin.pairAddress || null,
-    momentum5m: Number(coin.priceChange5m),
-    volume5m: Number(coin.volume5m),
-    buys5m: Number(coin.buys5m),
-    sells5m: Number(coin.sells5m),
-    rejectedGates: failures
-  }));
+
+  const entries = [];
+  const rejectedGates = {};
+  const logs = [];
+  for (const item of candidates) {
+    const { coin, key, ageMs, wasWatchlisted } = item;
+    let failures = [...item.failures];
+    const watch = ageWatchlist.get(key);
+    if (watch) {
+      if (now - watch.addedAt > CONFIG.WATCHLIST_MAX_AGE_MS) {
+        ageWatchlist.delete(key);
+        failures = [...new Set([...failures, "ageWatchlistExpired"])];
+      } else if (Number(coin.liquidityUsd) < watch.initialLiquidityUsd * (1 - CONFIG.WATCHLIST_MAX_LIQUIDITY_DROP)) {
+        ageWatchlist.delete(key);
+        failures = [...new Set([...failures, "watchlistLiquidityDroppedOver30Percent"])];
+      }
+    }
+    if (stoppedMints.has(coin.tokenAddress)) failures.push("stopLossReentryBlocked");
+    if ((buysByMint.get(coin.tokenAddress) || 0) >= CONFIG.MAX_TOKEN_ATTEMPTS) failures.push("maxTokenAttempts");
+    if (!failures.length) {
+      const poolStability = entryGuard.observe(coin, now);
+      if (!poolStability.ready) failures.push("poolStability");
+    }
+    for (const reason of failures) {
+      rejectedGates[reason] = (rejectedGates[reason] || 0) + 1;
+      cumulativeRejectionCounts[reason] = (cumulativeRejectionCounts[reason] || 0) + 1;
+    }
+    const pattern = coin.momentumPattern || {};
+    const record = {
+      at: new Date(now).toISOString(),
+      tokenAddress: coin.tokenAddress || null,
+      pairAddress: coin.pairAddress || null,
+      ageMinutes: Number.isFinite(ageMs) ? Math.round(ageMs / 60000 * 100) / 100 : null,
+      volume5mUsd: Number(coin.volume5m),
+      buys5m: Number(coin.buys5m),
+      sells5m: Number(coin.sells5m),
+      liquidityUsd: Number(coin.liquidityUsd),
+      top10HoldersPercent: null,
+      largestHolderPercent: null,
+      holderSecurity: "checked only by existing pre-buy RugCheck request",
+      momentumPattern: {
+        pumpPercent: pattern.pumpPercent ?? null,
+        retracePercent: pattern.retracePercent ?? null,
+        recovering: !!pattern.recovering,
+        recentBuys: pattern.flowBuys ?? null,
+        recentSells: pattern.flowSells ?? null,
+        flowIsApproximation: pattern.flowIsApproximation ?? true,
+        ready: !!pattern.ready,
+        reason: pattern.reason || null
+      },
+      fromAgeWatchlist: wasWatchlisted,
+      reason: failures.length ? [...new Set(failures)].join(",") : "entered"
+    };
+    logs.push(record);
+    if (!failures.length) {
+      if (wasWatchlisted) ageWatchlistRechecks++;
+      entries.push({ ...coin, signal: "ORDER FLOW BUY",
+        reasons: [...(coin.reasons || []), "Direct Sniper entry gates passed",
+          ...(wasWatchlisted ? ["AGE WATCHLIST REENTRY"] : []),
+          "Exact identity: Solana mint " + coin.tokenAddress + "; pool " + coin.pairAddress] });
+    }
+  }
+
+  // Process cached watchlist items absent from this scan without fabricating fresh
+  // market data. They remain pending and cannot enter until a fresh scan sees them.
+  for (const [key, item] of ageWatchlist) {
+    if (currentKeys.has(key)) continue;
+    if (now - item.addedAt > CONFIG.WATCHLIST_MAX_AGE_MS) {
+      ageWatchlist.delete(key);
+      cumulativeRejectionCounts.ageWatchlistExpired = (cumulativeRejectionCounts.ageWatchlistExpired || 0) + 1;
+    }
+  }
+
+  const qualified = selectUniqueMintCandidates(entries
+    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0) || Number(b.volume5m || 0) - Number(a.volume5m || 0)));
   const scanState = poolDiscovery.getScanDiagnostics();
   lastScanDiagnostics = {
     state: "scan_complete",
     updatedAt: new Date(now).toISOString(),
-    source: "GeckoTerminal new + trending/top pools (24h) + exact DexScreener pairs + RugCheck; pair age 10m-24h",
+    source: "GeckoTerminal new + trending/top pools (24h) + exact DexScreener pairs + RugCheck; pair age 10m-3h",
     poolsReceived: scanState?.poolsReceived ?? null,
-    recentPools: candidates.length,
-    activityQualified: candidates.filter(coin => poolDiscovery.qualifiesLaunchCandidate(coin, now, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MAX_PAIR_AGE_MINUTES * 60 * 1000)).length,
+    recentPools: scanned.length,
+    activityQualified: scanned.length,
     momentumQualified: qualified.length,
     momentumRejectedGates: rejectedGates,
-    candidateSamples: samples,
-    selectedByScore: qualified.slice(0, MAX_OPEN_POSITIONS).map(coin => ({ symbol: coin.symbol || null, tokenAddress: coin.tokenAddress, pairAddress: coin.pairAddress, score: Number(coin.score) || 0 })),
+    rejectionCountsLifetime: { ...cumulativeRejectionCounts },
+    ageWatchlistPending: ageWatchlist.size,
+    ageWatchlistRechecks,
+    entriesFromAgeWatchlist: history.filter(row => row?.type === "BUY" &&
+      (row.entryReasons || []).includes("AGE WATCHLIST REENTRY")).length,
+    evaluations: logs,
+    selectedByScore: qualified.slice(0, MAX_OPEN_POSITIONS).map(coin => ({
+      symbol: coin.symbol || null, tokenAddress: coin.tokenAddress, pairAddress: coin.pairAddress,
+      score: Number(coin.score) || 0, fromAgeWatchlist: (coin.reasons || []).includes("AGE WATCHLIST REENTRY")
+    })),
     error: scanState?.error || null
   };
-  console.log("PROFIT SNIPER SCAN | pools observed: " + candidates.length +
-    " | momentum-qualified: " + qualified.length +
-    " | rejected gates: " + (Object.keys(rejectedGates).length ? JSON.stringify(rejectedGates) : "none") +
-    " | candidate samples: " + JSON.stringify(samples));
+  for (const record of logs) console.log("PROFIT SNIPER ENTRY EVALUATION | " + JSON.stringify(record));
+  console.log("PROFIT SNIPER SCAN | pools observed: " + scanned.length +
+    " | entry-qualified: " + qualified.length +
+    " | watchlist pending: " + ageWatchlist.size +
+    " | rejected gates: " + (Object.keys(rejectedGates).length ? JSON.stringify(rejectedGates) : "none"));
   return qualified;
 }
 
@@ -194,7 +294,15 @@ function getStatus() {
       postTp1FloorPercent: PROFIT_FLOOR_AFTER_TP1_PERCENT, compoundRates: COMPOUND_RATES,
       maxOpenPositions: MAX_OPEN_POSITIONS, minimumTradeUsd: MINIMUM_TRADE_USD,
       sizingMode: "compounding" },
-    scanDiagnostics: lastScanDiagnostics
+    scanDiagnostics: lastScanDiagnostics,
+    entryDiagnostics: {
+      rejectionCounts: { ...cumulativeRejectionCounts },
+      ageWatchlistPending: ageWatchlist.size,
+      ageWatchlistRechecks,
+      entriesFromAgeWatchlist: (trader.getPortfolio().history || []).filter(row => row?.type === "BUY" &&
+        (row.entryReasons || []).includes("AGE WATCHLIST REENTRY")).length,
+      watchlistRecheckIntervalMs: CONFIG.WATCHLIST_RECHECK_MS
+    }
   };
 }
 
