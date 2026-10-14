@@ -357,7 +357,7 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
       return { positionId:id, symbol:sell.symbol, tokenAddress:sell.productId, entryPrice:sell.entryPrice, exitPrice:sell.exitPrice,
         investedUsd:sell.amountInvested, amountInvested:sell.amountInvested, saleValueUsd:sell.saleValueUsd, pnlUsd:sell.pnlUsd,
         pnl:sell.pnl, pnlPercent:sell.pnlPercent, returnPercent:sell.pnlPercent, entryTime:sell.entryTime, exitTime:sell.exitTime,
-        holdTimeMs:sell.holdTimeMs, exitReason:sell.reason, maxGainPercent:sell.maxGainPercent, strategy:sell.strategy };
+        estimatedFeesUsd:sell.estimatedFeesUsd, estimatedSlippageUsd:sell.estimatedSlippageUsd, costEstimateAvailable:true, netPnl:sell.pnlUsd, grossPnl:sell.pnlUsd+sell.estimatedFeesUsd+sell.estimatedSlippageUsd, holdTimeMs:sell.holdTimeMs, exitReason:sell.reason, maxGainPercent:sell.maxGainPercent, strategy:sell.strategy };
     });
     const livePositions = state.openPositions.map(p => {
       const exitPrice=p.markPriceUsd*(1-SLIPPAGE_RATE), value=p.quantity*exitPrice*(1-FEE_RATE);
@@ -383,3 +383,4 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
 const instance=createOutcomeBot();
 module.exports={ createOutcomeBot, assessCandidate:(...a)=>assessCandidateStatic(...a), PRODUCTS, constants:{MAX_OPEN_POSITIONS,START_SIZE_USD,MAX_SIZE_USD,COMPOUND_RATE,TRAIL_FROM_PEAK_PERCENT,MAX_HOLD_MS,DAILY_LOSS_LIMIT_USD,MIN_DAILY_VOLUME_USD,MAX_SCAN_PRODUCTS,FEE_RATE,SLIPPAGE_RATE}, ...instance };
 function assessCandidateStatic(productId,stats,candles) { return instance.assessCandidate(productId,stats,candles); }
+

@@ -449,7 +449,7 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
       totalPnl:totalEquity-startingCapital,
       tradesReplayed:data.slots.reduce((sum,s)=>sum+Number(s.completedTrades||0),0),
       genealogy:data.genealogy.slice(-200).reverse(),
-      executions:[...data.executions].slice(-100).reverse(),
+      executions:[...data.executions].reverse(),
       slots:data.slots.map(slot => {
         const formation = childMetadata(Number(slot.nextChildIndex || 0));
         const nextChildCost = formation ? Number(slot.localX) * formation.multiplier : 0;
@@ -473,3 +473,4 @@ function createJanMvpTrader({ dataFile = defaultDataFile(), io = fs, config = ge
 }
 
 module.exports = { createJanMvpTrader, getConfig, defaultDataFile, initialState };
+

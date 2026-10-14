@@ -18,14 +18,15 @@ function firstNumber(...values) {
 
 function normalizeTrade(trade, system = 'unknown', mode = 'PAPER') {
   const sells = Array.isArray(trade.sells) ? trade.sells : [];
-  const pnl = firstNumber(trade.pnl, trade.realizedPnl);
-  const invested = firstNumber(trade.amountInvested, trade.invested, trade.originalAmountInvested);
+  const pnl = firstNumber(trade.pnl, trade.pnlUsd, trade.realizedPnl);
+  const invested = firstNumber(trade.amountInvested, trade.invested, trade.investedUsd, trade.costBasisUsd, trade.amountInvestedUsd, trade.originalAmountInvested);
   const exitTime = trade.exitTime || sells[sells.length - 1]?.exitTime || sells[sells.length - 1]?.time || null;
-  const entryTime = trade.entryTime || null;
+  const entryTime = trade.entryTime || (trade.type === 'BUY' ? trade.time : null) || null;
   const holdMs = entryTime && exitTime ? Math.max(0, Date.parse(exitTime) - Date.parse(entryTime)) : null;
-  const reason = Array.isArray(trade.exitReasons) ? trade.exitReasons.join(', ') : (trade.reason || null);
+  const reason = Array.isArray(trade.exitReasons) ? trade.exitReasons.join(', ') : (trade.exitReason || trade.reason || null);
   return {
     ...trade,
+    saleValue: firstNumber(trade.saleValue, trade.saleValueUsd, trade.amountReceived, trade.amountUsd),
     system,
     mode,
     pnl,
@@ -205,3 +206,4 @@ var OneCoinAnalytics = {
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = OneCoinAnalytics;
 if (typeof window !== 'undefined') window.OneCoinAnalytics = OneCoinAnalytics;
+

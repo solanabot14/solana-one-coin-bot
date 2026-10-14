@@ -32,6 +32,8 @@ let feedMode = "waiting";
 let webhookWarning = null;
 let lastPollAt = null;
 let lastPollError = null;
+let lastPollAttemptAt = null;
+let pollFailures = 0;
 const POLL_INTERVAL_MS = 30000;
 
 function freshState() {
@@ -130,6 +132,9 @@ function status() {
     feedConnected: feedMode === "webhook" || (feedMode === "polling" && !!lastPollAt && !lastPollError),
     pollIntervalSeconds: POLL_INTERVAL_MS / 1000,
     lastPollAt,
+    lastPollAttemptAt,
+    nextRetryAt: state.nextPollAt ? new Date(state.nextPollAt).toISOString() : null,
+    quotaExhausted: /max usage|quota|credits/i.test(lastPollError || ""),
     webhookWarning,
     skipReasons: state.skipReasons || {},
     lastSkip: state.lastSkip || null,
@@ -372,8 +377,9 @@ async function startPolling() {
   pollTimer.unref();
 }
 async function pollOnce() {
-  if (polling || !running) return;
+  if (polling || !running || Date.now() < Number(state.nextPollAt || 0)) return;
   polling = true;
+  lastPollAttemptAt = new Date().toISOString();
   try {
     const apiKey = process.env.HELIUS_API_KEY;
     if (!apiKey) throw new Error("HELIUS_API_KEY is not configured.");
@@ -416,9 +422,17 @@ async function pollOnce() {
     lastPollAt = new Date().toISOString();
     lastPollError = null;
     setupError = null;
+    pollFailures = 0;
+    state.nextPollAt = null;
+    saveState();
   } catch (error) {
     lastPollError = error.message;
     setupError = error.message;
+    pollFailures++;
+    const quota = /max usage|quota|credits/i.test(error.message);
+    const delay = quota ? 30 * 60000 : Math.min(15 * 60000, 60000 * 2 ** Math.min(pollFailures - 1, 4));
+    state.nextPollAt = Date.now() + delay;
+    saveState();
     console.error("Decu wallet polling:", error.message);
   } finally { polling = false; }
 }
@@ -484,3 +498,4 @@ module.exports = {
   startBot, stopBot, getPortfolio, getStatus, closeAllPositions, authenticateWebhook, handleWebhookPayload,
   swapDeltas, processTransaction, pollOnce, setMarketData: fn => { marketData = fn; }
 };
+

@@ -17,6 +17,7 @@ const geminiTrader = require("./geminiTrader");
 const { buildGeminiAnalytics } = require("./geminiAnalytics");
 const outcomeBot = require("./outcomeBot");
 const stockBot = require("./stockBot");
+const equityHistory = require("./equityHistory").createEquityHistory();
 
 function getConfig(env = process.env) {
   const railway = !!env.RAILWAY_ENVIRONMENT_ID;
@@ -329,19 +330,21 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       if (route === "/api/stock/status") return json(res, stockBot.getStatus());
       if (route === "/api/stock/data") return json(res, stockBot.getDashboardData());
       if (route === "/api/lock85/status") return json(res, { running: buyPriorityLock85.getBotStatus(), error: buyPriorityLock85.getLastError(), mode: "paper", lockThresholdPercent: 60 });
-      if (route === "/api/lock85/data") return json(res, { label: "V3.1 BUY Priority Test - 60% LP Lock", mode: "paper", lockThresholdPercent: 60, account: buyPriorityLock85.buildDashboardAccount() });
+      if (route === "/api/lock85/data") return json(res, { label: "V3.1 BUY Priority Test - 60% LP Lock", mode: "paper", lockThresholdPercent: 60, account: await buildDashboardData(buyPriorityLock85.buildDashboardAccount(), marketData) });
       if (route === "/api/swarm") return json(res, { running: swarm.getStatus(), error: swarm.getLastError(), ...swarm.getDashboardState() });
       if (route === "/api/data") {
         const baseAccount = portfolio();
         const lock85Account = buyPriorityLock85.buildDashboardAccount();
         const profitSniperAccount = profitSniper.getPortfolio();
         const walletCopyAccount = walletCopy.getPortfolio();
+        const launchAccount = launchSniper.getPortfolio();
         const geminiState = geminiTrader.getState();
         const addresses = [...new Set([
           ...(baseAccount.positions || (baseAccount.position ? [baseAccount.position] : [])).map(p => p.tokenAddress),
           ...(lock85Account.positions || []).map(p => p.tokenAddress),
           ...(profitSniperAccount.positions || []).map(p => p.tokenAddress),
           ...(walletCopyAccount.positions || []).map(p => p.tokenAddress),
+          ...(launchAccount.positions || []).map(p => p.tokenAddress),
           ...(geminiState.position ? [geminiState.position.tokenAddress] : [])
         ].filter(Boolean))];
         const sharedQuotes = batchMarketData && addresses.length
@@ -395,15 +398,23 @@ function createDashboardServer({ config = getConfig(), controls = bot,
             running: geminiBot.getStatus(), lastScanAt: geminiState.lastScanAt
           };
         })();
-        const [v31, candleBreakout, profitabilityLab, lock85, profitSniperData, walletCopyData] = await Promise.all([
+        const [v31, candleBreakout, profitabilityLab, lock85, profitSniperData, walletCopyData, launchData] = await Promise.all([
           buildDashboardData(baseAccount, sharedMarketData),
           fetchCandleBreakoutDashboard(),
           fetchProfitabilityLabDashboard(),
           buildDashboardData(lock85Account, sharedMarketData),
           buildDashboardData(profitSniperAccount, sharedMarketData, { allowAlternatePairQuote: true }),
-          buildDashboardData(walletCopyAccount, sharedMarketData)
+          buildDashboardData(walletCopyAccount, sharedMarketData),
+          buildDashboardData(launchAccount, sharedMarketData)
         ]);
+        const outcomeData = outcomeBot.getDashboardData(), stockData = stockBot.getDashboardData();
+        const equities = {v31:v31.equity,candle:candleBreakout.data?.equity,lab:profitabilityLab.data?.equity,'buy-lock85':lock85.equity,'launch-sniper':launchData.equity,'profit-sniper':profitSniperData.equity,'wallet-copy':walletCopyData.equity,gemini:geminiData.equity,outcome:outcomeData.equity,stock:stockData.equity,swarm:swarm.getDashboardState().totalCapital};
+        if (Object.values(equities).every(v => typeof v === 'number' && Number.isFinite(v))) equities.total = Object.values(equities).reduce((s,v) => s+v,0);
+        let equityRows = equityHistory.getRows();
+        try { equityRows = equityHistory.record(equities); } catch (error) { console.error('Equity history persistence:', error.message); }
         return json(res, {
+          equityHistory: equityRows,
+          launchSniper: launchData, launchSniperStatus: launchSniper.getStatus(),
           v31,
           candleBreakout: candleBreakout.data,
           candleBreakoutStatus: candleBreakout.status,
@@ -417,10 +428,10 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           walletCopy: walletCopyData,
           walletCopyStatus: walletCopy.getStatus(),
           gemini: geminiData,
-          geminiStatus: { running: geminiBot.getStatus(), error: geminiBot.getLastError() },
-          outcomeBot: outcomeBot.getDashboardData(),
+          geminiStatus: { running: geminiBot.getStatus(), error: geminiBot.getLastError(), ...geminiBot.getDiagnostics() },
+          outcomeBot: outcomeData,
           outcomeBotStatus: outcomeBot.getStatus(),
-          stockBot: stockBot.getDashboardData(),
+          stockBot: stockData,
           stockBotStatus: stockBot.getStatus()
         });
       }
@@ -458,6 +469,20 @@ if (require.main === module) {
     outcomeBot.start();
     stockBot.start();
     console.log("Dashboard listening on " + config.host + ":" + config.port);
+    let sampling = false;
+    async function sampleEquity() {
+      if (sampling) return;
+      sampling = true;
+      try {
+        const headers = config.dashboardUser ? {authorization:'Basic '+Buffer.from(config.dashboardUser+':'+config.dashboardPassword).toString('base64')} : {};
+        const response = await fetch('http://127.0.0.1:'+config.port+'/api/data', {headers, signal:AbortSignal.timeout(45000)});
+        if (!response.ok) console.error('Equity sampler HTTP', response.status);
+        else await response.arrayBuffer();
+      } catch (error) { console.error('Equity sampler:', error.message); }
+      finally { sampling = false; }
+    }
+    setInterval(() => void sampleEquity(), 300000).unref();
+    void sampleEquity();
   });
   const shutdown = () => {
     swarm.stop();
@@ -476,3 +501,4 @@ if (require.main === module) {
   process.once("SIGINT", shutdown);
 }
 module.exports = { createDashboardServer, getConfig, fetchCandleBreakoutDashboard };
+

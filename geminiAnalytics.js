@@ -6,9 +6,10 @@ function average(values) {
 function buildGeminiAnalytics(state, live = null) {
   const groups = new Map();
   for (const row of state.history || []) {
-    if (!row?.positionId) continue;
-    if (!groups.has(row.positionId)) groups.set(row.positionId, { positionId: row.positionId, symbol: row.symbol || "Unknown", buys: [], sells: [] });
-    const group = groups.get(row.positionId);
+    const positionId = row?.positionId || (row?.type === "BUY" ? row.id : null);
+    if (!positionId) continue;
+    if (!groups.has(positionId)) groups.set(positionId, { positionId, symbol: row.symbol || "Unknown", buys: [], sells: [] });
+    const group = groups.get(positionId);
     if (row.type === "BUY") group.buys.push(row);
     if (row.type === "SELL") group.sells.push(row);
   }
@@ -24,11 +25,12 @@ function buildGeminiAnalytics(state, live = null) {
     const holdTimeMs = Math.max(0, Date.parse(lastExit.time) - Date.parse(entryTime));
     return {
       positionId: g.positionId, symbol: g.symbol, tokenAddress: buy.tokenAddress || g.sells[0].tokenAddress,
+      entryLiquidityUsd: buy.entryLiquidityUsd ?? buy.entryDetails?.liquidityUsd ?? null,
       pairAddress: buy.pairAddress || g.sells[0].pairAddress, entryPrice,
       averageExitPrice: soldQty > 0 ? saleValue / soldQty : null,
-      investedUsd: Number(buy.amountUsd) || costBasis,
+      investedUsd: Number(buy.amountUsd || buy.amountInvestedUsd || buy.originalCostUsd) || costBasis,
       saleValueUsd: saleValue, pnlUsd,
-      returnPercent: Number(buy.amountUsd) > 0 ? pnlUsd / Number(buy.amountUsd) * 100 : 0,
+      returnPercent: (Number(buy.amountUsd || buy.amountInvestedUsd || buy.originalCostUsd) || costBasis) > 0 ? pnlUsd / (Number(buy.amountUsd || buy.amountInvestedUsd || buy.originalCostUsd) || costBasis) * 100 : null,
       maxGainPercent: Math.max(0, ...g.sells.map(x => Number(x.maxGainPercent) || 0)),
       entryTime, exitTime: lastExit.time, holdTimeMs,
       exitReasons: [...new Set(g.sells.map(x => x.reason).filter(Boolean))]
@@ -62,3 +64,4 @@ function buildGeminiAnalytics(state, live = null) {
   };
 }
 module.exports = { buildGeminiAnalytics };
+

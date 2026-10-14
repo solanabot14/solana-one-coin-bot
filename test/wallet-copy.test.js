@@ -102,7 +102,14 @@ test("403 webhook registration falls back to a working cursor feed without dupli
     await follower.pollOnce();
     assert.equal(follower.getStatus().feedConnected, false);
     assert.match(follower.getStatus().error, /429/);
+    const callsAtFailure=historyCalls;
     await follower.pollOnce();
+    assert.equal(historyCalls,callsAtFailure,'cooldown must not spend another API request');
+    assert.equal(follower.getStatus().feedConnected,false);
+    const realNow=Date.now;
+    try { Date.now=()=>Date.parse(follower.getStatus().nextRetryAt)+1;
+      await follower.pollOnce();
+    } finally { Date.now=realNow; }
     assert.equal(follower.getStatus().feedConnected, true);
     follower.stopBot();
     assert.equal(follower.getStatus().feedMode, "stopped");
@@ -118,3 +125,4 @@ test("skipped signals explain sells with no observed source buy and missing quot
     tokenTransfers: [{ mint: "NoQuote111", tokenAmount: 1, fromUserAccount: "Pool", toUserAccount: follower.WALLET }] });
   assert.ok(follower.getStatus().skipReasons.missing_price_or_liquidity > 0);
 });
+

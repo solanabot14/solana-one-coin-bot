@@ -103,7 +103,14 @@ function groupCompletedTrades(history = [], position = null) {
 			const holdTimeMs = group.exitTime
 				? Math.max(0, new Date(group.exitTime).getTime() - new Date(group.entryTime).getTime()) : null;
 			const exitReasons = [...new Set(group.sells.map(sell => sell.reason).filter(Boolean))];
-			return { ...group, exitPrice, pnlPercent, maxGainPercent, holdTimeMs, exitReasons };
+			const costsKnown = group.sells.every(s => s.estimatedFeesUsd != null && s.estimatedSlippageUsd != null);
+            const costs = costsKnown ? {
+              estimatedFeesUsd: group.sells.reduce((sum,s) => sum + Number(s.estimatedFeesUsd),0),
+              estimatedSlippageUsd: group.sells.reduce((sum,s) => sum + Number(s.estimatedSlippageUsd),0),
+              grossPnl: group.sells.reduce((sum,s) => sum + Number(s.grossPnl ?? s.pnl),0),
+              netPnl: group.pnl, costEstimateAvailable: true
+            } : {};
+            return { ...group, ...costs, exitPrice, pnlPercent, maxGainPercent, holdTimeMs, exitReasons };
 		})
 		.sort((a, b) => new Date(b.exitTime) - new Date(a.exitTime));
 }
@@ -195,3 +202,4 @@ async function buildDashboardData(data, getTokenData, { allowAlternatePairQuote 
 }
 
 module.exports = { groupCompletedTrades, buildDashboardData };
+
