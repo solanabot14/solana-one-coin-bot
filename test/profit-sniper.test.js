@@ -6,23 +6,24 @@ function candidate(overrides = {}) {
     pairCreatedAt: Date.now() - 5 * 60 * 1000, liquidityUsd: 4500, volume24h: 600,
     volume5m: 700, buys5m: 5, sells5m: 3, priceChange5m: 2, signal: "AVOID", ...overrides };
 }
-test("0-30m new pools use direct activity and momentum gates, not the shared signal label", () => {
+test("0-6h trending pools use current activity and rebound momentum gates, not the shared signal label", () => {
   assert.equal(qualifiesMomentumCandidate(candidate()), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 29 * 60 * 1000 })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 31 * 60 * 1000 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 5 * 60 * 60 * 1000 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 7 * 60 * 60 * 1000 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 0.05 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 0.04 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: -0.01 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 0 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 400 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 250000 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 13 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 4, sells5m: 4 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 250000 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 13 })), true);\n  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 36 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 4, sells5m: 4 })), true);
   assert.equal(constants.MIN_LIQUIDITY_USD, 3000);
   assert.equal(qualifiesMomentumCandidate(candidate({ liquidityUsd: 3000 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ liquidityUsd: 2999 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume5m: 299 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 3, sells5m: 2 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 1, sells5m: 6 })), false);
 });
 test("same ticker is distinguished by mint and duplicate pools collapse to the best exact mint", () => {
   const { selectUniqueMintCandidates } = require("../profitSniperStrategy");
@@ -68,7 +69,7 @@ test("exits 40% at +15%, another 40% at +25%, then trails final 20% by 12%", () 
 test("momentum diagnostics identify hard entry gates", () => {
   assert.deepEqual(getMomentumFailureReasons(candidate({ priceChange5m: 0 })), ["momentum5m"]);
   assert.ok(getMomentumFailureReasons(candidate({ tokenAddress: "EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J" })).includes("blockedTokenAddress"));
-  assert.ok(getMomentumFailureReasons(candidate({ liquidityUsd: 22620.82, volume24h: 355693.51 })).includes("volumeToLiquidity"));
+  assert.ok(getMomentumFailureReasons(candidate({ liquidityUsd: 3000, volume24h: 400000 })).includes("volumeToLiquidity"));
   assert.ok(getMomentumFailureReasons(candidate({ liquidityUsd: 17378.89, volume24h: 1603 })).includes("volume24h"));
-  assert.ok(getMomentumFailureReasons(candidate({ priceChange1h: 902 })).includes("momentum1h"));
+  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange1h: 902, priceChange24h: 900 })), true);\n  assert.ok(getMomentumFailureReasons(candidate({ priceChange1h: 1001 })).includes("momentum1h"));
 });
