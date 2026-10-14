@@ -1,13 +1,15 @@
-const MAX_PAIR_AGE_MS = 24 * 60 * 60 * 1000;
-const MIN_PAIR_AGE_MS = 10 * 60 * 1000;
-const MIN_LIQUIDITY_USD = 3000;
-const MIN_VOLUME_24H_USD = 500;
-const MAX_VOLUME_TO_LIQUIDITY = 100;
-const MIN_VOLUME_5M_USD = 300;
-const MIN_TRANSACTIONS_5M = 6;
-const MIN_BUY_RATIO_5M = 0.15;
-const MIN_MOMENTUM_5M = 0.05;
-const MAX_MOMENTUM_5M = 35;
+const CONFIG = require("./profitSniperConfig");
+const MAX_PAIR_AGE_MS = CONFIG.MAX_PAIR_AGE_MS;
+const MIN_PAIR_AGE_MS = CONFIG.MIN_PAIR_AGE_MS;
+const MIN_LIQUIDITY_USD = CONFIG.MIN_LIQUIDITY_USD;
+const MIN_VOLUME_24H_USD = 0; // intentionally no 24h-volume floor
+const MAX_VOLUME_TO_LIQUIDITY = 100; // retained as an exported compatibility value; no longer gates entry
+const MIN_VOLUME_5M_USD = CONFIG.MIN_VOLUME_5M_USD;
+const MIN_TRANSACTIONS_5M = CONFIG.MIN_TRANSACTIONS_5M;
+const MIN_BUY_RATIO_5M = CONFIG.MIN_BUY_SHARE_5M;
+const MIN_BUY_SELL_RATIO_5M = CONFIG.MIN_BUY_SELL_RATIO_5M;
+const MIN_MOMENTUM_5M = 0;
+const MAX_MOMENTUM_5M = CONFIG.MAX_MOMENTUM_5M_PERCENT;
 const HARD_STOP_PERCENT = -8;
 const MIN_EXIT_LIQUIDITY_USD = 1000;
 const MAX_EXIT_LIQUIDITY_DRAWDOWN = 0.25;
@@ -36,15 +38,16 @@ function getMomentumFailureReasons(coin, now = Date.now()) {
   const buyRatio = transactions5m > 0 ? buys5m / transactions5m : 0;
   const momentum5m = Number(coin.priceChange5m);
 
-  if (!Number.isFinite(createdAt) || ageMs < MIN_PAIR_AGE_MS || ageMs > MAX_PAIR_AGE_MS) failures.push("age");
+  const ageValid = Number.isFinite(createdAt) && ageMs >= MIN_PAIR_AGE_MS && ageMs <= MAX_PAIR_AGE_MS;
+  if (!ageValid) failures.push("age");
   if (!Number.isFinite(liquidity) || liquidity < MIN_LIQUIDITY_USD) failures.push("liquidity");
-  if (!Number.isFinite(volume24h) || volume24h < MIN_VOLUME_24H_USD) failures.push("volume24h");
-  if (Number.isFinite(volume24h) && Number.isFinite(liquidity) && liquidity > 0 &&
-      volume24h / liquidity > MAX_VOLUME_TO_LIQUIDITY) failures.push("volumeToLiquidity");
   if (!Number.isFinite(volume5m) || volume5m < MIN_VOLUME_5M_USD) failures.push("volume5m");
   if (!Number.isFinite(transactions5m) || transactions5m < MIN_TRANSACTIONS_5M) failures.push("transactions5m");
-  if (buyRatio < MIN_BUY_RATIO_5M) failures.push("buyRatio5m");
-  if (!Number.isFinite(momentum5m) || momentum5m < MIN_MOMENTUM_5M || momentum5m > MAX_MOMENTUM_5M) failures.push("momentum5m");
+  const buySellRatio = sells5m > 0 ? buys5m / sells5m : (buys5m > 0 ? Infinity : 0);
+  if (buyRatio < MIN_BUY_RATIO_5M || buySellRatio < MIN_BUY_SELL_RATIO_5M) failures.push("buyRatio5m");
+  if (!Number.isFinite(momentum5m) || momentum5m > MAX_MOMENTUM_5M) failures.push("momentum5m");
+  if (ageValid && coin.momentumPattern?.ready !== true)
+    failures.push(coin.momentumPattern?.reason === "retrace_over_35_percent" ? "retraceOver35Percent" : "momentumPattern");
   if (!coin.tokenAddress) failures.push("tokenAddress");
   if (coin.chainId !== "solana") failures.push("chainId");
   if (!coin.pairAddress) failures.push("pairAddress");
@@ -116,7 +119,7 @@ function chooseExit({ position, currentPrice, freshData, exitProgress }) {
 
 module.exports = {
   constants: { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MAX_VOLUME_TO_LIQUIDITY, MIN_VOLUME_5M_USD,
-    MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M, MIN_MOMENTUM_5M, MAX_MOMENTUM_5M,
+    MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M, MIN_BUY_SELL_RATIO_5M, MIN_MOMENTUM_5M, MAX_MOMENTUM_5M,
     HARD_STOP_PERCENT, MIN_EXIT_LIQUIDITY_USD,
     MAX_EXIT_LIQUIDITY_DRAWDOWN,
     TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
