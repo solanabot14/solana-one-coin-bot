@@ -18,7 +18,7 @@ function candidate(productId="SOL-USD",priceUsd=100) {
 test("Outcome Bot only accepts liquid, confirmed positive momentum",()=>{
   const {bot,dir}=fixture();
   try {
-    const candles=Array.from({length:13},(_,i)=>[i,108+i*0.1,109+i*0.1,108+i*0.1,108+i*0.1,1000]);
+    const candles=Array.from({length:13},(_,i)=>{const close=108+i*0.15,open=i===12?close-0.25:close-0.05;return [i,open-0.1,close+0.2,open,close,1000];});
     const good=bot.assessCandidate("SOL-USD",{last:"110",open:"100",volume:"100000"},candles);
     assert.equal(good.accepted,true);
     const falling=bot.assessCandidate("SOL-USD",{last:"99",open:"100",volume:"100000"},candles);
