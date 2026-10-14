@@ -1,5 +1,6 @@
 const axios = require("axios");
 const { getMomentumFailureReasons, constants } = require("./profitSniperStrategy");
+const CONFIG = require("./profitSniperConfig");
 
 const MIN_OBSERVATIONS = 3;
 const MIN_OBSERVATION_SPAN_MS = 45_000;
@@ -8,7 +9,7 @@ const MIN_LIQUIDITY_RETENTION = 0.90;
 const MIN_PRICE_RETENTION = 0.90;
 const MAX_PRICE_INCREASE = 1.15;
 const MIN_REPORT_RESERVE_RATIO = 0.75;
-const MIN_LOCKED_PERCENT = 30;
+const MIN_LOCKED_PERCENT = CONFIG.MIN_LP_LOCK_PERCENT;
 
 function hasCatastrophicLoss(history, tokenAddress) {
   return (Array.isArray(history) ? history : []).some(row =>
@@ -19,19 +20,60 @@ function hasCatastrophicLoss(history, tokenAddress) {
   );
 }
 
+function isLiquidityBurned(report, market) {
+  const lp = market?.lp || {};
+  return lp.burned === true || lp.lpBurned === true || market?.lpBurned === true ||
+    report?.lpBurned === true || Number(lp.lpBurnedPct) >= 99.99 ||
+    Number(market?.lpBurnedPct) >= 99.99;
+}
+
+function holderConcentration(report) {
+  const holders = Array.isArray(report?.topHolders) ? report.topHolders
+    : Array.isArray(report?.tokenHolders) ? report.tokenHolders
+    : Array.isArray(report?.holders) ? report.holders : null;
+  if (!holders || holders.length < 1) return { verified: false, top10Percent: null, largestPercent: null };
+  const percentages = holders.slice(0, 10).map(holder => {
+    const raw = holder?.pct ?? holder?.percentage ?? holder?.percent;
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 ? value : NaN;
+  });
+  if (percentages.some(value => !Number.isFinite(value)))
+    return { verified: false, top10Percent: null, largestPercent: null };
+  return { verified: true, top10Percent: percentages.reduce((sum, value) => sum + value, 0),
+    largestPercent: Math.max(...percentages) };
+}
+
+function tokenAuthoritiesRenounced(report) {
+  const token = report?.token || {};
+  const mintAuthority = token.mintAuthority ?? report?.mintAuthority;
+  const freezeAuthority = token.freezeAuthority ?? report?.freezeAuthority;
+  const renounced = value => value === null || value === "" || value === false;
+  return { mintRenounced: renounced(mintAuthority), freezeRenounced: renounced(freezeAuthority) };
+}
+
 function evaluatePoolReport(report, coin, liquidityUsd) {
   if (!report || report.mint !== coin.tokenAddress || report.rugged === true) return "RugCheck report unavailable or flagged";
   const market = (Array.isArray(report.markets) ? report.markets : [])
     .find(item => item.pubkey === coin.pairAddress);
   if (!market) return "RugCheck did not verify the exact pool";
+  const authorities = tokenAuthoritiesRenounced(report);
+  if (!authorities.mintRenounced) return "Mint authority is active or unverified";
+  if (!authorities.freezeRenounced) return "Freeze authority is active or unverified";
+  const holders = holderConcentration(report);
+  if (!holders.verified) return "Top-holder concentration is unavailable";
+  if (holders.top10Percent > CONFIG.MAX_TOP10_HOLDER_PERCENT)
+    return "Top 10 holders exceed 35%";
+  if (holders.largestPercent > CONFIG.MAX_SINGLE_HOLDER_PERCENT)
+    return "A holder exceeds 8%";
   const lp = market.lp || {};
   const reserveUsd = Number(lp.baseUSD) + Number(lp.quoteUSD);
+  const burned = isLiquidityBurned(report, market);
   const lockedPercent = Number(lp.lpLockedPct);
   const lockedUsd = Number(lp.lpLockedUSD);
-  if (!Number.isFinite(reserveUsd) || reserveUsd < constants.MIN_LIQUIDITY_USD ||
+  if (!Number.isFinite(reserveUsd) || reserveUsd < CONFIG.MIN_LIQUIDITY_USD ||
       reserveUsd < liquidityUsd * MIN_REPORT_RESERVE_RATIO) return "RugCheck pool reserve is too low or disagrees with DexScreener";
-  if (!Number.isFinite(lockedPercent) || lockedPercent < MIN_LOCKED_PERCENT ||
-      !Number.isFinite(lockedUsd) || lockedUsd < reserveUsd * MIN_LOCKED_PERCENT / 100 * MIN_REPORT_RESERVE_RATIO) {
+  if (!burned && (!Number.isFinite(lockedPercent) || lockedPercent < MIN_LOCKED_PERCENT ||
+      !Number.isFinite(lockedUsd) || lockedUsd < reserveUsd * MIN_LOCKED_PERCENT / 100 * MIN_REPORT_RESERVE_RATIO)) {
     return "Exact pool lock cannot be verified";
   }
   if ((Array.isArray(report.risks) ? report.risks : []).some(risk =>
