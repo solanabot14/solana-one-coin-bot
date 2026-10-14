@@ -16,9 +16,10 @@ test("0-6h trending pools use current activity and rebound momentum gates, not t
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: -0.01 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 0 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 400 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 250000 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 250000, priceChange1h: 1500, priceChange24h: 20000 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 13 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 36 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange1h: 5000, priceChange24h: 50000 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 4, sells5m: 4 })), true);
   assert.equal(constants.MIN_LIQUIDITY_USD, 3000);
   assert.equal(qualifiesMomentumCandidate(candidate({ liquidityUsd: 3000 })), true);
@@ -72,5 +73,4 @@ test("momentum diagnostics identify hard entry gates", () => {
   assert.ok(getMomentumFailureReasons(candidate({ tokenAddress: "EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J" })).includes("blockedTokenAddress"));
   assert.ok(getMomentumFailureReasons(candidate({ liquidityUsd: 3000, volume24h: 400000 })).includes("volumeToLiquidity"));
   assert.ok(getMomentumFailureReasons(candidate({ liquidityUsd: 17378.89, volume24h: 1603 })).includes("volume24h"));
-  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange1h: 902, priceChange24h: 900 })), true);\n  assert.ok(getMomentumFailureReasons(candidate({ priceChange1h: 1001 })).includes("momentum1h"));
-});
+  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange1h: 902, priceChange24h: 900 })), true);\n});
