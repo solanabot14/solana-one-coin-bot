@@ -185,14 +185,14 @@ function measureCandidateGates(candidates, now = Date.now(), minimumLiquidityUsd
 }
 
 async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQUIDITY_USD, minimumVolume24hUsd = MIN_VOLUME_24H_USD,
-  includeObservationCandidates = false, includeMaturePools = false, maximumPairAgeMs } = {}) {
+  includeObservationCandidates = false, includeMaturePools = false, includeTrendingPools = false, maximumPairAgeMs } = {}) {
   maximumPairAgeMs = Number.isFinite(Number(maximumPairAgeMs))
     ? Number(maximumPairAgeMs)
     : includeMaturePools ? MAX_MATURE_PAIR_AGE_MS : MAX_PAIR_AGE_MS;
   const now = Date.now();
   const diagnostics = {
     updatedAt: new Date(now).toISOString(),
-    source: includeMaturePools ? "GeckoTerminal new + trending + top pools + exact DexScreener pairs" : "GeckoTerminal new pools + DexScreener pair data",
+    source: includeMaturePools ? "GeckoTerminal new + trending + top pools + exact DexScreener pairs" : includeTrendingPools ? "GeckoTerminal trending (5m) + new pools + exact DexScreener pair data" : "GeckoTerminal new pools + DexScreener pair data",
     poolsReceived: 0,
     poolsInAgeWindow: 0,
     poolsTracked: 0,
@@ -203,12 +203,15 @@ async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQU
   try {
     const trackedPools = includeMaturePools ? trackedMaturePools : trackedLaunchPools;
     const feeds = [["GECKOTERMINAL_NEW_POOL", await geckoTerminal.getNewSolanaPools({ signal })]];
-    if (includeMaturePools) {
-      const [trending, top] = await Promise.all([
-        geckoTerminal.getTrendingSolanaPools({ signal, duration: "24h" }),
-        geckoTerminal.getTopSolanaPools({ signal })
-      ]);
-      feeds.push(["GECKOTERMINAL_TRENDING_POOL", trending], ["GECKOTERMINAL_TOP_POOL", top]);
+    if (includeTrendingPools || includeMaturePools) {
+      const trending = await geckoTerminal.getTrendingSolanaPools({
+        signal, duration: includeMaturePools ? "24h" : "5m"
+      });
+      feeds.push(["GECKOTERMINAL_TRENDING_POOL", trending]);
+      if (includeMaturePools) {
+        const top = await geckoTerminal.getTopSolanaPools({ signal });
+        feeds.push(["GECKOTERMINAL_TOP_POOL", top]);
+      }
     }
     diagnostics.poolsReceived = feeds.reduce((sum, [, pools]) => sum + (Array.isArray(pools) ? pools.length : 0), 0);
     for (const [source, pools] of feeds) {
