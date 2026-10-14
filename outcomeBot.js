@@ -218,8 +218,10 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     } finally { monitoring = false; }
   }
   function start() {
-    if (state.running) return;
-    const next = structuredClone(state); rotateDay(next); next.running = true; next.lastError = null; commit(next);
+    if (scanTimer || monitorTimer) return;
+    if (!state.running) {
+      const next = structuredClone(state); rotateDay(next); next.running = true; next.lastError = null; commit(next);
+    }
     scanTimer = timers.setInterval(() => void scanOnce(), SCAN_INTERVAL_MS);
     monitorTimer = timers.setInterval(() => void monitorOnce(), MONITOR_INTERVAL_MS);
     void scanOnce(); void monitorOnce();
@@ -230,6 +232,17 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     if (monitorTimer) timers.clearInterval(monitorTimer);
     scanTimer = monitorTimer = null;
     const next = structuredClone(state); next.running = false; commit(next);
+  }
+  async function closeAll() {
+    const results = [];
+    for (const position of structuredClone(state.openPositions)) {
+      try {
+        const ticker = await getTicker(position.productId);
+        const result = closePosition(position.id, Number(ticker.price), "MANUAL PAPER CLOSE");
+        results.push({ ...result, symbol:position.symbol });
+      } catch (error) { results.push({ success:false, symbol:position.symbol, error:error.message }); }
+    }
+    return { success:results.every(row=>row.success), results };
   }
   function getStatus() {
     return { running:state.running, mode:"PAPER", exchange:"Coinbase Exchange public market data", lastScanAt:state.lastScanAt,
@@ -270,7 +283,7 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
       running:state.running, pausedForDailyLoss:state.pausedForDailyLoss,dailyPnlUsd:state.dailyPnlUsd,
       candidates:lastMarketScan.slice(0,12) };
   }
-  return { start, stop, scanOnce, monitorOnce, buy, closePosition, getStatus, getDashboardData, getState:()=>structuredClone(state), assessCandidate, file };
+  return { start, stop, scanOnce, monitorOnce, buy, closePosition, closeAll, getStatus, getDashboardData, getState:()=>structuredClone(state), assessCandidate, file };
 }
 const instance=createOutcomeBot();
 module.exports={ createOutcomeBot, assessCandidate:(...a)=>assessCandidateStatic(...a), PRODUCTS, constants:{MAX_OPEN_POSITIONS,START_SIZE_USD,COMPOUND_RATE,TAKE_PROFIT_PERCENT,HARD_STOP_PERCENT,TRAIL_ACTIVATION_PERCENT,TRAIL_FROM_PEAK_PERCENT,DAILY_LOSS_LIMIT_USD,FEE_RATE,SLIPPAGE_RATE}, ...instance };
