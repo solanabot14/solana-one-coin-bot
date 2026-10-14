@@ -5,7 +5,7 @@ const traderDefault = require("./geminiTrader");
 
 const SCAN_MS = Number(process.env.GEMINI_SCAN_MS) || 30000;
 const MONITOR_MS = Number(process.env.GEMINI_MONITOR_MS) || 3000;
-const HARD_STOP = -20;
+const HARD_STOP = -8;
 const MAX_SLIPPAGE_BPS = Math.min(1000, Math.max(200, Number(process.env.SLIPPAGE_BPS) || 300));
 
 function poolToCandidate(pool, pair) {
@@ -112,8 +112,8 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
       }
       const pnl = (price / latest.entryPrice - 1) * 100;
       const ageMs = Date.now() - Date.parse(latest.entryTime);
-      if (pnl <= HARD_STOP) { trader.sell(price, 100, "HARD STOP -20%"); return; }
-      if (price >= latest.entryPrice * 1.30) { trader.sell(price, 100, "TP +30% FULL EXIT"); return; }
+      if (price <= latest.entryPrice * (1 + HARD_STOP / 100)) { trader.sell(price, 100, "HARD STOP -8%"); return; }
+      if (price >= latest.entryPrice * 1.20) { trader.sell(price, 100, "TP +20% FULL EXIT"); return; }
       if (ageMs >= 15 * 60 * 1000 && pnl >= -5 && pnl <= 10) trader.sell(price, 100, "TIME EXIT 15M");
     } catch (error) {
       if (isActive(s)) { lastError = error.message; console.error("[INFO] Gemini monitor failed", error.message); }
@@ -125,7 +125,7 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
     lastError = null;
     const s = { controller: new AbortController() };
     session = s;
-    console.log("[INFO] Gemini Bot started in PAPER mode; TP +30% full exit; sizing 10% / 12.5% of cash.");
+    console.log("[INFO] Gemini Bot started in PAPER mode; TP +20% full exit; stop -8%; sizing 10% / 12.5% of cash.");
     scanInterval = timers.setInterval(() => void scan(s), SCAN_MS);
     monitorInterval = timers.setInterval(() => void monitor(s), MONITOR_MS);
     void scan(s); void monitor(s);

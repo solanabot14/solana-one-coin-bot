@@ -361,8 +361,8 @@ function createDashboardServer({ config = getConfig(), controls = bot,
             exitTime: row.type === "SELL" ? row.time : null
           }));
           return {
-            strategy: "TP +30%: sell 100%; sizing 10% / 12.5% of available cash",
-            takeProfitPercent: 30, nextSizingPercent: geminiTrader.getSizing().percent,
+            strategy: "TP +20%: sell 100%; stop -8%; sizing 10% / 12.5% of available cash",
+            takeProfitPercent: 20, stopLossPercent: -8, nextSizingPercent: geminiTrader.getSizing().percent,
             nextTradeSizeUsd: geminiTrader.getSizing().amountUsd,
             startingBalance: geminiState.startingBalanceUsd, cashBalance: geminiState.cashUsd,
             equity: geminiAnalytics.equityUsd, totalPnl: geminiAnalytics.totalPnlUsd,
