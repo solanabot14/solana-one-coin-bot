@@ -140,7 +140,7 @@ function status() {
     lastSkip: state.lastSkip || null,
     lastEventAt: state.lastEventAt,
     lastSignature: state.lastSignature,
-    error: setupError
+    error: setupError || lastPollError || (feedMode === "polling" && !lastPollAt ? webhookWarning : null)
   };
 }
 function skip(reason, mint = null) {
