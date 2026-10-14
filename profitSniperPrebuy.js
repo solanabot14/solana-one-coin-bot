@@ -1,9 +1,11 @@
 const { setTimeout: sleep } = require("node:timers/promises");
 const { constants, getMomentumFailureReasons } = require("./profitSniperStrategy");
+const CONFIG = require("./profitSniperConfig");
+const { evaluatePoolReport, isLiquidityBurned } = require("./profitSniperEntryGuard");
 const CONFIRMATION_MS = 7500;
 const MAX_SAMPLE_AGE_MS = 15000;
 const MAX_LIQUIDITY_DROP = 0.20;
-const MIN_LOCK_PERCENT = 30;
+const MIN_LOCK_PERCENT = CONFIG.MIN_LP_LOCK_PERCENT;
 
 function number(value) {
   return value === null || value === undefined || value === "" ? NaN : Number(value);
@@ -18,12 +20,16 @@ function poolLock(report, coin) {
   const lockedPercent = number(lp?.lpLockedPct);
   const baseUsd = number(lp?.baseUSD), quoteUsd = number(lp?.quoteUSD);
   const liquidityUsd = baseUsd + quoteUsd;
-  if (!Number.isFinite(lockedPercent) || lockedPercent < MIN_LOCK_PERCENT || lockedPercent > 100)
-    return { allowed: false, lockedPercent: null, reason: "EXACT_POOL_LOCK_NOT_CONFIRMED" };
-  if (!(baseUsd > 0) || !(quoteUsd > 0) || !Number.isFinite(liquidityUsd) || liquidityUsd < constants.MIN_LIQUIDITY_USD)
+  if (!(baseUsd > 0) || !(quoteUsd > 0) || !Number.isFinite(liquidityUsd) ||
+      liquidityUsd < CONFIG.MIN_LIQUIDITY_USD)
     return { allowed: false, lockedPercent, reason: "EXACT_POOL_RESERVES_TOO_LOW" };
-  return { allowed: true, lockedPercent, liquidityUsd, pairAddress: coin.pairAddress,
-    reason: "EXACT_POOL_LOCK_AND_RESERVES_CONFIRMED" };
+  const safetyFailure = evaluatePoolReport(report, coin, Number(coin.liquidityUsd) || liquidityUsd);
+  if (safetyFailure) return { allowed: false, lockedPercent, liquidityUsd, reason: safetyFailure };
+  const burned = isLiquidityBurned(report, markets[0]);
+  if (!burned && (!Number.isFinite(lockedPercent) || lockedPercent < MIN_LOCK_PERCENT || lockedPercent > 100))
+    return { allowed: false, lockedPercent: null, reason: "EXACT_POOL_LOCK_NOT_CONFIRMED" };
+  return { allowed: true, lockedPercent: burned ? 100 : lockedPercent, liquidityUsd, pairAddress: coin.pairAddress,
+    reason: burned ? "EXACT_POOL_LP_BURN_CONFIRMED" : "EXACT_POOL_LOCK_AND_RESERVES_CONFIRMED" };
 }
 
 function createEntryGuard({
