@@ -209,10 +209,7 @@ function createBot({
     const freeSlots = Math.max(0, MAX_OPEN_POSITIONS - getPositions().length);
     const buyCandidates = availableCandidates.filter(coin => {
       if (openTokens.has(coin.tokenAddress)) return false;
-      if (coin.signal === "BUY" || coin.signal === "STRONG BUY") {
-        momentumEntryObservations.delete(coin.tokenAddress);
-        return true;
-      }
+      if (coin.signal === "BUY" || coin.signal === "STRONG BUY") return true;
       return coin.signal === "WAIT" && confirmMomentumEntry(coin, Date.now());
     });
     const selected = [];
@@ -236,10 +233,13 @@ function createBot({
       const confirmedLock = Number.isFinite(lockedPercent) &&
         lockedPercent >= ENTRY_MIN_LP_LOCK_PERCENT;
       const momentumConfirmedWithoutLock = lockStatusUnavailable &&
-        coin.signal === "WAIT";
+        (coin.signal === "WAIT" || confirmMomentumEntry(coin, Date.now()));
       if (confirmedLowLock || (!confirmedLock && !momentumConfirmedWithoutLock)) {
         console.log(`LP LOCK GATE | ${coin.symbol} | skipped | ${lock?.reason || "LOCK_STATUS_UNAVAILABLE"}`);
         continue;
+      }
+      if (confirmedLock && (coin.signal === "BUY" || coin.signal === "STRONG BUY")) {
+        momentumEntryObservations.delete(coin.tokenAddress);
       }
       const guard = tokenCooldowns.get(coin.tokenAddress);
       if (guard && !guard.released && !observeReentry(coin, lock)) continue;
