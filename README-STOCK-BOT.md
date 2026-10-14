@@ -37,7 +37,7 @@ The ledger is distinct from Alpaca's default simulated brokerage balance.
 
 ## Exits and session control
 
-- Sell 50% of original quantity at +1%; initial loss exit trigger remains -0.8%.
+- Sell 50% of original quantity at +1.5%; initial loss exit trigger is -1.2%.
 - After the partial sale, trail the remainder 0.75% below the monitored high,
   with an exit trigger no lower than modeled cost-adjusted break-even plus a
   small buffer. There is no early full-position trail before the partial target.

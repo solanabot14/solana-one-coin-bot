@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const SYMBOLS = ['SPY','QQQ','IWM','DIA','AAPL','MSFT','AMZN','GOOGL','META','NVDA','TSLA','AMD','AVGO','MU','INTC','PLTR','COIN','HOOD','UBER','NFLX','SHOP','SOFI','PYPL','CRM','ORCL','JPM','BAC','XOM','WMT','DIS','F','GM','RIVN','NIO','LCID','AAL','DAL','UAL','CCL','NCLH','RCL','SNAP','PINS','RBLX','DKNG','AFRM','XYZ','T','VZ','PFE','C','WFC','CVX','OXY','SLB','CAT','BA','GE','XLF','XLK'];
-const STRATEGY = 'Active intraday opportunity: premarket research from 4am ET (delayed data); scan 60 stocks/ETFs including Ford for breakouts and pullback recoveries; 3 slots; sell 50% at +1%, trail remainder 0.75% with cost-adjusted break-even protection; -0.8% initial stop; 60 min max hold; close 10 min before bell. Start $10, grow size 10% after a net winning completed trade, cap $20, reset $10 after loss. Local paper only.';
+const STRATEGY = 'Active intraday opportunity: premarket research from 4am ET (delayed data); scan 60 stocks/ETFs including Ford for breakouts and pullback recoveries; 3 slots; sell 50% at +1.5%, trail remainder 0.75% with cost-adjusted break-even protection; -1.2% initial stop; 60 min max hold; close 10 min before bell. Start $10, grow size 10% after a net winning completed trade, cap $20, reset $10 after loss. Local paper only.';
 const SLIPPAGE = 0.0005, FEE = 0.0001;
 const MINUTE=60000, BAR_MS=5*MINUTE;
 const dateKey = t => new Intl.DateTimeFormat('en-CA', {timeZone:'America/New_York', year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(t));
@@ -150,9 +150,9 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
       current.markPriceUsd=q.bid;current.highestPrice=Math.max(current.highestPrice,q.bid);commit(s);
       const change=(q.bid/p.entryPrice-1)*100;
       if(flatten || dateKey(Date.parse(p.entryTime))!==dateKey(now()))sell(p.id,q,flatten?'SESSION CLOSE 10 MIN BEFORE BELL':'RECOVERY EXIT FROM PREVIOUS SESSION');
-      else if(change<=-0.8)sell(p.id,q,'STOP TRIGGER -0.8%');
+      else if(change<=-1.2)sell(p.id,q,'STOP TRIGGER -1.2%');
       else if(now()-Date.parse(p.entryTime)>=60*MINUTE)sell(p.id,q,'TIME EXIT 60 MIN');
-      else if(!current.partialTaken && change>=1)sell(p.id,q,'PARTIAL TP +1%: SELL 50% ORIGINAL',true);
+      else if(!current.partialTaken && change>=1.5)sell(p.id,q,'PARTIAL TP +1.5%: SELL 50% ORIGINAL',true);
       else if(current.partialTaken){const floor=current.costBasisUsd/current.quantity/((1-SLIPPAGE)*(1-FEE))*1.0005,stop=Math.max(floor,current.highestPrice*0.9925);if(q.bid<=stop)sell(p.id,q,'RUNNER TRAIL 0.75% / COST-ADJUSTED BREAK EVEN');}
     }
   }
