@@ -45,8 +45,8 @@ function holderConcentration(report) {
 
 function tokenAuthoritiesRenounced(report) {
   const token = report?.token || {};
-  const mintAuthority = token.mintAuthority ?? report?.mintAuthority;
-  const freezeAuthority = token.freezeAuthority ?? report?.freezeAuthority;
+  const mintAuthority = token.mintAuthority !== undefined ? token.mintAuthority : report?.mintAuthority;
+  const freezeAuthority = token.freezeAuthority !== undefined ? token.freezeAuthority : report?.freezeAuthority;
   const renounced = value => value === null || value === "" || value === false;
   return { mintRenounced: renounced(mintAuthority), freezeRenounced: renounced(freezeAuthority) };
 }
