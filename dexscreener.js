@@ -54,7 +54,10 @@ function dataFromPair(pair) {
 		priceChange24h: pair.priceChange?.h24,
 		buys5m: pair.txns?.m5?.buys,
 		sells5m: pair.txns?.m5?.sells,
-		pairAddress: pair.pairAddress
+		pairAddress: pair.pairAddress,
+		dexId: pair.dexId,
+		baseTokenAddress: pair.baseToken?.address,
+		quoteTokenAddress: pair.quoteToken?.address
 	};
 }
 

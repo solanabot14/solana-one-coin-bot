@@ -162,7 +162,7 @@ function createBot({
     const liquidityUsd = Number(coin.liquidityUsd) || 0;
     const peakLiquidityUsd = Math.max(Number(guard.peakLiquidityUsd) || 0, liquidityUsd);
     const liquidityHealthy = liquidityUsd > 0 && liquidityUsd >= peakLiquidityUsd * (1 - REENTRY_MAX_LIQUIDITY_DRAWDOWN);
-    const lpHealthy = Boolean(lock?.allowed) && Number(lock.lockedPercent) >= REENTRY_MIN_LP_LOCK_PERCENT;
+		const lpHealthy = Boolean(lock?.allowed) && (lock?.canonicalPumpSwapMigration === true || Number(lock.lockedPercent) >= REENTRY_MIN_LP_LOCK_PERCENT);
     const active = lpHealthy && volume5m >= REENTRY_MIN_VOLUME_5M &&
       momentum5m >= REENTRY_MIN_MOMENTUM_5M && momentum5m < REENTRY_MAX_MOMENTUM_5M &&
       transactions5m >= REENTRY_MIN_TRANSACTIONS_5M &&
@@ -216,7 +216,7 @@ function createBot({
 
     for (const coin of buyCandidates) {
       if (!tokenLossGuard.allows(coin)) continue;
-      const lock = await checkLiquidityLock(coin.tokenAddress);
+			const lock = await checkLiquidityLock(coin.tokenAddress, coin);
       onLiquidityLockCheck(lock, coin);
       if (!isActive(session)) return;
       const rawLockedPercent = lock?.lockedPercent;
@@ -224,14 +224,15 @@ function createBot({
         rawLockedPercent === undefined || rawLockedPercent === "" ||
         lock?.reason === "LOCK_STATUS_UNAVAILABLE";
       const lockedPercent = lockStatusUnavailable ? NaN : Number(rawLockedPercent);
-      const confirmedLowLock = Number.isFinite(lockedPercent) &&
+		const canonicalPumpSwapMigration = lock?.canonicalPumpSwapMigration === true;
+		const confirmedLowLock = !canonicalPumpSwapMigration && Number.isFinite(lockedPercent) &&
         lockedPercent < ENTRY_MIN_LP_LOCK_PERCENT;
 
-      // A reported low lock is always unsafe and remains a hard rejection.
+      // Confirmed low-lock pools remain unsafe; verified canonical migrations are checked separately.
       // If RugCheck has no lock data, only a WAIT setup confirmed on two scans
       // may use the alternate path; direct BUY signals still need confirmed LP.
-      const confirmedLock = Number.isFinite(lockedPercent) &&
-        lockedPercent >= ENTRY_MIN_LP_LOCK_PERCENT;
+		const confirmedLock = canonicalPumpSwapMigration || (Number.isFinite(lockedPercent) &&
+		lockedPercent >= ENTRY_MIN_LP_LOCK_PERCENT);
       const momentumConfirmedWithoutLock = lockStatusUnavailable &&
         (coin.signal === "WAIT" || confirmMomentumEntry(coin, Date.now()));
       if (confirmedLowLock || (!confirmedLock && !momentumConfirmedWithoutLock)) {
@@ -250,16 +251,18 @@ function createBot({
           "WAIT signal admitted after two scans with rising 5m momentum, volume and buy pressure"
         ];
       }
-      coin.reasons = [
-        ...(Array.isArray(coin.reasons) ? coin.reasons : []),
-        `LP lock ${Number(lock.lockedPercent).toFixed(1)}% confirmed by RugCheck`
-      ];
+		coin.reasons = [
+			...(Array.isArray(coin.reasons) ? coin.reasons : []),
+			canonicalPumpSwapMigration
+				? "Canonical PumpSwap migration verified on-chain; migration LP tokens are burned"
+				: `LP lock ${Number(lock.lockedPercent).toFixed(1)}% confirmed by RugCheck`
+		];
       selected.push(coin);
       if (selected.length >= freeSlots) break;
     }
 
     if (!selected.length) {
-      console.log(`No BUY or STRONG BUY candidate with confirmed LP lock >=${ENTRY_MIN_LP_LOCK_PERCENT}% available.`);
+		console.log(`No eligible BUY candidate with confirmed LP lock >=${ENTRY_MIN_LP_LOCK_PERCENT}% or verified canonical PumpSwap migration.`);
       return;
     }
 

@@ -57,4 +57,8 @@ test("unknown LP lock allows only twice-confirmed WAIT; rejects low lock and dir
     { allowed: false, lockedPercent: 45, reason: "LIQUIDITY_NOT_LOCKED_ENOUGH" }, "low-lock-wait"), 0);
   assert.equal(await simulateEntry("STRONG BUY",
     { allowed: false, lockedPercent: null, reason: "LOCK_STATUS_UNAVAILABLE" }, "unknown-strong-buy"), 1);
+  assert.equal(await simulateEntry("STRONG BUY",
+    { allowed: true, lockedPercent: null, reason: "CANONICAL_PUMPSWAP_MIGRATION_VERIFIED", canonicalPumpSwapMigration: true }, "canonical-migration"), 1);
+  assert.equal(await simulateEntry("STRONG BUY",
+    { allowed: false, lockedPercent: 20, reason: "LIQUIDITY_NOT_LOCKED_ENOUGH" }, "confirmed-low-lock"), 0);
 });
