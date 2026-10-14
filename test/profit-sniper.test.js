@@ -3,24 +3,24 @@ const assert = require("node:assert/strict");
 const { constants, qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit } = require("../profitSniperStrategy");
 function candidate(overrides = {}) {
   return { tokenAddress: "Token111", pairAddress: "Pool111", chainId: "solana",
-    pairCreatedAt: Date.now() - 5 * 60 * 1000, liquidityUsd: 15000, volume24h: 6000,
+    pairCreatedAt: Date.now() - 5 * 60 * 1000, liquidityUsd: 4500, volume24h: 600,
     volume5m: 700, buys5m: 5, sells5m: 3, priceChange5m: 2, signal: "AVOID", ...overrides };
 }
-test("0-72h pools use direct activity and momentum gates, not the shared signal label", () => {
+test("0-30m new pools use direct activity and momentum gates, not the shared signal label", () => {
   assert.equal(qualifiesMomentumCandidate(candidate()), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 71 * 60 * 60 * 1000 })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 73 * 60 * 60 * 1000 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 29 * 60 * 1000 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 31 * 60 * 1000 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 0.05 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 0.04 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: -0.01 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 0 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 2500 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 400 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 250000 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 13 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 4, sells5m: 4 })), false);
-  assert.equal(constants.MIN_LIQUIDITY_USD, 7500);
-  assert.equal(qualifiesMomentumCandidate(candidate({ liquidityUsd: 7500 })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ liquidityUsd: 7499 })), false);
+  assert.equal(constants.MIN_LIQUIDITY_USD, 3000);
+  assert.equal(qualifiesMomentumCandidate(candidate({ liquidityUsd: 3000 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ liquidityUsd: 2999 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume5m: 299 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 3, sells5m: 2 })), false);
 });
