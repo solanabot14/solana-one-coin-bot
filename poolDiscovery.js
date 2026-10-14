@@ -1,12 +1,7 @@
-const fs = require("node:fs");
-const path = require("node:path");
 const axios = require("axios");
 const market = require("./dexscreener");
 const geckoTerminal = require("./geckoTerminal");
-const { analyzePaperLaunchCandidate } = require("./paperLaunchStrategy");
-const { createPaperTrader } = require("./paperTrader");
-const { createBot } = require("./bot");
-const { getLockStatus } = require("./lpLockChecker");
+const { analyzePoolCandidate } = require("./poolDiscoveryStrategy");
 
 const MAX_PAIR_AGE_MS = 30 * 60 * 1000;
 const MIN_LIQUIDITY_USD = 20000;
@@ -24,13 +19,6 @@ const trackedMaturePools = new Map();
 const MAX_MATURE_PAIR_AGE_MS = 72 * 60 * 60 * 1000;
 let lastScanDiagnostics = null;
 
-function statePath(fileName = "launchSniperPaperTradingData.json") {
-  if (process.env.RAILWAY_ENVIRONMENT_ID && !process.env.RAILWAY_VOLUME_MOUNT_PATH) {
-    throw new Error("Attach a Railway volume before starting the launch watcher.");
-  }
-  const directory = process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DATA_DIR || __dirname;
-  return path.join(path.resolve(directory), fileName);
-}
 
 function addressFromResourceId(id) {
   return typeof id === "string" ? id.replace(/^solana_/, "") : "";
@@ -97,17 +85,6 @@ function estimateExecutionCosts({ amountUsd, liquidityUsd }) {
   };
 }
 
-const trader = createPaperTrader(
-  statePath(),
-  fs,
-  {
-    strategyVersion: "Paper-Launch-Watcher-v1",
-    startingBalance: 100,
-    maxOpenPositions: 3,
-    getBuySizing: () => ({ amountInvested: 10, compoundRate: 0.10 }),
-    estimateExecutionCosts
-  }
-);
 
 async function fetchDexPairs(poolAddresses, signal) {
   const pairs = [];
@@ -146,7 +123,7 @@ function mapLaunchPair(pair, descriptor) {
     newPoolCreatedAt: new Date(descriptor.createdAt).toISOString(),
     discoverySource: descriptor.discoverySource || "GECKOTERMINAL_NEW_POOL"
   };
-  const analysis = analyzePaperLaunchCandidate(data);
+  const analysis = analyzePoolCandidate(data);
   return { ...data, score: analysis.score, signal: analysis.signal, reasons: analysis.reasons };
 }
 
@@ -237,7 +214,7 @@ async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQU
     if (signal?.aborted || !trackedPools.size) {
       diagnostics.gates = measureCandidateGates([], now, minimumLiquidityUsd, minimumVolume24hUsd);
       lastScanDiagnostics = diagnostics;
-      console.log("PAPER LAUNCH SCAN | pools received: " + diagnostics.poolsReceived +
+      console.log("POOL DISCOVERY SCAN | pools received: " + diagnostics.poolsReceived +
         " | recent pools tracked: " + diagnostics.poolsTracked + " | no pairs queried");
       return [];
     }
@@ -261,7 +238,7 @@ async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQU
     const signalSummary = Object.entries(signalCounts).map(([signal, count]) =>
       signal + " " + count
     ).join(", ") || "none";
-    console.log("PAPER LAUNCH SCAN | pools received: " + diagnostics.poolsReceived +
+    console.log("POOL DISCOVERY SCAN | pools received: " + diagnostics.poolsReceived +
       " | recent pools: " + diagnostics.poolsTracked + " | Dex pairs: " + diagnostics.dexPairsReturned +
       " | exact pool matches: " + gates.pairsMatched + " | age: " + gates.age +
       " | liquidity: " + gates.liquidity + " | 24h volume: " + gates.volume24h +
@@ -275,68 +252,10 @@ async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQU
     diagnostics.error = error.message;
     diagnostics.gates = measureCandidateGates([], now, minimumLiquidityUsd, minimumVolume24hUsd);
     lastScanDiagnostics = diagnostics;
-    if (!signal?.aborted) console.warn("PAPER LAUNCH DISCOVERY UNAVAILABLE | " + error.message);
+    if (!signal?.aborted) console.warn("POOL DISCOVERY DISCOVERY UNAVAILABLE | " + error.message);
     return [];
   }
 }
 
-const quietNotifier = {
-  notifyTrade: async () => {},
-  notifyCritical: async () => {}
-};
 
-const bot = createBot({
-  trader,
-  getTokenData: market.getTokenData,
-  discoverCandidates: discoverLaunchCandidates,
-  notifier: quietNotifier,
-  checkLiquidityLock: getLockStatus,
-  positionMonitorMs: 5000,
-  scannerIntervalMs: 30000,
-  botLabel: "Paper Launch Watcher",
-  reentryStateFile: statePath("launchSniperPaperReentryState.json"),
-  maxOpenPositions: 3,
-  maxCandidateAgeMinutes: 30,
-  minimumLiquidityUsd: MIN_LIQUIDITY_USD,
-  minimumVolume24hUsd: MIN_VOLUME_24H_USD,
-  acceptedSignals: ["BUY", "STRONG BUY"],
-  requireLiquidityLock: true,
-  allowUnknownLiquidityLock: true,
-  useSimpleCooldown: true
-});
-
-function getStatus() {
-  return {
-    running: bot.getBotStatus(),
-    error: bot.getLastError(),
-    mode: "PAPER",
-    execution: "No wallet connection or live swaps",
-    scanIntervalMs: 30000,
-    positionMonitorIntervalMs: 5000,
-    maximumPairAgeMinutes: 30,
-    minimumLiquidityLockPercent: 70,
-    allowUnknownLiquidityLockInPaper: true,
-    scanDiagnostics: lastScanDiagnostics
-  };
-}
-
-module.exports = {
-  ...bot,
-  getStatus,
-  getPortfolio: trader.getPortfolio,
-  discoverLaunchCandidates,
-  mapLaunchPair,
-  qualifiesLaunchCandidate,
-  qualifiesPoolObservation,
-  estimateExecutionCosts,
-  thresholds: {
-    maximumPairAgeMinutes: 30,
-    minimumLiquidityUsd: MIN_LIQUIDITY_USD,
-    minimumVolume24hUsd: MIN_VOLUME_24H_USD,
-    minimumVolume5mUsd: MIN_VOLUME_5M_USD,
-    minimumTransactions5m: MIN_TRANSACTIONS_5M,
-    minimumBuyRatio5m: MIN_BUY_RATIO_5M,
-    maximumOpenPositions: 3,
-    paperEntryUsd: 10
-  }
-};
+module.exports = { discoverLaunchCandidates, mapLaunchPair, qualifiesLaunchCandidate, qualifiesPoolObservation, estimateExecutionCosts, getScanDiagnostics: () => lastScanDiagnostics, thresholds: { minimumLiquidityUsd: MIN_LIQUIDITY_USD, minimumVolume24hUsd: MIN_VOLUME_24H_USD, minimumVolume5mUsd: MIN_VOLUME_5M_USD } };

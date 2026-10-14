@@ -8,15 +8,13 @@ const { getPortfolio, positionKey } = require("./paperTrader");
 const { getTokenData, getTokensData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
 const swarm = require("./janMvpBot");
-const buyPriorityLock85 = require("./buyPriorityLock85");
-const launchSniper = require("./launchSniper");
 const profitSniper = require("./profitSniper");
-const walletCopy = require("./walletCopy");
 const geminiBot = require("./geminiBot");
 const geminiTrader = require("./geminiTrader");
 const { buildGeminiAnalytics } = require("./geminiAnalytics");
 const outcomeBot = require("./outcomeBot");
 const stockBot = require("./stockBot");
+require("./retiredBotCleanup").purgeLocalData();
 const equityHistory = require("./equityHistory").createEquityHistory();
 
 function getConfig(env = process.env) {
@@ -200,8 +198,6 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           }
         }
         await closeAccount("New V3.1 Version", getPortfolio(), bot);
-        await closeAccount("V3.1 BUY Priority Test", buyPriorityLock85.getPortfolio(), buyPriorityLock85);
-        await closeAccount("Paper Launch Watcher", launchSniper.getPortfolio(), launchSniper);
         const sniperPositions = profitSniper.getPortfolio().positions || [];
         for (const position of sniperPositions) {
           try {
@@ -211,8 +207,6 @@ function createDashboardServer({ config = getConfig(), controls = bot,
             results.push({ success: false, bot: "Profit Sniper", symbol: position.symbol, message: error.message });
           }
         }
-        const walletResult = await walletCopy.closeAllPositions();
-        results.push(...walletResult.results.map(result => ({ ...result, bot: "Decu Wallet Follow" })));
         const outcomeResult = await outcomeBot.closeAll();
         results.push(...outcomeResult.results.map(result => ({ ...result, bot: "Coinbase Bot" })));
         const stockResult = await stockBot.closeAll();
@@ -233,20 +227,6 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         }
         const closedCount = results.filter(result => result.success).length;
         return json(res, { success: results.every(result => result.success), closedCount, results });
-      }
-      if (route === "/api/wallet-copy/webhook") {
-        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
-        if (!walletCopy.authenticateWebhook(req)) return json(res, { error: "Webhook authentication failed" }, 401);
-        let body = "";
-        for await (const chunk of req) {
-          body += chunk;
-          if (body.length > 1000000) return json(res, { error: "Payload too large" }, 413);
-        }
-        let payload;
-        try { payload = JSON.parse(body); }
-        catch (_) { return json(res, { error: "Invalid JSON payload" }, 400); }
-        await walletCopy.handleWebhookPayload(payload);
-        return json(res, { ok: true });
       }
       if (!authorized(req, config)) {
         res.setHeader("WWW-Authenticate", 'Basic realm="Trading dashboard", charset="UTF-8"');
@@ -300,51 +280,24 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         if (route === "/api/profit-sniper/start") profitSniper.startBot(); else profitSniper.stopBot();
         return json(res, profitSniper.getStatus());
       }
-      if (route === "/api/launch-sniper/start" || route === "/api/launch-sniper/stop") {
-        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
-        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
-        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
-        if (route === "/api/launch-sniper/start") launchSniper.startBot(); else launchSniper.stopBot();
-        return json(res, launchSniper.getStatus());
-      }
       if (route === "/api/profit-sniper/status") return json(res, profitSniper.getStatus());
       if (route === "/api/profit-sniper/data") {
         const account = await buildDashboardData(profitSniper.getPortfolio(), marketData, { allowAlternatePairQuote: true });
         return json(res, { label: "Profit Sniper", paperOnly: true, account, status: profitSniper.getStatus(), thresholds: profitSniper.thresholds });
-      }
-      if (route === "/api/launch-sniper/status") return json(res, launchSniper.getStatus());
-      if (route === "/api/launch-sniper/data") {
-        const account = await buildDashboardData(launchSniper.getPortfolio(), marketData);
-        return json(res, { label: "Paper Launch Watcher", paperOnly: true, account, thresholds: launchSniper.thresholds });
-      }
-      if (route === "/api/lock85/start" || route === "/api/lock85/stop") {
-        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
-        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
-        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
-        if (route === "/api/lock85/start") buyPriorityLock85.startBot(); else buyPriorityLock85.stopBot();
-        return json(res, { running: buyPriorityLock85.getBotStatus() });
       }
       if (req.method !== "GET") return json(res, { error: "Method not allowed" }, 405);
       if (route === "/api/status") return json(res, { running: controls.getBotStatus(), error: controls.getLastError() });
       if (route === "/api/outcome/status") return json(res, outcomeBot.getStatus());
       if (route === "/api/stock/status") return json(res, stockBot.getStatus());
       if (route === "/api/stock/data") return json(res, stockBot.getDashboardData());
-      if (route === "/api/lock85/status") return json(res, { running: buyPriorityLock85.getBotStatus(), error: buyPriorityLock85.getLastError(), mode: "paper", lockThresholdPercent: 60 });
-      if (route === "/api/lock85/data") return json(res, { label: "V3.1 BUY Priority Test - 60% LP Lock", mode: "paper", lockThresholdPercent: 60, account: await buildDashboardData(buyPriorityLock85.buildDashboardAccount(), marketData) });
       if (route === "/api/swarm") return json(res, { running: swarm.getStatus(), error: swarm.getLastError(), ...swarm.getDashboardState() });
       if (route === "/api/data") {
         const baseAccount = portfolio();
-        const lock85Account = buyPriorityLock85.buildDashboardAccount();
         const profitSniperAccount = profitSniper.getPortfolio();
-        const walletCopyAccount = walletCopy.getPortfolio();
-        const launchAccount = launchSniper.getPortfolio();
         const geminiState = geminiTrader.getState();
         const addresses = [...new Set([
           ...(baseAccount.positions || (baseAccount.position ? [baseAccount.position] : [])).map(p => p.tokenAddress),
-          ...(lock85Account.positions || []).map(p => p.tokenAddress),
           ...(profitSniperAccount.positions || []).map(p => p.tokenAddress),
-          ...(walletCopyAccount.positions || []).map(p => p.tokenAddress),
-          ...(launchAccount.positions || []).map(p => p.tokenAddress),
           ...(geminiState.position ? [geminiState.position.tokenAddress] : [])
         ].filter(Boolean))];
         const sharedQuotes = batchMarketData && addresses.length
@@ -398,35 +351,27 @@ function createDashboardServer({ config = getConfig(), controls = bot,
             running: geminiBot.getStatus(), lastScanAt: geminiState.lastScanAt
           };
         })();
-        const [v31, candleBreakout, profitabilityLab, lock85, profitSniperData, walletCopyData, launchData] = await Promise.all([
+        const [v31, candleBreakout, profitabilityLab, profitSniperData] = await Promise.all([
           buildDashboardData(baseAccount, sharedMarketData),
           fetchCandleBreakoutDashboard(),
           fetchProfitabilityLabDashboard(),
-          buildDashboardData(lock85Account, sharedMarketData),
           buildDashboardData(profitSniperAccount, sharedMarketData, { allowAlternatePairQuote: true }),
-          buildDashboardData(walletCopyAccount, sharedMarketData),
-          buildDashboardData(launchAccount, sharedMarketData)
         ]);
         const outcomeData = outcomeBot.getDashboardData(), stockData = stockBot.getDashboardData();
-        const equities = {v31:v31.equity,candle:candleBreakout.data?.equity,lab:profitabilityLab.data?.equity,'buy-lock85':lock85.equity,'launch-sniper':launchData.equity,'profit-sniper':profitSniperData.equity,'wallet-copy':walletCopyData.equity,gemini:geminiData.equity,outcome:outcomeData.equity,stock:stockData.equity,swarm:swarm.getDashboardState().totalCapital};
+        const equities = {v31:v31.equity,candle:candleBreakout.data?.equity,lab:profitabilityLab.data?.equity,'profit-sniper':profitSniperData.equity,gemini:geminiData.equity,outcome:outcomeData.equity,stock:stockData.equity,swarm:swarm.getDashboardState().totalCapital};
         if (Object.values(equities).every(v => typeof v === 'number' && Number.isFinite(v))) equities.total = Object.values(equities).reduce((s,v) => s+v,0);
         let equityRows = equityHistory.getRows();
         try { equityRows = equityHistory.record(equities); } catch (error) { console.error('Equity history persistence:', error.message); }
         return json(res, {
           equityHistory: equityRows,
-          launchSniper: launchData, launchSniperStatus: launchSniper.getStatus(),
           v31,
           candleBreakout: candleBreakout.data,
           candleBreakoutStatus: candleBreakout.status,
           candleBreakoutError: candleBreakout.error,
           profitabilityLab: profitabilityLab.data,
           profitabilityLabError: profitabilityLab.error,
-          buyPriorityLock85: lock85,
-          buyPriorityLock85Status: { running: buyPriorityLock85.getBotStatus(), error: buyPriorityLock85.getLastError() },
           profitSniper: profitSniperData,
           profitSniperStatus: profitSniper.getStatus(),
-          walletCopy: walletCopyData,
-          walletCopyStatus: walletCopy.getStatus(),
           gemini: geminiData,
           geminiStatus: { running: geminiBot.getStatus(), error: geminiBot.getLastError(), ...geminiBot.getDiagnostics() },
           outcomeBot: outcomeData,
@@ -435,13 +380,10 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           stockBotStatus: stockBot.getStatus()
         });
       }
-      if (route === "/trading/launch-sniper") { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); return res.end(fs.readFileSync(path.join(__dirname, "launchSniperPanel.html"), "utf8")); }
-      if (route === "/launchSniperPanel.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(fs.readFileSync(path.join(__dirname, "launchSniperPanel.js"), "utf8")); }
-      if (route === "/trading/buy-priority-lock85") { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); return res.end(fs.readFileSync(path.join(__dirname, "buyPriorityLock85Panel.html"), "utf8")); }
-      if (route === "/buyPriorityLock85Panel.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(fs.readFileSync(path.join(__dirname, "buyPriorityLock85Panel.js"), "utf8")); }
       if (route === "/dashboard-client.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(client); }
       if (route === "/analytics-core.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(analyticsCore); }
       if (route === "/terminal.css") { res.writeHead(200, { "Content-Type": "text/css; charset=utf-8" }); return res.end(terminalCss); }
+      if (["/trading/launch-sniper", "/trading/buy-priority-lock85", "/trading/wallet-copy"].includes(route)) return json(res, { error: "Bot removed" }, 410);
       if (route.startsWith("/api/")) return json(res, { error: "Not found" }, 404);
       if (path.extname(route)) return json(res, { error: "Not found" }, 404);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); res.end(page);
@@ -455,16 +397,14 @@ function json(res, value, status = 200) {
   res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(value));
 }
 if (require.main === module) {
+  void require("./retiredBotCleanup").removeWalletWebhook();
   const config = getConfig();
   getPortfolio();
   const server = createDashboardServer({ config });
   bot.startBot();
   swarm.start();
-  buyPriorityLock85.startBot();
-  launchSniper.startBot();
   if (profitSniper.reconciliationReady) profitSniper.startBot();
   server.listen(config.port, config.host, () => {
-    walletCopy.startBot();
     geminiBot.start();
     outcomeBot.start();
     stockBot.start();
@@ -487,10 +427,7 @@ if (require.main === module) {
   const shutdown = () => {
     swarm.stop();
     bot.stopBot();
-    buyPriorityLock85.stopBot();
-    launchSniper.stopBot();
     profitSniper.stopBot();
-    walletCopy.stopBot();
     geminiBot.stop();
     outcomeBot.stop();
     stockBot.stop();
@@ -501,4 +438,5 @@ if (require.main === module) {
   process.once("SIGINT", shutdown);
 }
 module.exports = { createDashboardServer, getConfig, fetchCandleBreakoutDashboard };
+
 

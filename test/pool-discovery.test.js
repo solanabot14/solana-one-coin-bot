@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { mapLaunchPair, qualifiesLaunchCandidate, qualifiesPoolObservation, thresholds } = require("../launchSniper");
+const { mapLaunchPair, qualifiesLaunchCandidate, qualifiesPoolObservation, thresholds } = require("../poolDiscovery");
 
 const now = 1_800_000_000_000;
 function candidate(overrides = {}) {
@@ -69,7 +69,3 @@ test("does not qualify a pair without recent transaction data", () => {
   assert.equal(qualifiesLaunchCandidate(candidate({ buys5m: 0, sells5m: 0 }), now), false);
 });
 
-test("launch watcher is capped at three separate paper positions", () => {
-  assert.equal(thresholds.maximumOpenPositions, 3);
-  assert.equal(thresholds.paperEntryUsd, 10);
-});

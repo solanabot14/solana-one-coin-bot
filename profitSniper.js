@@ -1,6 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const launchSniper = require("./launchSniper");
+const poolDiscovery = require("./poolDiscovery");
 const market = require("./dexscreener");
 const { createPaperTrader } = require("./paperTrader");
 const { reconcileProfitSniperAccount } = require("./profitSniperReconcile");
@@ -45,7 +45,7 @@ let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, so
 const entryGuard = createSniperEntryGuard();
 
 async function discoverCandidates(options = {}) {
-  const candidates = await launchSniper.discoverLaunchCandidates({ ...options, minimumLiquidityUsd: MIN_LIQUIDITY_USD,
+  const candidates = await poolDiscovery.discoverLaunchCandidates({ ...options, minimumLiquidityUsd: MIN_LIQUIDITY_USD,
     minimumVolume24hUsd: MIN_VOLUME_24H_USD, includeObservationCandidates: true,
     includeMaturePools: true, includeTrendingPools: true, maximumPairAgeMs: MAX_PAIR_AGE_MINUTES * 60 * 1000 });
   const now = Date.now();
@@ -74,14 +74,14 @@ async function discoverCandidates(options = {}) {
     sells5m: Number(coin.sells5m),
     rejectedGates: failures
   }));
-  const scanState = launchSniper.getStatus().scanDiagnostics;
+  const scanState = poolDiscovery.getScanDiagnostics();
   lastScanDiagnostics = {
     state: "scan_complete",
     updatedAt: new Date(now).toISOString(),
     source: "GeckoTerminal new + trending/top pools (24h) + exact DexScreener pairs + RugCheck; pair age 10m-24h",
     poolsReceived: scanState?.poolsReceived ?? null,
     recentPools: candidates.length,
-    activityQualified: candidates.filter(coin => launchSniper.qualifiesLaunchCandidate(coin, now, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MAX_PAIR_AGE_MINUTES * 60 * 1000)).length,
+    activityQualified: candidates.filter(coin => poolDiscovery.qualifiesLaunchCandidate(coin, now, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MAX_PAIR_AGE_MINUTES * 60 * 1000)).length,
     momentumQualified: qualified.length,
     momentumRejectedGates: rejectedGates,
     candidateSamples: samples,
@@ -232,4 +232,5 @@ module.exports = {
     minimumTradeUsd: MINIMUM_TRADE_USD
   }
 };
+
 

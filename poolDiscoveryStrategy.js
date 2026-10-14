@@ -11,7 +11,7 @@ const DEFAULTS = Object.freeze({
   maximumPriceChange24h: 250
 });
 
-function analyzePaperLaunchCandidate(data) {
+function analyzePoolCandidate(data) {
   const liquidity = Number(data?.liquidityUsd);
   const volume24h = Number(data?.volume24h);
   const volume5m = Number(data?.volume5m);
@@ -48,4 +48,5 @@ function analyzePaperLaunchCandidate(data) {
   return { score, signal, reasons, failedGates: failed };
 }
 
-module.exports = { DEFAULTS, analyzePaperLaunchCandidate };
+module.exports = { DEFAULTS, analyzePoolCandidate };
+
