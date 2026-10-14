@@ -350,9 +350,10 @@
   }
   function stockResearchPanel(system) {
     var a=system.account.premarketAnalysis;
-    if(!a)return '<div class="notice">Premarket research starts at 4am New York time on trading days.</div>';
+    var sizing='<div class="notice">NEXT ENTRY: '+money(system.account.nextTradeSizeUsd)+' · +10% size after a net winning completed trade · $20 cap · reset $10 after loss · up to 6 entries per stock daily</div>';
+    if(!a)return sizing+'<div class="notice">Premarket research starts at 4am New York time on trading days.</div>';
     var rows=(a.rankings||[]).slice(0,10).map(function(r){return '<tr><td class="text-left">'+esc(r.symbol)+'</td><td>'+priceValue(r.lastPrice)+'</td><td>'+pct(r.gapPercent)+'</td><td>'+money(r.dollarVolume)+'</td><td>'+int(r.dataAgeMinutes)+' min</td><td>'+esc(r.stale?'STALE':r.longWatchCandidate?'LONG WATCH':'OBSERVE')+'</td></tr>';});
-    return '<div class="panel section-gap"><div class="panel-head"><div><div class="panel-title">PREMARKET OPPORTUNITY WATCHLIST</div><div class="panel-subtitle">'+esc(a.sessionDate||'')+' · Consolidated data delayed at least 16 minutes · research only</div></div></div><div class="notice">'+esc(a.error||a.status||'')+' · Updated '+esc(dateTime(a.lastUpdatedAt||a.lastAttemptAt))+'</div>'+table(['STOCK / ETF','DELAYED PRICE','GAP VS PRIOR CLOSE','PREMARKET VALUE','DATA AGE','WATCH STATUS'],rows,'Waiting for premarket data')+'</div>';
+    return sizing+'<div class="panel section-gap"><div class="panel-head"><div><div class="panel-title">PREMARKET OPPORTUNITY WATCHLIST</div><div class="panel-subtitle">'+esc(a.sessionDate||'')+' · Consolidated data delayed at least 16 minutes · research only</div></div></div><div class="notice">'+esc(a.error||a.status||'')+' · Updated '+esc(dateTime(a.lastUpdatedAt||a.lastAttemptAt))+'</div>'+table(['STOCK / ETF','DELAYED PRICE','GAP VS PRIOR CLOSE','PREMARKET VALUE','DATA AGE','WATCH STATUS'],rows,'Waiting for premarket data')+'</div>';
   }
   function renderSessionArchive(system) {
     var sessions=system.account.archivedSessions||[];

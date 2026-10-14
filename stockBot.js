@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const SYMBOLS = ['SPY','QQQ','IWM','DIA','AAPL','MSFT','AMZN','GOOGL','META','NVDA','TSLA','AMD','AVGO','MU','INTC','PLTR','COIN','HOOD','UBER','NFLX','SHOP','SOFI','PYPL','CRM','ORCL','JPM','BAC','XOM','WMT','DIS'];
-const STRATEGY = 'Premarket research from 4am ET (delayed consolidated data); intraday opportunity: scan 30 stocks/ETFs for volume-confirmed breakouts or pullback recoveries above session VWAP; $10 entries, 3 slots; +1.5% target, -0.8% stop trigger, 0.5% trail after +0.75%; max hold 90 min; close 10 min before market close. Local paper simulation only.';
+const STRATEGY = 'Active intraday opportunity: premarket research from 4am ET (delayed data); scan 30 stocks/ETFs for breakouts and pullback recoveries; 3 slots; sell 50% at +1%, trail remainder 0.75% with cost-adjusted break-even protection; -0.8% initial stop; 60 min max hold; close 10 min before bell. Start $10, grow size 10% after a net winning completed trade, cap $20, reset $10 after loss. Local paper only.';
 const SLIPPAGE = 0.0005, FEE = 0.0001;
 const MINUTE=60000, BAR_MS=5*MINUTE;
 const dateKey = t => new Intl.DateTimeFormat('en-CA', {timeZone:'America/New_York', year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(t));
@@ -26,13 +26,13 @@ function assess(snapshot, bars, now, openAt=0) {
   if (!q) return {accepted:false, reason:'Fresh bid/ask unavailable'};
   if (q.spreadPercent > 0.15) return {accepted:false,reason:'Spread exceeds 0.15%'};
   const session=(bars||[]).filter(b=>Date.parse(b.t)>=openAt && Date.parse(b.t)+BAR_MS<=now && dateKey(Date.parse(b.t))===dateKey(now)).sort((a,b)=>Date.parse(a.t)-Date.parse(b.t));
-  if(session.length<6)return {accepted:false,reason:'Waiting for six completed 5-minute session bars'};
+  if(session.length<3)return {accepted:false,reason:'Waiting for three completed 5-minute session bars'};
   const recent=session.slice(-6),last=recent.at(-1),prev=recent.at(-2);
   if(session.some(b=>![b.o,b.h,b.l,b.c,b.v].every(valid)))return {accepted:false,reason:'Invalid intraday bars'};
   if(now-Date.parse(last.t)-BAR_MS>2*MINUTE||recent.some((b,i)=>i&&Date.parse(b.t)-Date.parse(recent[i-1].t)!==BAR_MS))return {accepted:false,reason:'Stale or missing 5-minute bars'};
   const volume=session.reduce((s,b)=>s+b.v,0),vwap=session.reduce((s,b)=>s+(valid(b.vw)?b.vw:(b.h+b.l+b.c)/3)*b.v,0)/volume;
   const move=(q.mid/session[0].o-1)*100,extension=(q.mid/vwap-1)*100;
-  const average=recent.slice(0,-1).reduce((s,b)=>s+b.v,0)/5,relativeVolume=last.v/average;
+  const average=recent.slice(0,-1).reduce((s,b)=>s+b.v,0)/(recent.length-1),relativeVolume=last.v/average;
   const peak=Math.max(...recent.slice(0,-2).map(b=>b.h)),dip=(peak/prev.l-1)*100;
   const breakout=last.c>Math.max(...recent.slice(0,-1).map(b=>b.h));
   const reclaim=prev.c<recent.at(-3).c && dip>=0.2 && dip<=2 && last.c>prev.h;
@@ -56,8 +56,11 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
   let state={schemaVersion:1,startingBalanceUsd:100,cashUsd:100,openPositions:[],history:[],running:false,lastScanAt:null,lastError:null,rejections:[],closedDates:{},peakEquityUsd:100,maxDrawdownPercent:0};
   if (io.existsSync(file)) state=JSON.parse(io.readFileSync(file,'utf8'));
   state.lastExitAt ||= {};
+  state.lastExitWon ||= {};
+  state.nextEntryUsd ??= 10;
+  for(const p of state.openPositions){p.originalQuantity ??= p.quantity;p.originalCostBasisUsd ??= p.costBasisUsd;p.realizedPnlUsd ??= 0;p.partialTaken ??= false;}
   function validate(s) {
-    if (s.schemaVersion!==1 || s.startingBalanceUsd!==100 || !Number.isFinite(s.cashUsd) || s.cashUsd < -1e-8 || !Array.isArray(s.openPositions) || s.openPositions.length>3 || !Array.isArray(s.history) || !Array.isArray(s.rejections) || !s.closedDates || new Set(s.openPositions.map(p=>p.symbol)).size!==s.openPositions.length || s.openPositions.some(p=>!valid(p.quantity)||!valid(p.costBasisUsd)||!valid(p.markPriceUsd))) throw Error('Invalid Stock Bot state; refusing to reset saved account');
+    if (s.schemaVersion!==1 || s.startingBalanceUsd!==100 || !Number.isFinite(s.cashUsd) || s.cashUsd < -1e-8 || !valid(s.nextEntryUsd) || s.nextEntryUsd<10 || s.nextEntryUsd>20 || !Array.isArray(s.openPositions) || s.openPositions.length>3 || !Array.isArray(s.history) || !Array.isArray(s.rejections) || !s.closedDates || new Set(s.openPositions.map(p=>p.symbol)).size!==s.openPositions.length || s.openPositions.some(p=>!valid(p.quantity)||!valid(p.costBasisUsd)||!valid(p.markPriceUsd))) throw Error('Invalid Stock Bot state; refusing to reset saved account');
   }
   validate(state);
   let timer=null,busy=false,generation=0,marketOpen=null,nextOpen=null,nextClose=null,connection='WAITING_FOR_ALPACA',barsCache={},lastBarsAt=-Infinity,sessionMode='WAITING',dailyPnlUsd=0,lastResearchAt=-Infinity,referenceDate=null,referenceCloses={};
@@ -109,29 +112,37 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
   }
   function buy(symbol,q,signal) {
     const entriesToday=state.history.filter(r=>r.type==='BUY'&&r.symbol===symbol&&dateKey(Date.parse(r.time))===dateKey(now())).length;
-    if(!state.running||state.openPositions.length>=3||state.openPositions.some(p=>p.symbol===symbol)||now()-Number(state.lastExitAt[symbol]||0)<15*MINUTE||entriesToday>=2||state.cashUsd<10*(1+FEE))return false;
-    const s=structuredClone(state), entryPrice=q.ask*(1+SLIPPAGE), quantity=10/entryPrice;
-    const p={id:randomUUID(),symbol,tokenAddress:symbol,entryPrice,quantity,notionalUsd:10,costBasisUsd:10*(1+FEE),entryFeeUsd:10*FEE,highestPrice:q.bid,markPriceUsd:q.bid,entryTime:new Date(now()).toISOString(),strategy:STRATEGY,entryReason:signal};
+    const cooldown=(state.lastExitWon[symbol]?5:15)*MINUTE;
+    const equity=state.cashUsd+state.openPositions.reduce((s,p)=>s+p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE),0),notional=Math.min(state.nextEntryUsd,20,equity*0.2);
+    if(!state.running||state.openPositions.length>=3||state.openPositions.some(p=>p.symbol===symbol)||now()-Number(state.lastExitAt[symbol]||0)<cooldown||entriesToday>=6||notional<10||state.cashUsd<notional*(1+FEE))return false;
+    const s=structuredClone(state), entryPrice=q.ask*(1+SLIPPAGE), quantity=notional/entryPrice;
+    const p={id:randomUUID(),symbol,tokenAddress:symbol,entryPrice,quantity,originalQuantity:quantity,notionalUsd:notional,costBasisUsd:notional*(1+FEE),originalCostBasisUsd:notional*(1+FEE),entryFeeUsd:notional*FEE,highestPrice:q.bid,markPriceUsd:q.bid,entryTime:new Date(now()).toISOString(),strategy:STRATEGY,entryReason:signal,partialTaken:false,realizedPnlUsd:0};
     s.cashUsd-=p.costBasisUsd;s.openPositions.push(p);
-    s.history.unshift({...p,type:'BUY',positionId:p.id,amountUsd:10,amountInvested:p.costBasisUsd,time:p.entryTime,mode:'PAPER'});commit(s);return true;
+    s.history.unshift({...p,type:'BUY',positionId:p.id,amountUsd:notional,amountInvested:p.costBasisUsd,time:p.entryTime,mode:'PAPER'});commit(s);return true;
   }
-  function sell(id,q,reason) {
+  function sell(id,q,reason,partial=false) {
     const s=structuredClone(state),i=s.openPositions.findIndex(p=>p.id===id);if(i<0)return;
-    const p=s.openPositions[i],exitPrice=q.bid*(1-SLIPPAGE),gross=p.quantity*exitPrice,fee=gross*FEE,proceeds=gross-fee,pnl=proceeds-p.costBasisUsd,time=new Date(now()).toISOString();
-    s.cashUsd+=proceeds;s.openPositions.splice(i,1);s.closedDates[p.symbol]=dateKey(now());s.lastExitAt[p.symbol]=now();
-    s.history.unshift({...p,type:'SELL',positionId:p.id,exitPrice,exitTime:time,time,amountInvested:p.costBasisUsd,investedUsd:p.costBasisUsd,saleValueUsd:proceeds,amountUsd:proceeds,pnl,pnlUsd:pnl,pnlPercent:pnl/p.costBasisUsd*100,returnPercent:pnl/p.costBasisUsd*100,estimatedFeesUsd:p.entryFeeUsd+fee,exitReason:reason,reason,holdTimeMs:now()-Date.parse(p.entryTime),mode:'PAPER'});commit(s);
+    const p=s.openPositions[i];if(partial&&p.partialTaken)return;
+    const quantity=partial?Math.min(p.quantity,p.originalQuantity*0.5):p.quantity,ratio=quantity/p.quantity,cost=p.costBasisUsd*ratio,entryFee=p.entryFeeUsd*ratio;
+    const exitPrice=q.bid*(1-SLIPPAGE),gross=quantity*exitPrice,fee=gross*FEE,proceeds=gross-fee,pnl=proceeds-cost,time=new Date(now()).toISOString();
+    const closed=!partial,totalPositionPnl=p.realizedPnlUsd+pnl;
+    s.cashUsd+=proceeds;
+    s.history.unshift({...p,id:randomUUID(),type:'SELL',positionId:p.id,quantity,costBasisUsd:cost,exitPrice,exitTime:time,time,amountInvested:cost,investedUsd:cost,saleValueUsd:proceeds,saleGrossUsd:gross,amountUsd:proceeds,pnl,pnlUsd:pnl,pnlPercent:pnl/cost*100,returnPercent:pnl/cost*100,estimatedFeesUsd:entryFee+fee,exitReason:reason,reason,holdTimeMs:now()-Date.parse(p.entryTime),partial,closed,totalPositionPnlUsd:closed?totalPositionPnl:null,mode:'PAPER'});
+    if(closed){s.openPositions.splice(i,1);s.closedDates[p.symbol]=dateKey(now());s.lastExitAt[p.symbol]=now();s.lastExitWon[p.symbol]=totalPositionPnl>0;s.nextEntryUsd=totalPositionPnl>0?Math.min(20,Math.round(s.nextEntryUsd*1.1*100)/100):10;}
+    else{p.quantity-=quantity;p.costBasisUsd-=cost;p.entryFeeUsd-=entryFee;p.realizedPnlUsd=totalPositionPnl;p.partialTaken=true;}
+    commit(s);
   }
   function updatePositions(snapshots,flatten=false) {
     for(const p of structuredClone(state.openPositions)) {
       const q=quote(snapshots[p.symbol],now());if(!q)continue;
       const s=structuredClone(state),current=s.openPositions.find(x=>x.id===p.id);
       current.markPriceUsd=q.bid;current.highestPrice=Math.max(current.highestPrice,q.bid);commit(s);
-      const change=(q.bid/p.entryPrice-1)*100, peak=(current.highestPrice/p.entryPrice-1)*100;
+      const change=(q.bid/p.entryPrice-1)*100;
       if(flatten || dateKey(Date.parse(p.entryTime))!==dateKey(now()))sell(p.id,q,flatten?'SESSION CLOSE 10 MIN BEFORE BELL':'RECOVERY EXIT FROM PREVIOUS SESSION');
       else if(change<=-0.8)sell(p.id,q,'STOP TRIGGER -0.8%');
-      else if(change>=1.5)sell(p.id,q,'TAKE PROFIT +1.5%');
-      else if(peak>=0.75 && q.bid<=current.highestPrice*0.995)sell(p.id,q,'TRAIL 0.5% AFTER +0.75%');
-      else if(now()-Date.parse(p.entryTime)>=90*MINUTE)sell(p.id,q,'TIME EXIT 90 MIN');
+      else if(now()-Date.parse(p.entryTime)>=60*MINUTE)sell(p.id,q,'TIME EXIT 60 MIN');
+      else if(!current.partialTaken && change>=1)sell(p.id,q,'PARTIAL TP +1%: SELL 50% ORIGINAL',true);
+      else if(current.partialTaken){const floor=current.costBasisUsd/current.quantity/((1-SLIPPAGE)*(1-FEE))*1.0005,stop=Math.max(floor,current.highestPrice*0.9925);if(q.bid<=stop)sell(p.id,q,'RUNNER TRAIL 0.75% / COST-ADJUSTED BREAK EVEN');}
     }
   }
   async function tick() {
@@ -199,7 +210,9 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
   function getDashboardData(){
     const livePositions=state.openPositions.map(p=>{const value=p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE),pnl=value-p.costBasisUsd;return {position:p,live:{priceUsd:p.markPriceUsd,currentValue:value,pnl,pnlPercent:pnl/p.costBasisUsd*100,holdTimeMs:now()-Date.parse(p.entryTime)},pnl};});
     const equity=state.cashUsd+livePositions.reduce((s,p)=>s+p.live.currentValue,0),totalPnl=equity-100;
-    return {label:'Stock Bot',mode:'PAPER',paperOnly:true,simulation:'Local paper ledger; no broker orders',exchange:'Alpaca IEX market data',strategy:STRATEGY,premarketAnalysis:state.premarketAnalysis||null,startingBalance:100,startingBalanceUsd:100,cashBalance:state.cashUsd,equity,totalPnl,totalPnlPercent:totalPnl,livePositions,completedTrades:state.history.filter(r=>r.type==='SELL'),history:state.history,rejections:state.rejections,lastScanAt:state.lastScanAt,lastError:state.lastError,maxDrawdownPercent:state.maxDrawdownPercent,estimatedFeePercentPerSide:FEE*100,estimatedSlippagePercentPerSide:SLIPPAGE*100,nextTradeSizeUsd:10,maxOpenPositions:3,...getStatus(),openPositions:livePositions};
+    const groups=new Map();for(const row of state.history){if(row.type!=='SELL')continue;if(!groups.has(row.positionId))groups.set(row.positionId,[]);groups.get(row.positionId).push(row);}
+    const completedTrades=[];for(const [id,rows]of groups){const final=rows.find(r=>r.closed===true||(r.closed===undefined&&r.partial!==true));if(!final)continue;const invested=rows.reduce((s,r)=>s+r.amountInvested,0),proceeds=rows.reduce((s,r)=>s+r.saleValueUsd,0),pnl=proceeds-invested,quantity=rows.reduce((s,r)=>s+r.quantity,0);completedTrades.push({...final,id,positionId:id,quantity,amountInvested:invested,investedUsd:invested,costBasisUsd:invested,saleValueUsd:proceeds,pnl,pnlUsd:pnl,pnlPercent:pnl/invested*100,returnPercent:pnl/invested*100,estimatedFeesUsd:rows.reduce((s,r)=>s+(r.estimatedFeesUsd||0),0),exitPrice:rows.reduce((s,r)=>s+r.quantity*r.exitPrice,0)/quantity});}
+    return {label:'Stock Bot',mode:'PAPER',paperOnly:true,simulation:'Local paper ledger; no broker orders',exchange:'Alpaca IEX market data',strategy:STRATEGY,premarketAnalysis:state.premarketAnalysis||null,startingBalance:100,startingBalanceUsd:100,cashBalance:state.cashUsd,equity,totalPnl,totalPnlPercent:totalPnl,livePositions,completedTrades,history:state.history,rejections:state.rejections,lastScanAt:state.lastScanAt,lastError:state.lastError,maxDrawdownPercent:state.maxDrawdownPercent,estimatedFeePercentPerSide:FEE*100,estimatedSlippagePercentPerSide:SLIPPAGE*100,nextTradeSizeUsd:state.nextEntryUsd,compoundIncrementPercent:10,maxTradeSizeUsd:20,maxEntriesPerSymbolPerDay:6,maxOpenPositions:3,...getStatus(),openPositions:livePositions};
   }
   return {start,stop,tick,closeAll,getStatus,getDashboardData,getState:()=>structuredClone(state)};
 }

@@ -15,28 +15,34 @@ The ledger is distinct from Alpaca's default simulated brokerage balance.
 
 - Scan a fixed 30-symbol universe of actively traded stocks and unleveraged ETFs.
   This is a watchlist scanner, not a whole-market or news scanner.
-- Use at least six completed consecutive 5-minute bars from today's regular
-  session. The first possible signal is approximately 30 minutes after opening.
+- Use at least three completed consecutive 5-minute bars from today's regular
+  session. The first possible signal is approximately 15 minutes after opening.
 - Require a fresh bid/ask with spread <= 0.15%; completed bars at most two minutes
   behind their expected closing timestamp. Never use an incomplete candle.
 - Require +0.3% to +8% from session opening price, above session VWAP and at most
   3% above VWAP; bullish signal candle with <= 2% gain.
-- Require signal bar volume >= 1.2x the preceding five bars' average and >= $100k
+- Require signal bar volume >= 1.2x the preceding up to five bars' average and >= $100k
   traded value on IEX. Volume is from this exchange, not total US volume.
-- BREAKOUT: signal close exceeds the previous five bars' highs.
+- BREAKOUT: signal close exceeds the previous up to five bars' highs.
 - PULLBACK RECOVERY: previous bar closes below its predecessor, dip is 0.2–2%
   below the preceding peak, and signal bar closes above previous bar's high.
 - Current quote must hold within 0.1% of the signal close or higher.
 - Rank qualifying signals by relative volume and session price movement.
-- Three positions maximum, fixed $10 notional; keep unused cash available.
-- No duplicate open symbols. Reentry after 15 minutes, maximum two entries per
-  symbol per New York session date. No compounding.
+- Three positions maximum, $10 starting notional; keep unused cash available.
+- Increase next entry size 10% after each net winning completed position, capped
+  at $20 and 20% of marked account equity. Reset to $10 after a net loss. Partial
+  profit alone does not increase size; use total net P&L after final exit.
+- No duplicate open symbols. Reentry after 5 minutes for net winners, 15 minutes
+  for losses; maximum six entries per symbol per New York session date.
 
 ## Exits and session control
 
-- Sell all at +1.5%, or trigger a loss exit at -0.8%.
-- After reaching +0.75%, trail 0.5% below the monitored high; activation stays armed.
-- Maximum holding time 90 minutes.
+- Sell 50% of original quantity at +1%; initial loss exit trigger remains -0.8%.
+- After the partial sale, trail the remainder 0.75% below the monitored high,
+  with an exit trigger no lower than modeled cost-adjusted break-even plus a
+  small buffer. There is no early full-position trail before the partial target.
+  Gaps/delays can still execute below any trigger; protection is not guaranteed.
+- Maximum holding time 60 minutes.
 - Stop new entries 30 minutes before the market clock's actual closing time.
 - Begin closing all positions 10 minutes before close; includes half days.
 - Pause entries at <= -$3 realized plus marked unrealized P&L for that session.
@@ -87,3 +93,9 @@ research session date remains visible; old research is not reused on a new day.
 
 Two additional tests cover ranking, delayed cutoff, research-only behavior,
 refresh throttling and holiday handling. No paid market-data upgrade is performed.
+
+Partial exits allocate entry cost and fees proportionally. Completed-trade analytics
+group both sales into one position; partial sales still appear in transactions and
+realized P&L. Compounding, remaining cost basis and winner cooldown persist across
+restarts. Tests also cover partial-sale accounting, total-position win/loss, size
+cap/reset, six-entry cap and three-bar opening signals.
