@@ -1,4 +1,4 @@
-const MAX_PAIR_AGE_MS = 72 * 60 * 60 * 1000;
+const MAX_PAIR_AGE_MS = 24 * 60 * 60 * 1000;
 const MIN_PAIR_AGE_MS = 10 * 60 * 1000;
 const MIN_LIQUIDITY_USD = 3000;
 const MIN_VOLUME_24H_USD = 500;

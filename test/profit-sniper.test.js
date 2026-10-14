@@ -6,14 +6,14 @@ function candidate(overrides = {}) {
     pairCreatedAt: Date.now() - 15 * 60 * 1000, liquidityUsd: 4500, volume24h: 600,
     volume5m: 700, buys5m: 5, sells5m: 3, priceChange5m: 2, signal: "AVOID", ...overrides };
 }
-test("10m-72h trending pools use current activity and rebound momentum gates, not the shared signal label", () => {
+test("10m-24h trending pools use current activity and rebound momentum gates, not the shared signal label", () => {
   assert.equal(qualifiesMomentumCandidate(candidate()), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 9 * 60 * 1000 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 10 * 60 * 1000 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 29 * 60 * 1000 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 5 * 60 * 60 * 1000 })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 72 * 60 * 60 * 1000 })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 72 * 60 * 60 * 1000 - 1 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 24 * 60 * 60 * 1000 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 24 * 60 * 60 * 1000 - 1 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 0.05 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 0.04 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: -0.01 })), false);
