@@ -23,10 +23,16 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     } finally { if (io.existsSync(tmp)) io.unlinkSync(tmp); }
     state = next;
   }
+  function getSizing() {
+    const step = state.nextSizingStep === 1 ? 1 : 0;
+    const percent = step === 0 ? 10 : 12.5;
+    return { step, percent, amountUsd: state.cashUsd * percent / 100 };
+  }
   function buy(candidate, amountUsd) {
     if (state.position) return { success: false, error: "Gemini already has an open position" };
     const price = Number(candidate.priceUsd);
-    const size = Math.min(Number(amountUsd), state.cashUsd);
+    const sizing = getSizing();
+    const size = Math.min(Number(amountUsd ?? sizing.amountUsd), state.cashUsd);
     if (!(price > 0) || !(size > 0) || !candidate.tokenAddress) return { success: false, error: "Invalid paper buy" };
     const next = structuredClone(state);
     const pos = {
@@ -34,10 +40,12 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
       symbol: candidate.symbol || "Unknown", name: candidate.name || candidate.symbol || "Unknown",
       entryPrice: price, quantity: size / price, originalQuantity: size / price, originalCostUsd: size,
       amountInvestedUsd: size, entryTime: new Date().toISOString(), highestPrice: price,
-      tp1Done: false, tp2Done: false, remainingPercent: 100, strategy: "Gemini Paper v1",
+      tp1Done: false, tp2Done: false, remainingPercent: 100, strategy: "Gemini Paper v2: TP30 / 10–12.5% cash",
+      sizingPercent: sizing.percent,
       entryDetails: candidate.geminiDetails || {}
     };
     next.cashUsd -= size; next.position = pos;
+    next.nextSizingStep = sizing.step === 0 ? 1 : 0;
     next.history.unshift({ type: "BUY", ...structuredClone(pos), time: pos.entryTime, amountUsd: size, mode: "PAPER" });
     commit(next);
     console.log("[BUY TRIGGERED] Gemini PAPER", pos.symbol, size.toFixed(2), "USD");
@@ -88,8 +96,8 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     console.log("[REJECTED: " + reason + "] Gemini", candidate.symbol || candidate.tokenAddress || "unknown");
   }
   function setScanTime() { const next = structuredClone(state); next.lastScanAt = new Date().toISOString(); commit(next); }
-  return { buy, sell, recordRejection, setScanTime, updatePosition, getState: () => structuredClone(state), file };
+  return { getSizing, buy, sell, recordRejection, setScanTime, updatePosition, getState: () => structuredClone(state), file };
 }
 let instance;
 const current = () => instance ||= createGeminiTrader();
-module.exports = { createGeminiTrader, defaultFile, getState: (...a) => current().getState(...a), buy: (...a) => current().buy(...a), sell: (...a) => current().sell(...a), recordRejection: (...a) => current().recordRejection(...a), setScanTime: (...a) => current().setScanTime(...a), updatePosition: (...a) => current().updatePosition(...a) };
+module.exports = { createGeminiTrader, defaultFile, getSizing: (...a) => current().getSizing(...a), getState: (...a) => current().getState(...a), buy: (...a) => current().buy(...a), sell: (...a) => current().sell(...a), recordRejection: (...a) => current().recordRejection(...a), setScanTime: (...a) => current().setScanTime(...a), updatePosition: (...a) => current().updatePosition(...a) };

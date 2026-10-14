@@ -5,7 +5,6 @@ const traderDefault = require("./geminiTrader");
 
 const SCAN_MS = Number(process.env.GEMINI_SCAN_MS) || 30000;
 const MONITOR_MS = Number(process.env.GEMINI_MONITOR_MS) || 3000;
-const TRADE_SIZE_USD = Number(process.env.GEMINI_TRADE_SIZE_USD) || 10;
 const HARD_STOP = -20;
 const MAX_SLIPPAGE_BPS = Math.min(1000, Math.max(200, Number(process.env.SLIPPAGE_BPS) || 300));
 
@@ -69,9 +68,9 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
           passed++;
           candidate.geminiDetails = result.details;
           candidate.slippageBps = slippageFor(candidate);
-          const buy = trader.buy(candidate, TRADE_SIZE_USD);
+          const buy = trader.buy(candidate);
           if (buy.success) {
-            console.log("[INFO] Gemini paper entry", { symbol: candidate.symbol, mint: candidate.tokenAddress, pair: candidate.pairAddress, liquidityUsd: candidate.liquidityUsd, priceChange5m: candidate.priceChange5m, slippageBps: candidate.slippageBps, tradeSizeUsd: TRADE_SIZE_USD });
+            console.log("[INFO] Gemini paper entry", { symbol: candidate.symbol, mint: candidate.tokenAddress, pair: candidate.pairAddress, liquidityUsd: candidate.liquidityUsd, priceChange5m: candidate.priceChange5m, slippageBps: candidate.slippageBps, tradeSizeUsd: buy.position.originalCostUsd, sizingPercent: buy.position.sizingPercent });
             break;
           }
           trader.recordRejection(candidate, buy.error);
@@ -113,11 +112,8 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
       }
       const pnl = (price / latest.entryPrice - 1) * 100;
       const ageMs = Date.now() - Date.parse(latest.entryTime);
-      const dropFromHigh = (1 - price / Math.max(price, latest.highestPrice)) * 100;
       if (pnl <= HARD_STOP) { trader.sell(price, 100, "HARD STOP -20%"); return; }
-      if (!latest.tp1Done && pnl >= 50) { trader.sell(price, 50, "TP1 +50%"); return; }
-      if (!latest.tp2Done && pnl >= 100) { trader.sell(price, 30, "TP2 +100%"); return; }
-      if (latest.tp1Done && latest.tp2Done && dropFromHigh >= 15) { trader.sell(price, 100, "RUNNER TRAILING STOP -15%"); return; }
+      if (price >= latest.entryPrice * 1.30) { trader.sell(price, 100, "TP +30% FULL EXIT"); return; }
       if (ageMs >= 15 * 60 * 1000 && pnl >= -5 && pnl <= 10) trader.sell(price, 100, "TIME EXIT 15M");
     } catch (error) {
       if (isActive(s)) { lastError = error.message; console.error("[INFO] Gemini monitor failed", error.message); }
@@ -129,7 +125,7 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
     lastError = null;
     const s = { controller: new AbortController() };
     session = s;
-    console.log("[INFO] Gemini Bot started in PAPER mode; real swaps are disabled.");
+    console.log("[INFO] Gemini Bot started in PAPER mode; TP +30% full exit; sizing 10% / 12.5% of cash.");
     scanInterval = timers.setInterval(() => void scan(s), SCAN_MS);
     monitorInterval = timers.setInterval(() => void monitor(s), MONITOR_MS);
     void scan(s); void monitor(s);
