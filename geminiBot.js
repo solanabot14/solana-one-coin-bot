@@ -16,7 +16,8 @@ function poolToCandidate(pool, pair) {
     pairAddress: pool.pairAddress || pair?.pairAddress,
     symbol: pair?.baseToken?.symbol || pool.symbol?.split("/")[0] || pool.symbol,
     name: pair?.baseToken?.name || pool.symbol,
-    priceUsd: Number(pair?.priceUsd),
+    priceUsd: Number(pair?.priceUsd ?? pool.priceUsd),
+    priceChange5m: Number(pair?.priceChange?.m5 ?? pool.priceChange5m),
     liquidityUsd: Number(pair?.liquidity?.usd ?? pool.liquidityUsd),
     poolCreatedAt: createdAt,
     buys5m: Number(pair?.txns?.m5?.buys ?? pool.buys5m),
@@ -38,7 +39,9 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
     let pairs = [];
     try { pairs = await pairFetcher(pool.tokenAddress, signal); }
     catch (error) { console.warn("[INFO] DexScreener token lookup failed", error.message); }
-    const pair = pairs.find(p => p.pairAddress === pool.pairAddress) || pairs.sort((a,b) => (Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0];
+    const pair = pool.pairAddress
+      ? pairs.find(p => String(p.pairAddress).toLowerCase() === String(pool.pairAddress).toLowerCase())
+      : pairs.sort((a,b) => (Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0];
     if (!pair) return poolToCandidate(pool, null);
     return poolToCandidate(pool, pair);
   }
@@ -68,7 +71,7 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
           candidate.slippageBps = slippageFor(candidate);
           const buy = trader.buy(candidate, TRADE_SIZE_USD);
           if (buy.success) {
-            console.log("[INFO] Gemini paper entry", { symbol: candidate.symbol, pair: candidate.pairAddress, slippageBps: candidate.slippageBps, tradeSizeUsd: TRADE_SIZE_USD });
+            console.log("[INFO] Gemini paper entry", { symbol: candidate.symbol, mint: candidate.tokenAddress, pair: candidate.pairAddress, liquidityUsd: candidate.liquidityUsd, priceChange5m: candidate.priceChange5m, slippageBps: candidate.slippageBps, tradeSizeUsd: TRADE_SIZE_USD });
             break;
           }
           trader.recordRejection(candidate, buy.error);
