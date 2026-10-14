@@ -212,7 +212,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const walletResult = await walletCopy.closeAllPositions();
         results.push(...walletResult.results.map(result => ({ ...result, bot: "Decu Wallet Follow" })));
         const outcomeResult = await outcomeBot.closeAll();
-        results.push(...outcomeResult.results.map(result => ({ ...result, bot: "Outcome Bot" })));
+        results.push(...outcomeResult.results.map(result => ({ ...result, bot: "Coinbase Bot" })));
         const swarmResult = await swarm.closeAllPositions();
         results.push(...swarmResult.results.map(result => ({ ...result, bot: "Swarm" })));
         try {

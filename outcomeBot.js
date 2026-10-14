@@ -37,7 +37,7 @@ function freshState() {
 function validateState(s) {
   if (!s || s.schemaVersion !== 1 || !Number.isFinite(s.cashUsd) || !Array.isArray(s.openPositions) ||
       !Array.isArray(s.history) || !Array.isArray(s.rejections) || s.openPositions.length > MAX_OPEN_POSITIONS ||
-      !Number.isFinite(s.nextEntryUsd)) throw new Error("Invalid Outcome Bot paper state; refusing to reset it.");
+      !Number.isFinite(s.nextEntryUsd)) throw new Error("Invalid Coinbase Bot paper state; refusing to reset it.");
   return s;
 }
 function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThis.fetch, timers = globalThis, now = () => Date.now() } = {}) {
@@ -106,7 +106,7 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
   }
   function buy(candidate) {
     const next = structuredClone(state); rotateDay(next);
-    if (!next.running) return { success:false, error:"Outcome Bot is stopped" };
+    if (!next.running) return { success:false, error:"Coinbase Bot is stopped" };
     if (next.pausedForDailyLoss) return { success:false, error:"Daily loss limit reached" };
     if (next.openPositions.length >= MAX_OPEN_POSITIONS) return { success:false, error:"Six position limit reached" };
     if (next.openPositions.some(p => p.productId === candidate.productId)) return { success:false, error:"Coin already has an open position" };
@@ -119,7 +119,7 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
       id:randomUUID(), productId:candidate.productId, tokenAddress:candidate.productId, symbol:candidate.symbol,
       entryPrice, marketEntryPrice:candidate.priceUsd, highestPrice:candidate.priceUsd, quantity,
       notionalUsd:notional, costBasisUsd:notional+fee, entryFeeUsd:fee, entryTime:new Date(now()).toISOString(),
-      strategy:"Outcome Bot · Coinbase trend confirmation · TP +5% / SL -3% / 2.5% trail after +3%",
+      strategy:"Coinbase Bot · Coinbase trend confirmation · TP +5% / SL -3% / 2.5% trail after +3%",
       entryMetrics:{ dayChangePercent:candidate.dayChangePercent, hourChangePercent:candidate.hourChangePercent, fiveMinChangePercent:candidate.fiveMinChangePercent, volumeUsd:candidate.volumeUsd, score:candidate.score },
       markPriceUsd:candidate.priceUsd
     };
@@ -272,7 +272,7 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     });
     const equity=state.cashUsd+livePositions.reduce((sum,row)=>sum+Number(row.live.currentValue||0),0);
     const totalPnl=equity-state.startingBalanceUsd;
-    return { label:"Outcome Bot", paperOnly:true, mode:"PAPER", exchange:"Coinbase",
+    return { label:"Coinbase Bot", paperOnly:true, mode:"PAPER", exchange:"Coinbase",
       strategy:"Trend confirmation: 24h +1–15%, 1h +0.3–8%, 5m +0.1–2.5%; TP +5%, hard stop -3%, trail 2.5% after +3%; max hold 24h.",
       startingBalance:state.startingBalanceUsd, startingBalanceUsd:state.startingBalanceUsd, cashBalance:state.cashUsd,
       equity,totalPnl,totalPnlPercent:state.startingBalanceUsd>0?totalPnl/state.startingBalanceUsd*100:0,

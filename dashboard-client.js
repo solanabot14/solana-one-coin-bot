@@ -124,7 +124,7 @@
       { id:'profit-sniper', name:'Profit Sniper', label:'Profit Sniper', data:api.profitSniper, status:api.profitSniperStatus, mode:'PAPER' },
       { id:'wallet-copy', name:'Decu Wallet Follow', label:'Decu Wallet Follow', data:api.walletCopy, status:api.walletCopyStatus, mode:'PAPER' },
       { id:'gemini', name:'Gemini Bot', label:'Gemini Bot', data:api.gemini, status:api.geminiStatus, mode:'PAPER' },
-      { id:'outcome', name:'Outcome Bot', label:'Outcome Bot', data:api.outcomeBot, status:api.outcomeBotStatus, mode:'PAPER' }
+      { id:'outcome', name:'Coinbase Bot', label:'Coinbase Bot', data:api.outcomeBot, status:api.outcomeBotStatus, mode:'PAPER' }
     ];
     systems = input.map(function (s) {
       var d = s.data || {};
