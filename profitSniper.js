@@ -17,7 +17,7 @@ const MAX_OPEN_POSITIONS = 3;
 const SCAN_INTERVAL_MS = 30000;
 const POSITION_MONITOR_MS = 2000;
 const MINIMUM_LIQUIDITY_LOCK_PERCENT = 50;
-const MAX_PAIR_AGE_MINUTES = 72 * 60;
+const MAX_PAIR_AGE_MINUTES = 6 * 60;
 const prebuy = require("./profitSniperPrebuy").createEntryGuard();
 
 function statePath(fileName = "profitSniperTradingData.json") {
@@ -41,7 +41,7 @@ function estimateExecutionCosts({ amountUsd, liquidityUsd }) {
 
 const { qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit, selectUniqueMintCandidates } = strategy;
 
-let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, source: "GeckoTerminal new, trending and top pools (0-72h) + exact DexScreener pairs + RugCheck" };
+let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, source: "GeckoTerminal new, trending and top pools (0-6h) + exact DexScreener pairs + RugCheck" };
 const entryGuard = createSniperEntryGuard();
 
 async function discoverCandidates(options = {}) {
