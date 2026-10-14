@@ -66,3 +66,24 @@ Tests cover sizing and accounting, breakouts and pullback recovery, stale/partia
 bars, duplicates, cooldown and daily entry caps, persistent trailing activation,
 loss pause, regular/half-day flatten, DST, unresolved exit recovery, and restore.
 This strategy is for forward testing; no profitable backtest is claimed.
+
+## Premarket research
+
+From 4am to 9:30am New York time on actual trading days, analyze all 30 symbols
+once per minute using consolidated SIP historical 5-minute bars. End requests
+16 minutes behind current time to respect the free plan's recent-data restriction.
+Only completed bars before that cutoff are included; actual data age is displayed.
+Cache previous daily closes once per session. Rank gaps, premarket movement and
+traded value, and show session VWAP, high/low and an SPY benchmark gap in the API.
+The overview displays the ten highest-ranked symbols with delayed prices and age.
+
+This analysis is research only. It never creates premarket orders or uses delayed
+prices as current execution quotes. After opening, positive premarket watch
+candidates receive a small ranking preference only after all fresh intraday
+entry rules qualify; no entry gate is bypassed. Research errors are explicit and
+never block regular-session monitoring. Holidays/weekends skip today's research
+when the market clock says the next opening is on another date. The latest
+research session date remains visible; old research is not reused on a new day.
+
+Two additional tests cover ranking, delayed cutoff, research-only behavior,
+refresh throttling and holiday handling. No paid market-data upgrade is performed.
