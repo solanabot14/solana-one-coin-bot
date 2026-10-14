@@ -23,7 +23,7 @@ const statePath = path.join(dataDir, "wallet-copy-decu-state.json");
 let state = readState();
 let marketData = getTokenData;
 let running = false;
-let setupError = null;
+let setupError = state.pollError || null;
 let setupPromise = null;
 let eventQueue = Promise.resolve();
 let pollTimer = null;
@@ -31,7 +31,7 @@ let polling = false;
 let feedMode = "waiting";
 let webhookWarning = null;
 let lastPollAt = null;
-let lastPollError = null;
+let lastPollError = state.pollError || null;
 let lastPollAttemptAt = null;
 let pollFailures = 0;
 const POLL_INTERVAL_MS = 30000;
@@ -424,6 +424,7 @@ async function pollOnce() {
     setupError = null;
     pollFailures = 0;
     state.nextPollAt = null;
+    state.pollError = null;
     saveState();
   } catch (error) {
     lastPollError = error.message;
@@ -432,6 +433,7 @@ async function pollOnce() {
     const quota = /max usage|quota|credits/i.test(error.message);
     const delay = quota ? 30 * 60000 : Math.min(15 * 60000, 60000 * 2 ** Math.min(pollFailures - 1, 4));
     state.nextPollAt = Date.now() + delay;
+    state.pollError = error.message;
     saveState();
     console.error("Decu wallet polling:", error.message);
   } finally { polling = false; }
