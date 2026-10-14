@@ -307,7 +307,7 @@ th,td{
 
 </div>
 
-<div class="card section"><h2>Open Slots</h2><div class="value" id="slots">0 / 3</div></div>\n\n<div class="card section">\n\n  <h2>Live Trade</h2>
+<div class="card section"><h2>Open Slots</h2><div class="value" id="slots">0 / 2</div></div>\n\n<div class="card section">\n\n  <h2>Live Trade</h2>
 
   <div id="live" class="empty">
     Waiting for a trade...
@@ -317,7 +317,7 @@ th,td{
 
 <div class="card section" id="pullbackPanel">
 <h2>Bit V 3.1 40% TP1 — Isolated Paper Test</h2>
-<p class="muted">Entries use the V3.1 early-momentum score and anti-chase limits, accepting BUY or STRONG BUY after the $40,000 liquidity, $50,000 24-hour-volume, and RugCheck LP-lock ≥90% gates. Three paper slots use 10% of current equity per entry, with the existing $10 minimum when cash allows. Exit: hard stop −10%; sell 40% at +15%; hold the remaining 60% with a +4% floor after a +10% high, ratcheting upward to 8% below the high-water mark. There is no fixed TP2. Scanner interval 120 seconds. Prices are DexScreener marks, not executable sell quotes.</p>
+<p class="muted">Entries use the V3.1 early-momentum score and anti-chase limits, accepting BUY or STRONG BUY after the $40,000 liquidity, $50,000 24-hour-volume, and RugCheck LP-lock ≥90% gates. Two paper slots use 10% of current equity per entry, with the existing $10 minimum when cash allows. Exit: hard stop −10%; sell 40% at +15%; hold the remaining 60% with a +4% floor after a +10% high, ratcheting upward to 8% below the high-water mark. There is no fixed TP2. Scanner interval 120 seconds. Prices are DexScreener marks, not executable sell quotes.</p>
 <p class="muted">Exit management follows V3.1: hard stop at -10%; take partial profits at +15% and +30%; apply the V3.1 momentum and profit-lock rules. Position sizing compounds at 10% of current equity. Paper prices are DexScreener marks, not executable sell quotes, so gaps and slippage can exceed a stop.</p>
 <div class="grid">
   <div class="metric"><div class="metric-label">Status</div><div class="metric-value" id="pullbackStatus">—</div></div>
