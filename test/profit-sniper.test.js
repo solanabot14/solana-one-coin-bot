@@ -17,7 +17,8 @@ test("0-6h trending pools use current activity and rebound momentum gates, not t
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 0 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 400 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 250000 })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 13 })), true);\n  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 36 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 13 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 36 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 4, sells5m: 4 })), true);
   assert.equal(constants.MIN_LIQUIDITY_USD, 3000);
   assert.equal(qualifiesMomentumCandidate(candidate({ liquidityUsd: 3000 })), true);
