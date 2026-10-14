@@ -17,7 +17,7 @@ The ledger is distinct from Alpaca's default simulated brokerage balance.
   This is a watchlist scanner, not a whole-market or news scanner.
 - Use at least three completed consecutive 5-minute bars from today's regular
   session. The first possible signal is approximately 15 minutes after opening.
-- Require a fresh bid/ask with spread <= 0.25%; completed bars remain current for five minutes plus
+- Require a fresh bid/ask with spread <= 0.15%; completed bars remain current for five minutes plus
   two minutes of publication/cache allowance after their closing timestamp. Never use an incomplete candle.
 - Require +0.3% to +8% from session opening price, above session VWAP and at most
   3% above VWAP; bullish signal candle with <= 2% gain.
@@ -27,7 +27,21 @@ The ledger is distinct from Alpaca's default simulated brokerage balance.
 - PULLBACK RECOVERY: previous bar closes below its predecessor, dip is 0.2–2%
   below the preceding peak, and signal bar closes above previous bar's high.
 - Current quote must hold within 0.1% of the signal close or higher.
-- Rank qualifying signals by relative volume and session price movement.
+- Require completed daily Wilder ATR(14) / previous close between 2% and 6%.
+  Use split-adjusted SIP daily history, excluding today's unfinished candle.
+- Require average daily SIP traded value >= $20 million over 14 completed days.
+- Require cumulative regular-session IEX volume >= 2x historical volume through
+  the same completed 5-minute slot. Compare the same exchange feed, using up to
+  ten prior sessions with at least five usable samples. No premarket volume is
+  included. Sessions lacking the comparison slot are excluded.
+- Rank qualifying signals by same-time relative volume, signal-bar volume and
+  session price movement. Existing bullish breakout/recovery rules still apply.
+- Cache historical daily/intraday baselines once per New York date. Historical
+  retrieval failures block entries and retry no more than once per five minutes;
+  existing positions are monitored before historical entry research.
+- Expose active filters, qualifying setup metrics, rejection metrics and baseline
+  date in dashboard data. Buy records retain their entry metrics.
+- No news scanner or whole-market discovery is claimed.
 - Three positions maximum, $10 starting notional; keep unused cash available.
 - Increase next entry size 10% after each net winning completed position, capped
   at $20 and 20% of marked account equity. Reset to $10 after a net loss. Partial

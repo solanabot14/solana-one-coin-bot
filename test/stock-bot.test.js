@@ -1,6 +1,10 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
-const {createStockBot,assess,sessionOpen}=require('../stockBot');
+const {createStockBot,assess:rawAssess,sessionOpen,buildBaselines,sameTimeVolume}=require('../stockBot');
 const MINUTE=60000,initialTime=Date.parse('2026-10-14T14:00:00Z');
+const dailyHistory=()=>Array.from({length:20},(_,i)=>({t:new Date(initialTime-(20-i)*86400000).toISOString(),o:100,h:102,l:98,c:100,v:1000000}));
+const volumeHistory=()=>Array.from({length:10},(_,d)=>Array.from({length:78},(_,i)=>({t:new Date(Date.parse('2026-10-13T13:30:00Z')-d*86400000+i*5*MINUTE).toISOString(),v:20}))).flat();
+const baseline=()=>buildBaselines({SPY:dailyHistory()},{SPY:volumeHistory()},'2026-10-14').SPY;
+const assess=(s,b,t,o=0)=>rawAssess(s,b,t,o,baseline());
 test('60 stock watchlist includes Ford and is unique',()=>{
   const {SYMBOLS}=require('../stockBot');
   assert.equal(SYMBOLS.length,60);assert.equal(new Set(SYMBOLS).size,60);
@@ -22,10 +26,10 @@ test('completed candles remain current between boundaries; stale quotes and miss
 test('spread and IEX value thresholds admit moderate cost setups and reject wider or thin ones',()=>{
   const f=fixture();try{
     const bars=f.bars(),s=f.snapshots().SPY;
-    s.latestQuote.ap=s.latestQuote.bp*1.002;
+    s.latestQuote.ap=s.latestQuote.bp*1.001;
     bars.forEach((b,i)=>b.v=i===5?500:250);
     assert.equal(assess(s,bars,initialTime).accepted,true);
-    s.latestQuote.ap=s.latestQuote.bp*1.0026;
+    s.latestQuote.ap=s.latestQuote.bp*1.0016;
     assert.match(assess(s,bars,initialTime).reason,/Spread/);
     s.latestQuote.ap=s.latestQuote.bp+0.01;
     bars.forEach((b,i)=>b.v=i===5?200:100);
@@ -45,15 +49,15 @@ test('scan diagnostics include all stock symbols and disclose qualified account-
 });
 function fixture(){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'stock-bot-')),file=path.join(dir,'state.json');
-  let time=initialTime,bid=100.51,open=true,close='2026-10-14T16:00:00-04:00',stale=false,calls=[];
+  let time=initialTime,bid=100.51,open=true,close='2026-10-14T16:00:00-04:00',stale=false,failHistory=false,calls=[];
   const symbols=['SPY','QQQ','AAPL'];
-  const bars=()=>Array.from({length:6},(_,i)=>({t:new Date(time-(6-i)*5*MINUTE).toISOString(),o:i===5?100.1:100,h:i===5?100.6:100.2,l:99.9,c:i===5?100.5:100.1,v:i===5?2000:1000,vw:i===5?100.3:100.05}));
+  const bars=()=>Array.from({length:6},(_,i)=>({t:new Date(Math.floor(time/(5*MINUTE))*5*MINUTE-(6-i)*5*MINUTE).toISOString(),o:i===5?100.1:100,h:i===5?100.6:100.2,l:99.9,c:i===5?100.5:100.1,v:i===5?2000:1000,vw:i===5?100.3:100.05}));
   const snapshots=()=>Object.fromEntries(symbols.map(symbol=>[symbol,{latestQuote:{bp:bid,ap:bid+0.01,t:new Date(time-(stale?300000:0)).toISOString()}}]));
-  const fetchImpl=async(url,options)=>{calls.push({url,options});return {ok:true,json:async()=>url.includes('/clock')?{is_open:open,timestamp:new Date(time).toISOString(),next_open:'2026-10-15T13:30:00Z',next_close:close}:url.includes('/snapshots')?snapshots():{bars:Object.fromEntries(symbols.map(s=>[s,bars()])),next_page_token:null}};};
+  const fetchImpl=async(url,options)=>{calls.push({url,options});return {ok:!(failHistory&&url.includes('/bars?')&&Date.parse(new URL(url).searchParams.get('end'))<Date.parse('2026-10-14T08:00:00Z')),status:503,json:async()=>url.includes('/clock')?{is_open:open,timestamp:new Date(time).toISOString(),next_open:'2026-10-15T13:30:00Z',next_close:close}:url.includes('/snapshots')?snapshots():{bars:Object.fromEntries(symbols.map(s=>[s,new URL(url).searchParams.get('timeframe')==='1Day'?dailyHistory():new URL(url).searchParams.get('feed')==='iex'&&Date.parse(new URL(url).searchParams.get('end'))<Date.parse('2026-10-14T08:00:00Z')?volumeHistory():bars()])),next_page_token:null}};};
   const timers={setInterval:()=>1,clearInterval:()=>{}};
   const bot=createStockBot({file,env:{ALPACA_PAPER_API_KEY:'test',ALPACA_PAPER_SECRET_KEY:'test'},fetchImpl,now:()=>time,timers});
   async function settle(){for(let i=0;i<20;i++)await new Promise(r=>setImmediate(r));}
-  return {bot,file,calls,bars,snapshots,settle,setBid:n=>bid=n,setOpen:b=>open=b,setTime:t=>time=t,setClose:t=>close=t,setStale:b=>stale=b,cleanup:()=>fs.rmSync(dir,{recursive:true,force:true})};
+  return {bot,file,calls,bars,snapshots,settle,setBid:n=>bid=n,setOpen:b=>open=b,setTime:t=>time=t,setClose:t=>close=t,setStale:b=>stale=b,setFailHistory:b=>failHistory=b,cleanup:()=>fs.rmSync(dir,{recursive:true,force:true})};
 }
 test('updated exits allow a 1% pullback, stop below 1.2%, and take half only above 1.5%',async()=>{
   const f=fixture();try{
@@ -80,7 +84,7 @@ test('missing credentials: $100 visible, no requests or orders',async()=>{
   bot.start();await bot.tick();assert.equal(calls,0);assert.equal(bot.getStatus().connection,'WAITING_FOR_ALPACA');assert.equal(bot.getStatus().running,false);assert.equal(bot.getDashboardData().equity,100);bot.stop();fs.rmSync(dir,{recursive:true,force:true});
 });
 test('breakout, fractional sizing, three slots, duplicate prevention, gap accounting and restore',async()=>{
-  const f=fixture();try{f.bot.start();await f.settle();assert.equal(f.bot.getState().openPositions.length,3);assert.ok(f.bot.getState().cashUsd<70);assert.equal(f.bot.getState().openPositions[0].entryReason,'BREAKOUT');await f.bot.tick();assert.equal(f.bot.getState().openPositions.length,3);f.setBid(98);await f.bot.tick();const s=f.bot.getState();assert.equal(s.openPositions.length,0);assert.equal(s.history.filter(r=>r.type==='SELL').length,3);const pnl=s.history.filter(r=>r.type==='SELL').reduce((sum,r)=>sum+r.pnl,0);assert.ok(Math.abs(s.cashUsd-100-pnl)<1e-9);assert.ok(s.history.find(r=>r.type==='SELL').pnlPercent<-0.8);assert.equal(f.calls.some(c=>c.options.method!=='GET'||c.url.includes('/orders')),false);assert.ok(f.calls.find(c=>c.url.includes('/bars?')).url.includes('timeframe=5Min'));f.bot.stop();assert.equal(createStockBot({file:f.file}).getDashboardData().cashBalance,s.cashUsd);}finally{f.cleanup();}
+  const f=fixture();try{f.bot.start();await f.settle();assert.equal(f.bot.getState().openPositions.length,3);assert.ok(f.bot.getState().cashUsd<70);assert.equal(f.bot.getState().openPositions[0].entryReason,'BREAKOUT');await f.bot.tick();assert.equal(f.bot.getState().openPositions.length,3);f.setBid(98);await f.bot.tick();const s=f.bot.getState();assert.equal(s.openPositions.length,0);assert.equal(s.history.filter(r=>r.type==='SELL').length,3);const pnl=s.history.filter(r=>r.type==='SELL').reduce((sum,r)=>sum+r.pnl,0);assert.ok(Math.abs(s.cashUsd-100-pnl)<1e-9);assert.ok(s.history.find(r=>r.type==='SELL').pnlPercent<-0.8);assert.equal(f.calls.some(c=>c.options.method!=='GET'||c.url.includes('/orders')),false);assert.ok(f.calls.some(c=>c.url.includes('/bars?')&&c.url.includes('timeframe=5Min')));f.bot.stop();assert.equal(createStockBot({file:f.file}).getDashboardData().cashBalance,s.cashUsd);}finally{f.cleanup();}
 });
 test('partial exits allocate costs once, compound only on completion and use winner cooldown',async()=>{
   const f=fixture();try{f.bot.start();await f.settle();const original=f.bot.getState().openPositions[0];f.setBid(102.5);await f.bot.tick();let state=f.bot.getState();assert.equal(state.openPositions.length,3);assert.equal(state.nextEntryUsd,10);assert.equal(f.bot.getDashboardData().completedTrades.length,0);assert.equal(state.history.filter(r=>r.partial).length,3);assert.ok(Math.abs(state.openPositions[0].quantity-original.quantity/2)<1e-10);assert.ok(Math.abs(state.openPositions[0].costBasisUsd-original.costBasisUsd/2)<1e-10);await f.bot.tick();assert.equal(f.bot.getState().history.filter(r=>r.partial).length,3);f.setBid(101);await f.bot.tick();state=f.bot.getState();assert.equal(state.openPositions.length,0);assert.equal(state.nextEntryUsd,13.31);const trades=f.bot.getDashboardData().completedTrades;assert.equal(trades.length,3);assert.ok(trades.every(r=>Math.abs(r.amountInvested-10.001)<1e-8));assert.ok(Math.abs(state.cashUsd-100-trades.reduce((sum,r)=>sum+r.pnl,0))<1e-8);f.setTime(initialTime+MINUTE);f.setBid(100.51);await f.bot.tick();assert.equal(f.bot.getState().openPositions.length,0);f.setTime(initialTime+6*MINUTE);await f.bot.tick();assert.equal(f.bot.getState().openPositions.length,3);assert.ok(f.bot.getState().openPositions.every(r=>r.notionalUsd===13.31));}finally{f.cleanup();}
@@ -125,4 +129,52 @@ test('six entries per symbol per session cap and loss cooldown remains longer',a
 });
 test('three-bar opening signals qualify; partial plus losing runner counts total position result',async()=>{
   const f=fixture();try{assert.equal(assess(f.snapshots().SPY,f.bars().slice(-3),initialTime).accepted,true);f.bot.start();await f.settle();f.setBid(102.5);await f.bot.tick();f.setBid(97);await f.bot.tick();assert.equal(f.bot.getState().nextEntryUsd,10);assert.ok(f.bot.getDashboardData().completedTrades.every(r=>r.pnl<0));assert.equal(f.bot.getDashboardData().completedTrades.length,3);}finally{f.cleanup();}
+});
+test('scanner enforces ATRP, same-time volume, liquidity and missing history independently',()=>{
+  const f=fixture();try{
+    const s=f.snapshots().SPY,b=f.bars(),base=baseline();
+    assert.equal(rawAssess(s,b,initialTime,0,base).accepted,true);
+    assert.match(rawAssess(s,b,initialTime).reason,/ATR history unavailable/);
+    for(const atrUsd of [1.99,6.01])assert.match(rawAssess(s,b,initialTime,0,{...base,atrUsd}).reason,/ATRP outside/);
+    for(const atrUsd of [2,6])assert.equal(rawAssess(s,b,initialTime,0,{...base,atrUsd}).accepted,true);
+    assert.match(rawAssess(s,b,initialTime,0,{...base,averageDailyDollarVolume:19999999}).reason,/20m/);
+    assert.match(rawAssess(s,b,initialTime,0,{...base,volumeSessions:base.volumeSessions.slice(0,4)}).reason,/Insufficient same-time/);
+    const samples=base.volumeSessions.map(day=>({...day,bars:new Map([...day.bars].map(([slot])=>[slot,1000]))}));
+    assert.match(rawAssess(s,b,initialTime,0,{...base,volumeSessions:samples}).reason,/relative volume below 2x/);
+  }finally{f.cleanup();}
+});
+test('historical volume matches elapsed session, excludes premarket and future days; ATR includes gaps',()=>{
+  const f=fixture();try{
+    const intraday=[...volumeHistory(),{t:'2026-10-13T12:00:00Z',v:1e9},{t:'2026-10-14T13:55:00Z',v:1e9},{t:'2026-10-15T13:55:00Z',v:1e9}];
+    const daily=dailyHistory();daily.push({t:'2026-10-14T04:00:00Z',h:200,l:1,c:100,v:1e9});
+    const base=buildBaselines({SPY:daily},{SPY:intraday},'2026-10-14').SPY;
+    assert.equal(base.atrUsd,4);assert.equal(base.averageDailyDollarVolume,1e8);
+    assert.equal(sameTimeVolume(base,f.bars()).volumeReferenceSessions,10);
+    assert.ok(Math.abs(sameTimeVolume(base,f.bars()).timeRelativeVolume-7000/120)<1e-8);
+    daily.pop();daily[daily.length-1]={...daily.at(-1),h:112,l:108,c:110};
+    assert.ok(buildBaselines({SPY:daily},{},'2026-10-14').SPY.atrUsd>4);
+  }finally{f.cleanup();}
+});
+test('historical baselines are cached per session and entry metrics survive persistence',async()=>{
+  const f=fixture();try{
+    f.bot.start();await f.settle();f.setTime(initialTime+MINUTE);await f.bot.tick();
+    assert.equal(f.calls.filter(c=>new URL(c.url).searchParams.get('timeframe')==='1Day').length,1);
+    assert.equal(f.calls.filter(c=>c.url.includes('/bars?')&&new URL(c.url).searchParams.get('feed')==='iex'&&Date.parse(new URL(c.url).searchParams.get('end'))<Date.parse('2026-10-14T08:00:00Z')).length,1);
+    const d=f.bot.getDashboardData();assert.equal(d.scannerFilters.minTimeRelativeVolume,2);assert.equal(d.scanDiagnostics.baselineSessionDate,'2026-10-14');
+    assert.ok(d.livePositions.every(p=>p.position.entryMetrics.atrPercent===4&&p.position.entryMetrics.timeRelativeVolume>=2));
+    f.bot.stop();assert.equal(createStockBot({file:f.file}).getState().openPositions[0].entryMetrics.atrPercent,4);
+  }finally{f.cleanup();}
+});
+
+test('historical data outages block new entries, throttle retries and preserve exit monitoring',async()=>{
+  const f=fixture();try{
+    f.setFailHistory(true);f.bot.start();await f.settle();
+    assert.equal(f.bot.getState().openPositions.length,0);assert.match(f.bot.getState().lastError,/503/);
+    const count=f.calls.filter(c=>c.url.includes('/bars?')).length;
+    f.setTime(initialTime+MINUTE);await f.bot.tick();
+    assert.equal(f.calls.filter(c=>c.url.includes('/bars?')).length,count);
+    f.setFailHistory(false);f.setTime(initialTime+5*MINUTE);await f.bot.tick();
+    assert.equal(f.bot.getState().openPositions.length,3);
+    f.setFailHistory(true);f.setBid(98);await f.bot.tick();assert.equal(f.bot.getState().openPositions.length,0);
+  }finally{f.cleanup();}
 });
