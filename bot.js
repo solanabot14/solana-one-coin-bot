@@ -22,7 +22,7 @@ const MOMENTUM_EXIT_STRONG_LOSS = -5;
 const MOMENTUM_EXIT_STRONG_5M = -1;
 const MOMENTUM_EXIT_BUY_RATIO = 0.45;
 const MOMENTUM_EXIT_MIN_TRANSACTIONS = 10;
-const MAX_OPEN_POSITIONS = 2;
+const MAX_OPEN_POSITIONS = 3;
 
 function createBot({
   trader = paperTrader,
@@ -34,7 +34,7 @@ function createBot({
   onLiquidityLockCheck = () => {},
   positionMonitorMs = POSITION_MONITOR_MS,
   scannerIntervalMs = SCANNER_INTERVAL_MS,
-  botLabel = "V3.1 Original - 2 Slots"
+  botLabel = "V3.1 Original - 3 Slots"
 } = {}) {
   const stagedTp40Exit = botLabel === "PUBX-V31-ENTRY-TP40-PROFIT-LOCK-V1";
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
@@ -88,7 +88,7 @@ function createBot({
   async function runScanner(session) {
     console.log("\nStarting automatic Solana scan...\n");
     if (getPositions().length >= MAX_OPEN_POSITIONS) {
-      console.log("Both V3.1 slots are occupied. Skipping new entry.");
+      console.log("All three V3.1 slots are occupied. Skipping new entry.");
       return;
     }
 
