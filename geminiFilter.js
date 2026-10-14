@@ -6,9 +6,15 @@ const MAX_POOL_AGE_MS = 120 * 60 * 1000;
 const MIN_TRANSACTIONS_5M = 15;
 const MIN_BUY_RATIO_5M = 0.55;
 const MAX_TOP10_PERCENT = 35;
+const MIN_PRICE_CHANGE_5M = 0;
 
 async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety, holderConcentration = getHolderConcentration } = {}) {
   const reject = (reason, details = {}) => ({ accepted: false, reason, details });
+  const priceChange5m = Number(candidate.priceChange5m);
+  if (!Number.isFinite(priceChange5m)) return reject("5m Price Trend Unverified");
+  if (priceChange5m <= MIN_PRICE_CHANGE_5M)
+    return reject("Negative or Flat 5m Momentum", { priceChange5m, minimumExclusive: MIN_PRICE_CHANGE_5M });
+
   const liquidity = Number(candidate.liquidityUsd);
   if (!Number.isFinite(liquidity) || liquidity < MIN_LIQUIDITY_USD)
     return reject("Low Liquidity", { liquidityUsd: liquidity || 0, minimum: MIN_LIQUIDITY_USD });
@@ -44,7 +50,7 @@ async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety
   return {
     accepted: true,
     reason: "All Gemini safety checks passed",
-    details: { liquidityUsd: liquidity, poolAgeMs: age, transactions5m: tx, buyRatio, top10Percent: Number(holders.top10Percent) },
+    details: { liquidityUsd: liquidity, poolAgeMs: age, transactions5m: tx, buyRatio, priceChange5m, top10Percent: Number(holders.top10Percent) },
     mintSafety: mint
   };
 }
