@@ -4,9 +4,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const SYMBOLS = ['SPY','QQQ','IWM','DIA','AAPL','MSFT','AMZN','GOOGL','META','NVDA','TSLA','AMD','AVGO','MU','INTC','PLTR','COIN','HOOD','UBER','NFLX','SHOP','SOFI','PYPL','CRM','ORCL','JPM','BAC','XOM','WMT','DIS','F','GM','RIVN','NIO','LCID','AAL','DAL','UAL','CCL','NCLH','RCL','SNAP','PINS','RBLX','DKNG','AFRM','XYZ','T','VZ','PFE','C','WFC','CVX','OXY','SLB','CAT','BA','GE','XLF','XLK'];
-const STRATEGY = 'Active intraday opportunity: premarket research from 4am ET (delayed data); scan 60 stocks/ETFs including Ford; daily ATRP 2-6%, same-time historical IEX relative volume >=2x, average SIP daily traded value >=$20m, spread <=0.15%; confirmed breakouts and pullback recoveries; 3 slots; sell 50% at +1.5%, trail remainder 0.75% with cost-adjusted break-even protection; -1.2% initial stop; 60 min max hold; close 10 min before bell. Start $10, grow size 10% after a net winning completed trade, cap $20, reset $10 after loss. Local paper only; fixed watchlist, no news scanner.';
+const STRATEGY = 'Active intraday opportunity: premarket research from 4am ET (delayed data); scan 60 stocks/ETFs including Ford; daily ATRP 2-6%, same-time historical IEX relative volume >=2x, average SIP daily traded value >=$20m, spread <=0.15%; confirmed breakouts and pullback recoveries; 3 slots; sell 50% at +1.5%, trail remainder 0.75% with cost-adjusted break-even protection; -1.2% initial stop; 60 min max hold; close 10 min before bell. Start $10, grow size 10% after a net winning completed trade, cap $20, reset $10 after loss. Daily loss limit 2.5% of opening equity: liquidate and halt until next trading day; at most one reentry per stock, none after a stop. No entry in first 15 minutes. Local paper only; fixed watchlist, no news scanner.';
 const SCAN_FILTERS = Object.freeze({minAtrPercent:2,maxAtrPercent:6,minTimeRelativeVolume:2,maxSpreadPercent:0.15,minAverageDailyDollarVolume:20000000,minVolumeSessions:5,volumeLookbackSessions:10});
 const SLIPPAGE = 0.0005, FEE = 0.0001;
+const RISK_RULES=Object.freeze({dailyLossPercent:2.5,maxEntriesPerSymbolPerDay:2,noReentryAfterStop:true,entryDelayMinutes:15});
 const MINUTE=60000, BAR_MS=5*MINUTE;
 const dateFormatter=new Intl.DateTimeFormat('en-CA', {timeZone:'America/New_York', year:'numeric',month:'2-digit',day:'2-digit'});
 const minuteFormatter=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'numeric',minute:'numeric',hourCycle:'h23'});
@@ -54,6 +55,7 @@ function sameTimeVolume(baseline, session) {
   return {volumeReferenceSessions:samples.length,timeRelativeVolume:average?session.reduce((s,b)=>s+b.v,0)/average:null};
 }
 function assess(snapshot, bars, now, openAt=0, baseline=null) {
+  if(openAt&&now<openAt+15*MINUTE)return {accepted:false,reason:'First 15 minutes: no entries'};
   const q = quote(snapshot, now);
   if (!q) return {accepted:false, reason:'Fresh bid/ask unavailable'};
   if (q.spreadPercent > SCAN_FILTERS.maxSpreadPercent) return {accepted:false,reason:'Spread exceeds 0.15%',metrics:{spreadPercent:q.spreadPercent}};
@@ -72,6 +74,7 @@ function assess(snapshot, bars, now, openAt=0, baseline=null) {
   const peak=Math.max(...recent.slice(0,-2).map(b=>b.h)),dip=(peak/prev.l-1)*100;
   const breakout=last.c>Math.max(...recent.slice(0,-1).map(b=>b.h));
   const reclaim=prev.c<recent.at(-3).c && dip>=0.2 && dip<=2 && last.c>prev.h;
+  const confirmationLevel=breakout?Math.max(...recent.slice(0,-1).map(b=>b.h)):prev.h;
   const checks=[
     [atrPercent!==null,'Daily ATR history unavailable; waiting for 15 completed sessions'],
     [atrPercent>=SCAN_FILTERS.minAtrPercent&&atrPercent<=SCAN_FILTERS.maxAtrPercent,'Daily ATRP outside 2% to 6%'],
@@ -88,7 +91,45 @@ function assess(snapshot, bars, now, openAt=0, baseline=null) {
   ];
   const accepted=checks.every(([ok])=>ok);
   const signal=breakout?'BREAKOUT':'PULLBACK RECOVERY';
-  return {accepted,reason:accepted?signal+' above VWAP with 2x historical volume and ATRP 2-6%':checks.find(([ok])=>!ok)[1],signal,quote:q,score:historicalVolume.timeRelativeVolume*2+relativeVolume+move,metrics:{vwap,movePercent:move,relativeVolume,...historicalVolume,atrPercent,averageDailyDollarVolume:baseline?.averageDailyDollarVolume??null,extensionPercent:extension,spreadPercent:q.spreadPercent,signalDollarVolume:last.v*last.c}};
+  return {accepted,reason:accepted?signal+' above VWAP with 2x historical volume and ATRP 2-6%':checks.find(([ok])=>!ok)[1],signal,quote:q,score:historicalVolume.timeRelativeVolume*2+relativeVolume+move,metrics:{confirmationLevel,confirmationClose:last.c,confirmationTime:new Date(Date.parse(last.t)+BAR_MS).toISOString(),confirmationVolume:last.v,confirmationAverageVolume:average,vwap,movePercent:move,relativeVolume,...historicalVolume,atrPercent,averageDailyDollarVolume:baseline?.averageDailyDollarVolume??null,extensionPercent:extension,spreadPercent:q.spreadPercent,signalDollarVolume:last.v*last.c}};
+}
+function exitCategory(reason='') {
+  if(/DAILY.*LIMIT/i.test(reason))return 'DAILY_LIMIT';
+  if(/STOP TRIGGER/i.test(reason))return 'STOP';
+  if(/PARTIAL TP/i.test(reason))return 'TAKE_PROFIT';
+  if(/TRAIL/i.test(reason))return 'TRAILING';
+  if(/TIME EXIT/i.test(reason))return 'TIME';
+  if(/SESSION CLOSE|PREVIOUS SESSION/i.test(reason))return 'END_OF_DAY';
+  return 'MANUAL';
+}
+function weekKey(time) {
+  const day=dateKey(time),d=new Date(day+'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate()-((d.getUTCDay()+6)%7));return d.toISOString().slice(0,10);
+}
+function tradeReports(history,completed,at) {
+  const daily=new Map(),weekly=new Map();
+  function bucket(map,key){if(!map.has(key))map.set(key,{periodStart:key,trades:0,wins:0,losses:0,breakeven:0,netPnlUsd:0,completedTradeNetPnlUsd:0,averageWinUsd:0,averageLossUsd:0,pnlByExitReason:{},pnlWithoutCostsUsd:0,costsUsd:0,costCoveredFills:0,legacyFillsWithoutCostBreakdown:0});return map.get(key);}
+  for(const r of history){
+    if(r.type!=='SELL'||!Number.isFinite(r.pnlUsd))continue;
+    const time=Date.parse(r.time||r.exitTime);if(!Number.isFinite(time))continue;
+    for(const b of [bucket(daily,dateKey(time)),bucket(weekly,weekKey(time))]){
+      b.netPnlUsd+=r.pnlUsd;
+      const category=r.exitCategory||exitCategory(r.exitReason||r.reason);
+      const g=b.pnlByExitReason[category]||={fills:0,netPnlUsd:0,pnlWithoutCostsUsd:0,costCoveredFills:0};g.fills++;g.netPnlUsd+=r.pnlUsd;
+      if(Number.isFinite(r.pnlWithoutCostsUsd)){b.pnlWithoutCostsUsd+=r.pnlWithoutCostsUsd;b.costsUsd+=r.pnlWithoutCostsUsd-r.pnlUsd;b.costCoveredFills++;g.pnlWithoutCostsUsd+=r.pnlWithoutCostsUsd;g.costCoveredFills++;}else b.legacyFillsWithoutCostBreakdown++;
+    }
+  }
+  for(const r of completed){
+    const t=Date.parse(r.exitTime||r.time);if(!Number.isFinite(t))continue;
+    for(const b of [bucket(daily,dateKey(t)),bucket(weekly,weekKey(t))]){
+      b.trades++;b.completedTradeNetPnlUsd+=r.pnlUsd;
+      if(r.pnlUsd>0){b.wins++;b.averageWinUsd+=r.pnlUsd;}else if(r.pnlUsd<0){b.losses++;b.averageLossUsd+=r.pnlUsd;}else b.breakeven++;
+    }
+  }
+  bucket(daily,dateKey(at));bucket(weekly,weekKey(at));
+  function finish(map){return [...map.values()].map(b=>({...b,winRatePercent:b.trades?b.wins/b.trades*100:0,averageWinUsd:b.wins?b.averageWinUsd/b.wins:0,averageLossUsd:b.losses?b.averageLossUsd/b.losses:0,pnlWithoutCostsUsd:b.legacyFillsWithoutCostBreakdown?null:b.pnlWithoutCostsUsd,costsUsd:b.legacyFillsWithoutCostBreakdown?null:b.costsUsd,pnlByExitReason:Object.fromEntries(Object.entries(b.pnlByExitReason).map(([key,g])=>[key,{...g,pnlWithoutCostsUsd:g.costCoveredFills===g.fills?g.pnlWithoutCostsUsd:null}]))})).sort((a,b)=>b.periodStart.localeCompare(a.periodStart));}
+  const days=finish(daily),weeks=finish(weekly);
+  return {timezone:'America/New_York',weekStartsOn:'Monday',tradeCounting:'One completed position; partial exits are fills, not extra trades. Realized P&L is booked on each fill date; completed-trade statistics are booked on final exit date.',costComparison:'Same executed quantity at entry/exit quote midpoints, excluding spread, slippage and modeled commissions. Legacy records with missing midpoints show unavailable, not invented values.',daily:days,weekly:weeks,today:days.find(d=>d.periodStart===dateKey(at)),thisWeek:weeks.find(w=>w.periodStart===weekKey(at))};
 }
 function rankPremarket(barsBySymbol,reference,now,start,end) {
   const rows=[];
@@ -108,7 +149,12 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
   state.lastExitAt ||= {};
   state.lastExitWon ||= {};
   state.nextEntryUsd ??= 10;
-  for(const p of state.openPositions){p.originalQuantity ??= p.quantity;p.originalCostBasisUsd ??= p.costBasisUsd;p.realizedPnlUsd ??= 0;p.partialTaken ??= false;}
+  for(const p of state.openPositions){
+    p.originalQuantity ??= p.quantity;p.originalCostBasisUsd ??= p.costBasisUsd;p.realizedPnlUsd ??= 0;p.partialTaken ??= false;
+    p.lowestPrice ??= p.markPriceUsd;p.maxDrawdownPercent ??= 0;p.maxRunUpPercent ??= Math.max(0,(p.highestPrice/p.entryPrice-1)*100);p.maxAdverseExcursionPercent ??= Math.min(0,(p.markPriceUsd/p.entryPrice-1)*100);
+    p.excursionCoverage ??= 'Observed quotes from upgrade onward; earlier intratrade lows unavailable';
+    if(p.partialTaken)p.runnerHighestPrice ??= p.highestPrice;
+  }
   function validate(s) {
     if (s.schemaVersion!==1 || s.startingBalanceUsd!==100 || !Number.isFinite(s.cashUsd) || s.cashUsd < -1e-8 || !valid(s.nextEntryUsd) || s.nextEntryUsd<10 || s.nextEntryUsd>20 || !Array.isArray(s.openPositions) || s.openPositions.length>3 || !Array.isArray(s.history) || !Array.isArray(s.rejections) || !s.closedDates || new Set(s.openPositions.map(p=>p.symbol)).size!==s.openPositions.length || s.openPositions.some(p=>!valid(p.quantity)||!valid(p.costBasisUsd)||!valid(p.markPriceUsd))) throw Error('Invalid Stock Bot state; refusing to reset saved account');
   }
@@ -121,6 +167,48 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
     const tmp=file+'.'+randomUUID()+'.tmp';
     try {io.writeFileSync(tmp,JSON.stringify(s,null,2),{flag:'wx',flush:true});io.renameSync(tmp,file);} finally {if(io.existsSync(tmp))io.unlinkSync(tmp);}
     state=s;
+  }
+  function equityOf(s=state){return s.cashUsd+s.openPositions.reduce((v,p)=>v+p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE),0);}
+  function ensureRiskSession(isTradingDay=false) {
+    const day=dateKey(now());
+    if(state.riskSession?.date===day||(!isTradingDay&&state.riskSession))return;
+    const equity=equityOf();
+    // Upgrade/restart mid-session: reconstruct today's opening capital without
+    // resetting losses already incurred before this risk policy was installed.
+    const realized=state.history.filter(r=>r.type==='SELL'&&dateKey(Date.parse(r.time))===day).reduce((s,r)=>s+(r.pnlUsd||0),0);
+    const unrealized=state.openPositions.filter(p=>dateKey(Date.parse(p.entryTime))===day).reduce((v,p)=>v+p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE)-p.costBasisUsd,0);
+    const prior=state.riskSession;
+    const carried=state.openPositions.some(p=>dateKey(Date.parse(p.entryTime))!==day);
+    const openingEquity=carried?equity:equity-realized-unrealized;
+    const s=structuredClone(state);
+    s.riskSession={date:day,capitalUsd:Math.max(0,openingEquity),lossLimitUsd:Math.max(0,openingEquity)*RISK_RULES.dailyLossPercent/100,halted:false,triggeredAt:null,equityUsd:equity,pnlUsd:equity-openingEquity,capitalBasis:carried?'First observed equity with pending prior-session position':'Start-of-day equity reconstructed from ledger'};
+    if(prior){s.riskSessions||={};s.riskSessions[prior.date]=prior;}
+    commit(s);
+  }
+  function markPositions(snapshots) {
+    const s=structuredClone(state);
+    for(const p of s.openPositions){
+      const q=quote(snapshots[p.symbol],now());if(!q)continue;
+      p.markPriceUsd=q.bid;p.lastMarkAt=q.time;p.highestPrice=Math.max(p.highestPrice,q.bid);p.lowestPrice=Math.min(p.lowestPrice??q.bid,q.bid);
+      p.maxRunUpPercent=Math.max(p.maxRunUpPercent||0,(q.bid/p.entryPrice-1)*100);
+      p.maxAdverseExcursionPercent=Math.min(p.maxAdverseExcursionPercent||0,(q.bid/p.entryPrice-1)*100);
+      p.maxDrawdownPercent=Math.max(p.maxDrawdownPercent||0,(1-q.bid/p.highestPrice)*100);
+      if(p.partialTaken)p.runnerHighestPrice=Math.max(p.runnerHighestPrice??q.bid,q.bid);
+    }
+    const equity=equityOf(s);s.peakEquityUsd=Math.max(s.peakEquityUsd,equity);s.maxDrawdownPercent=Math.max(s.maxDrawdownPercent,(1-equity/s.peakEquityUsd)*100);commit(s);
+  }
+  function applyDailyRisk(snapshots) {
+    ensureRiskSession(true);
+    const s=structuredClone(state),r=s.riskSession;
+    r.equityUsd=equityOf(s);r.pnlUsd=r.equityUsd-r.capitalUsd;
+    if(r.pnlUsd<=-r.lossLimitUsd&&!r.halted){r.halted=true;r.triggeredAt=new Date(now()).toISOString();}
+    if(r.halted)for(const p of s.openPositions)p.pendingExitReason='DAILY LOSS LIMIT 2.5%';
+    commit(s);
+    if(r.halted)for(const p of structuredClone(state.openPositions)){
+      const q=quote(snapshots[p.symbol],now());if(q)sell(p.id,q,'DAILY LOSS LIMIT 2.5%');
+    }
+    if(r.halted){const settled=structuredClone(state);settled.riskSession.equityUsd=equityOf(settled);settled.riskSession.pnlUsd=settled.riskSession.equityUsd-settled.riskSession.capitalUsd;commit(settled);}
+    return r.halted;
   }
   async function request(url) {
     const u = new URL(url);
@@ -173,37 +261,50 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
   }
   function buy(symbol,q,signal,metrics) {
     const entriesToday=state.history.filter(r=>r.type==='BUY'&&r.symbol===symbol&&dateKey(Date.parse(r.time))===dateKey(now())).length;
+    const stoppedToday=state.history.some(r=>r.type==='SELL'&&r.symbol===symbol&&dateKey(Date.parse(r.time))===dateKey(now())&&(r.exitCategory||exitCategory(r.reason))==='STOP');
     const cooldown=(state.lastExitWon[symbol]?5:15)*MINUTE;
     const equity=state.cashUsd+state.openPositions.reduce((s,p)=>s+p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE),0),notional=Math.min(state.nextEntryUsd,20,equity*0.2);
-    if(!state.running||state.openPositions.length>=3||state.openPositions.some(p=>p.symbol===symbol)||now()-Number(state.lastExitAt[symbol]||0)<cooldown||entriesToday>=6||notional<10||state.cashUsd<notional*(1+FEE))return false;
+    if(!state.running||state.riskSession?.halted||stoppedToday||state.openPositions.length>=3||state.openPositions.some(p=>p.symbol===symbol)||now()-Number(state.lastExitAt[symbol]||0)<cooldown||entriesToday>=2||notional<10||state.cashUsd<notional*(1+FEE))return false;
     const s=structuredClone(state), entryPrice=q.ask*(1+SLIPPAGE), quantity=notional/entryPrice;
-    const p={id:randomUUID(),symbol,tokenAddress:symbol,entryPrice,quantity,originalQuantity:quantity,notionalUsd:notional,costBasisUsd:notional*(1+FEE),originalCostBasisUsd:notional*(1+FEE),entryFeeUsd:notional*FEE,highestPrice:q.bid,markPriceUsd:q.bid,entryTime:new Date(now()).toISOString(),strategy:STRATEGY,entryReason:signal,entryMetrics:metrics,partialTaken:false,realizedPnlUsd:0};
+    const p={id:randomUUID(),symbol,tokenAddress:symbol,entryPrice,entryReferencePriceUsd:q.mid,entryQuoteTime:q.time,quantity,originalQuantity:quantity,notionalUsd:notional,costBasisUsd:notional*(1+FEE),originalCostBasisUsd:notional*(1+FEE),entryFeeUsd:notional*FEE,highestPrice:q.bid,lowestPrice:q.bid,markPriceUsd:q.bid,lastMarkAt:q.time,maxRunUpPercent:0,maxAdverseExcursionPercent:Math.min(0,(q.bid/entryPrice-1)*100),maxDrawdownPercent:0,excursionCoverage:'Observed bid quotes during 15-second monitoring; not tick-by-tick extremes',entryTime:new Date(now()).toISOString(),strategy:STRATEGY,entryReason:signal,entryMetrics:metrics,partialTaken:false,realizedPnlUsd:0};
     s.cashUsd-=p.costBasisUsd;s.openPositions.push(p);
-    s.history.unshift({...p,type:'BUY',positionId:p.id,amountUsd:notional,amountInvested:p.costBasisUsd,time:p.entryTime,mode:'PAPER'});commit(s);return true;
+    s.history.unshift({...p,type:'BUY',positionId:p.id,amountUsd:notional,amountInvested:p.costBasisUsd,estimatedFeesUsd:p.entryFeeUsd,estimatedSlippageUsd:quantity*(entryPrice-q.ask),estimatedSpreadUsd:quantity*(q.ask-q.mid),time:p.entryTime,mode:'PAPER'});commit(s);return true;
   }
   function sell(id,q,reason,partial=false) {
     const s=structuredClone(state),i=s.openPositions.findIndex(p=>p.id===id);if(i<0)return;
     const p=s.openPositions[i];if(partial&&p.partialTaken)return;
     const quantity=partial?Math.min(p.quantity,p.originalQuantity*0.5):p.quantity,ratio=quantity/p.quantity,cost=p.costBasisUsd*ratio,entryFee=p.entryFeeUsd*ratio;
     const exitPrice=q.bid*(1-SLIPPAGE),gross=quantity*exitPrice,fee=gross*FEE,proceeds=gross-fee,pnl=proceeds-cost,time=new Date(now()).toISOString();
+    const hasReference=valid(p.entryReferencePriceUsd),pnlWithoutCostsUsd=hasReference?quantity*(q.mid-p.entryReferencePriceUsd):null;
+    const estimatedSlippageUsd=quantity*(p.entryPrice-p.entryPrice/(1+SLIPPAGE)+q.bid-exitPrice);
+    const estimatedSpreadUsd=hasReference?quantity*(p.entryPrice/(1+SLIPPAGE)-p.entryReferencePriceUsd+q.mid-q.bid):null;
     const closed=!partial,totalPositionPnl=p.realizedPnlUsd+pnl;
     s.cashUsd+=proceeds;
-    s.history.unshift({...p,id:randomUUID(),type:'SELL',positionId:p.id,quantity,costBasisUsd:cost,exitPrice,exitTime:time,time,amountInvested:cost,investedUsd:cost,saleValueUsd:proceeds,saleGrossUsd:gross,amountUsd:proceeds,pnl,pnlUsd:pnl,pnlPercent:pnl/cost*100,returnPercent:pnl/cost*100,estimatedFeesUsd:entryFee+fee,exitReason:reason,reason,holdTimeMs:now()-Date.parse(p.entryTime),partial,closed,totalPositionPnlUsd:closed?totalPositionPnl:null,mode:'PAPER'});
+    s.history.unshift({...p,id:randomUUID(),type:'SELL',positionId:p.id,quantity,costBasisUsd:cost,exitPrice,exitReferencePriceUsd:q.mid,exitQuoteTime:q.time,exitTime:time,time,amountInvested:cost,investedUsd:cost,saleValueUsd:proceeds,saleGrossUsd:gross,amountUsd:proceeds,pnl,pnlUsd:pnl,netPnlUsd:pnl,pnlWithoutCostsUsd,totalCostsUsd:hasReference?pnlWithoutCostsUsd-pnl:null,pnlPercent:pnl/cost*100,returnPercent:pnl/cost*100,estimatedFeesUsd:entryFee+fee,estimatedSlippageUsd,estimatedSpreadUsd,exitCategory:exitCategory(reason),exitReason:reason,reason,holdTimeMs:now()-Date.parse(p.entryTime),partial,closed,totalPositionPnlUsd:closed?totalPositionPnl:null,mode:'PAPER'});
     if(closed){s.openPositions.splice(i,1);s.closedDates[p.symbol]=dateKey(now());s.lastExitAt[p.symbol]=now();s.lastExitWon[p.symbol]=totalPositionPnl>0;s.nextEntryUsd=totalPositionPnl>0?Math.min(20,Math.round(s.nextEntryUsd*1.1*100)/100):10;}
-    else{p.quantity-=quantity;p.costBasisUsd-=cost;p.entryFeeUsd-=entryFee;p.realizedPnlUsd=totalPositionPnl;p.partialTaken=true;}
+    else{p.quantity-=quantity;p.costBasisUsd-=cost;p.entryFeeUsd-=entryFee;p.realizedPnlUsd=totalPositionPnl;p.partialTaken=true;p.trailingActivatedAt=time;p.runnerHighestPrice=q.bid;}
     commit(s);
   }
   function updatePositions(snapshots,flatten=false) {
+    if(flatten){const s=structuredClone(state);for(const p of s.openPositions)p.pendingExitReason||='SESSION CLOSE 10 MIN BEFORE BELL';commit(s);}
     for(const p of structuredClone(state.openPositions)) {
-      const q=quote(snapshots[p.symbol],now());if(!q)continue;
+      const q=quote(snapshots[p.symbol],now());
+      if(!q){
+        if(now()-Date.parse(p.entryTime)>=60*MINUTE||dateKey(Date.parse(p.entryTime))!==dateKey(now())){
+          const pending=structuredClone(state),held=pending.openPositions.find(x=>x.id===p.id);
+          held.pendingExitReason||=dateKey(Date.parse(p.entryTime))!==dateKey(now())?'RECOVERY EXIT FROM PREVIOUS SESSION':'TIME EXIT 60 MIN';commit(pending);
+        }
+        continue;
+      }
       const s=structuredClone(state),current=s.openPositions.find(x=>x.id===p.id);
       current.markPriceUsd=q.bid;current.highestPrice=Math.max(current.highestPrice,q.bid);commit(s);
       const change=(q.bid/p.entryPrice-1)*100;
-      if(flatten || dateKey(Date.parse(p.entryTime))!==dateKey(now()))sell(p.id,q,flatten?'SESSION CLOSE 10 MIN BEFORE BELL':'RECOVERY EXIT FROM PREVIOUS SESSION');
+      if(current.pendingExitReason)sell(p.id,q,current.pendingExitReason);
+      else if(flatten || dateKey(Date.parse(p.entryTime))!==dateKey(now()))sell(p.id,q,flatten?'SESSION CLOSE 10 MIN BEFORE BELL':'RECOVERY EXIT FROM PREVIOUS SESSION');
       else if(change<=-1.2)sell(p.id,q,'STOP TRIGGER -1.2%');
       else if(now()-Date.parse(p.entryTime)>=60*MINUTE)sell(p.id,q,'TIME EXIT 60 MIN');
       else if(!current.partialTaken && change>=1.5)sell(p.id,q,'PARTIAL TP +1.5%: SELL 50% ORIGINAL',true);
-      else if(current.partialTaken){const floor=current.costBasisUsd/current.quantity/((1-SLIPPAGE)*(1-FEE))*1.0005,stop=Math.max(floor,current.highestPrice*0.9925);if(q.bid<=stop)sell(p.id,q,'RUNNER TRAIL 0.75% / COST-ADJUSTED BREAK EVEN');}
+      else if(current.partialTaken){const floor=current.costBasisUsd/current.quantity/((1-SLIPPAGE)*(1-FEE))*1.0005,stop=Math.max(floor,(current.runnerHighestPrice??q.bid)*0.9925);if(q.bid<=stop)sell(p.id,q,'RUNNER TRAIL 0.75% / COST-ADJUSTED BREAK EVEN');}
     }
   }
   async function tick() {
@@ -216,6 +317,7 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
       const age=now()-Date.parse(clock.timestamp);
       if(!Number.isFinite(age)||Math.abs(age)>120000||typeof clock.is_open!=='boolean')throw Error('Invalid or stale market clock');
       marketOpen=clock.is_open;nextOpen=clock.next_open;nextClose=clock.next_close;connection='CONNECTED';
+      ensureRiskSession(marketOpen);
       if(!marketOpen){
         const opening=Date.parse(nextOpen),premarket=Number.isFinite(opening)&&dateKey(opening)===dateKey(now())&&now()>=opening-330*MINUTE&&now()<opening;
         sessionMode=state.openPositions.length?'EXIT_PENDING_MARKET_CLOSED':premarket?'PREMARKET_ANALYSIS':'MARKET_CLOSED';
@@ -226,13 +328,17 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
       const openAt=sessionOpen(nextClose),flatten=closeAt-now()<=10*MINUTE;
       const snapshots=await request('https://data.alpaca.markets/v2/stocks/snapshots?'+new URLSearchParams({symbols:SYMBOLS.join(','),feed:'iex'}));
       if(gen!==generation||!state.running)return;
-      updatePositions(snapshots,flatten);
+      markPositions(snapshots);
+      const dailyHalt=applyDailyRisk(snapshots);
+      if(!dailyHalt)updatePositions(snapshots,flatten);
+      // Realized execution costs or a stop can breach the limit after marking.
+      applyDailyRisk(snapshots);
       const marked=structuredClone(state),equity=marked.cashUsd+marked.openPositions.reduce((s,p)=>s+p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE),0);
       marked.peakEquityUsd=Math.max(marked.peakEquityUsd,equity);marked.maxDrawdownPercent=Math.max(marked.maxDrawdownPercent,(1-equity/marked.peakEquityUsd)*100);commit(marked);
-      dailyPnlUsd=state.history.filter(r=>r.type==='SELL'&&dateKey(Date.parse(r.time))===dateKey(now())).reduce((s,r)=>s+r.pnlUsd,0)+state.openPositions.reduce((s,p)=>s+p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE)-p.costBasisUsd,0);
-      sessionMode=flatten?'CLOSING_SESSION':closeAt-now()<=30*MINUTE?'NO_NEW_ENTRIES':dailyPnlUsd<=-3?'DAILY_LOSS_PAUSE':'SCANNING';
+      dailyPnlUsd=equityOf()-state.riskSession.capitalUsd;
+      sessionMode=state.riskSession.halted?'DAILY_LOSS_PAUSE':flatten?'CLOSING_SESSION':state.openPositions.some(p=>p.pendingExitReason)?'EXIT_PENDING_QUOTE':closeAt-now()<=30*MINUTE?'NO_NEW_ENTRIES':now()<openAt+15*MINUTE?'OPENING_WAIT':'SCANNING';
       if(sessionMode!=='SCANNING'){
-        const s=structuredClone(state);s.lastError=flatten&&s.openPositions.length?'Waiting for fresh quotes to complete session exits':null;commit(s);return;
+        const s=structuredClone(state);s.lastError=(flatten||s.riskSession.halted||s.openPositions.some(p=>p.pendingExitReason))&&s.openPositions.length?'Exit pending: waiting for fresh quotes; new entries blocked':null;commit(s);return;
       }
       if(now()-lastBarsAt<MINUTE)return;
       await refreshBaselines(openAt,gen);if(gen!==generation||!state.running)return;
@@ -245,10 +351,15 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
       const freshSnapshots=await request('https://data.alpaca.markets/v2/stocks/snapshots?'+new URLSearchParams({symbols:SYMBOLS.join(','),feed:'iex'}));
       if(gen!==generation||!state.running)return;
       if(checkedClose-now()<=30*MINUTE)return;
+      // Recheck risk and timed exits after entry research/network requests.
+      markPositions(freshSnapshots);
+      if(applyDailyRisk(freshSnapshots)){sessionMode='DAILY_LOSS_PAUSE';return;}
+      updatePositions(freshSnapshots,checkedClose-now()<=10*MINUTE);
+      if(applyDailyRisk(freshSnapshots)){sessionMode='DAILY_LOSS_PAUSE';return;}
       for(const symbol of SYMBOLS){const a=assess(freshSnapshots[symbol],barsCache[symbol],now(),openAt,baselines[symbol]);if(a.accepted){const research=state.premarketAnalysis?.sessionDate===dateKey(now())?state.premarketAnalysis.rankings?.find(r=>r.symbol===symbol&&r.longWatchCandidate):null;ranked.push({symbol,...a,score:a.score+Math.min(3,(research?.score||0)*0.1)});}else rejections.push({symbol,reason:a.reason,metrics:a.metrics||null,time:new Date(now()).toISOString()});}
       ranked.sort((a,b)=>b.score-a.score);
       let entered=0;
-      for(const c of ranked){if(buy(c.symbol,c.quote,c.signal,c.metrics))entered++;else rejections.push({symbol:c.symbol,reason:'Setup qualified; position, cash, cooldown or daily entry limit',metrics:c.metrics,time:new Date(now()).toISOString()});}
+      for(const c of ranked){if(buy(c.symbol,c.quote,c.signal,c.metrics)){entered++;if(applyDailyRisk(freshSnapshots)){sessionMode='DAILY_LOSS_PAUSE';break;}}else rejections.push({symbol:c.symbol,reason:'Setup qualified; position, cash, cooldown or daily entry limit',metrics:c.metrics,time:new Date(now()).toISOString()});}
       const s=structuredClone(state);s.lastScanAt=new Date(now()).toISOString();s.lastError=null;s.rejections=rejections;
       s.scanDiagnostics={scanned:SYMBOLS.length,qualified:ranked.length,entered,lastScanAt:s.lastScanAt,watchlist:SYMBOLS,filters:SCAN_FILTERS,baselineSessionDate:baselineDate,qualifiedSetups:ranked.map(c=>({symbol:c.symbol,signal:c.signal,score:c.score,metrics:c.metrics})),skippedByReason:rejections.reduce((out,r)=>{out[r.reason]=(out[r.reason]||0)+1;return out;},{})};
       const eq=s.cashUsd+s.openPositions.reduce((v,p)=>v+p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE),0);
@@ -267,20 +378,31 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
       const clock=await request('https://paper-api.alpaca.markets/v2/clock');
       if(clock.is_open!==true||!Number.isFinite(Date.parse(clock.timestamp))||Math.abs(now()-Date.parse(clock.timestamp))>120000)throw Error('Stock market closed or market clock stale');
       const snapshots=await request('https://data.alpaca.markets/v2/stocks/snapshots?'+new URLSearchParams({symbols:state.openPositions.map(p=>p.symbol).join(','),feed:'iex'}));
+      markPositions(snapshots);
       for(const p of structuredClone(state.openPositions)){const q=quote(snapshots[p.symbol],now());if(q){sell(p.id,q,'MANUAL PAPER CLOSE');results.push({success:true,symbol:p.symbol});}else results.push({success:false,symbol:p.symbol,error:'Fresh exit bid unavailable'});}
     }catch(e){results.push({success:false,error:e.message});}finally{busy=false;}
     return {success:results.every(r=>r.success),results};
   }
-  function getStatus(){return {running:state.running&&configured()&&connection==='CONNECTED',enabled:state.running,mode:'PAPER',tradingStyle:'INTRADAY_OPPORTUNITY',watchlistSize:SYMBOLS.length,sessionMode,dailyPnlUsd,connection:configured()?connection:'WAITING_FOR_ALPACA',marketOpen,nextOpen,nextClose,lastScanAt:state.lastScanAt,lastError:state.lastError,premarketLastUpdatedAt:state.premarketAnalysis?.lastUpdatedAt||null,premarketDataDelayMinutes:16,statusMessage:!configured()?'Waiting for Alpaca paper API connection':!state.running?'Stopped':state.lastError||(sessionMode==='PREMARKET_ANALYSIS'?'Analyzing premarket movers; consolidated data delayed at least 16 min; no premarket orders':!marketOpen?'Market closed; next research window starts 4am ET':sessionMode==='CLOSING_SESSION'?'Closing positions before market close':sessionMode==='NO_NEW_ENTRIES'?'Last 30 minutes: exits only':sessionMode==='DAILY_LOSS_PAUSE'?'Daily $3 loss limit: exits only':'Scanning intraday breakouts and pullback recoveries'),openPositions:state.openPositions.length,maxOpenPositions:3};}
+  function getStatus(){return {running:state.running&&configured()&&connection==='CONNECTED',enabled:state.running,mode:'PAPER',tradingStyle:'INTRADAY_OPPORTUNITY',watchlistSize:SYMBOLS.length,sessionMode,dailyPnlUsd:state.riskSession?equityOf()-state.riskSession.capitalUsd:dailyPnlUsd,riskRules:RISK_RULES,riskSession:state.riskSession||null,pendingExits:state.openPositions.filter(p=>p.pendingExitReason).map(p=>({symbol:p.symbol,reason:p.pendingExitReason})),connection:configured()?connection:'WAITING_FOR_ALPACA',marketOpen,nextOpen,nextClose,lastScanAt:state.lastScanAt,lastError:state.lastError,premarketLastUpdatedAt:state.premarketAnalysis?.lastUpdatedAt||null,premarketDataDelayMinutes:16,statusMessage:!configured()?'Waiting for Alpaca paper API connection':!state.running?'Stopped':state.lastError||(sessionMode==='PREMARKET_ANALYSIS'?'Analyzing premarket movers; consolidated data delayed at least 16 min; no premarket orders':!marketOpen?'Market closed; next research window starts 4am ET':sessionMode==='CLOSING_SESSION'?'Closing positions before market close':sessionMode==='NO_NEW_ENTRIES'?'Last 30 minutes: exits only':sessionMode==='DAILY_LOSS_PAUSE'?'Daily 2.5% loss limit reached: liquidating; entries halted until next trading day':sessionMode==='OPENING_WAIT'?'First 15 minutes: monitoring only':sessionMode==='EXIT_PENDING_QUOTE'?'Pending liquidation: waiting for fresh quotes':'Scanning intraday breakouts and pullback recoveries'),openPositions:state.openPositions.length,maxOpenPositions:3};}
   function getDashboardData(){
     const livePositions=state.openPositions.map(p=>{const value=p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE),pnl=value-p.costBasisUsd;return {position:p,live:{priceUsd:p.markPriceUsd,currentValue:value,pnl,pnlPercent:pnl/p.costBasisUsd*100,holdTimeMs:now()-Date.parse(p.entryTime)},pnl};});
     const equity=state.cashUsd+livePositions.reduce((s,p)=>s+p.live.currentValue,0),totalPnl=equity-100;
     const groups=new Map();for(const row of state.history){if(row.type!=='SELL')continue;if(!groups.has(row.positionId))groups.set(row.positionId,[]);groups.get(row.positionId).push(row);}
     const completedTrades=[];for(const [id,rows]of groups){const final=rows.find(r=>r.closed===true||(r.closed===undefined&&r.partial!==true));if(!final)continue;const invested=rows.reduce((s,r)=>s+r.amountInvested,0),proceeds=rows.reduce((s,r)=>s+r.saleValueUsd,0),pnl=proceeds-invested,quantity=rows.reduce((s,r)=>s+r.quantity,0);completedTrades.push({...final,id,positionId:id,quantity,amountInvested:invested,investedUsd:invested,costBasisUsd:invested,saleValueUsd:proceeds,pnl,pnlUsd:pnl,pnlPercent:pnl/invested*100,returnPercent:pnl/invested*100,estimatedFeesUsd:rows.reduce((s,r)=>s+(r.estimatedFeesUsd||0),0),exitPrice:rows.reduce((s,r)=>s+r.quantity*r.exitPrice,0)/quantity});}
-    return {label:'Stock Bot',mode:'PAPER',paperOnly:true,simulation:'Local paper ledger; no broker orders',exchange:'Alpaca IEX market data',strategy:STRATEGY,scannerFilters:SCAN_FILTERS,premarketAnalysis:state.premarketAnalysis||null,scanDiagnostics:state.scanDiagnostics||null,startingBalance:100,startingBalanceUsd:100,cashBalance:state.cashUsd,equity,totalPnl,totalPnlPercent:totalPnl,livePositions,completedTrades,history:state.history,rejections:state.rejections,lastScanAt:state.lastScanAt,lastError:state.lastError,maxDrawdownPercent:state.maxDrawdownPercent,estimatedFeePercentPerSide:FEE*100,estimatedSlippagePercentPerSide:SLIPPAGE*100,nextTradeSizeUsd:state.nextEntryUsd,compoundIncrementPercent:10,maxTradeSizeUsd:20,maxEntriesPerSymbolPerDay:6,maxOpenPositions:3,...getStatus(),openPositions:livePositions};
+    for(const trade of completedTrades){
+      const rows=groups.get(trade.positionId)||[],covered=rows.every(r=>Number.isFinite(r.pnlWithoutCostsUsd));
+      trade.pnlWithoutCostsUsd=covered?rows.reduce((s,r)=>s+r.pnlWithoutCostsUsd,0):null;
+      trade.netPnlUsd=trade.pnlUsd;trade.totalCostsUsd=covered?trade.pnlWithoutCostsUsd-trade.pnlUsd:null;
+      trade.estimatedSlippageUsd=rows.every(r=>Number.isFinite(r.estimatedSlippageUsd))?rows.reduce((s,r)=>s+r.estimatedSlippageUsd,0):null;
+      trade.estimatedSpreadUsd=rows.every(r=>Number.isFinite(r.estimatedSpreadUsd))?rows.reduce((s,r)=>s+r.estimatedSpreadUsd,0):null;
+      trade.maxDrawdownPercent ??= null;trade.maxRunUpPercent ??= null;
+    }
+    const reports=tradeReports(state.history,completedTrades,now());
+    return {label:'Stock Bot',reports,mode:'PAPER',paperOnly:true,simulation:'Local paper ledger; no broker orders',exchange:'Alpaca IEX market data',strategy:STRATEGY,scannerFilters:SCAN_FILTERS,premarketAnalysis:state.premarketAnalysis||null,scanDiagnostics:state.scanDiagnostics||null,startingBalance:100,startingBalanceUsd:100,cashBalance:state.cashUsd,equity,totalPnl,totalPnlPercent:totalPnl,livePositions,completedTrades,history:state.history,rejections:state.rejections,lastScanAt:state.lastScanAt,lastError:state.lastError,maxDrawdownPercent:state.maxDrawdownPercent,estimatedFeePercentPerSide:FEE*100,estimatedSlippagePercentPerSide:SLIPPAGE*100,nextTradeSizeUsd:state.nextEntryUsd,compoundIncrementPercent:10,maxTradeSizeUsd:20,maxEntriesPerSymbolPerDay:2,maxReentriesPerSymbolPerDay:1,maxOpenPositions:3,...getStatus(),openPositions:livePositions};
   }
   return {start,stop,tick,closeAll,getStatus,getDashboardData,getState:()=>structuredClone(state)};
 }
 let singleton;
 const instance=()=>singleton||(singleton=createStockBot());
-module.exports={createStockBot,assess,quote,sessionOpen,rankPremarket,buildBaselines,sameTimeVolume,SYMBOLS,STRATEGY,SCAN_FILTERS,start:()=>instance().start(),stop:()=>instance().stop(),closeAll:()=>instance().closeAll(),getStatus:()=>instance().getStatus(),getDashboardData:()=>instance().getDashboardData()};
+module.exports={createStockBot,assess,quote,sessionOpen,rankPremarket,buildBaselines,sameTimeVolume,SYMBOLS,STRATEGY,SCAN_FILTERS,RISK_RULES,tradeReports,exitCategory,start:()=>instance().start(),stop:()=>instance().stop(),closeAll:()=>instance().closeAll(),getStatus:()=>instance().getStatus(),getDashboardData:()=>instance().getDashboardData()};
+
