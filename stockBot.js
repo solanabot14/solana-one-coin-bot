@@ -3,9 +3,10 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
-const SYMBOLS = ['SPY','QQQ','AAPL','MSFT','AMZN','GOOGL','META','NVDA'];
-const STRATEGY = 'Daily uptrend + pullback recovery; $10 entries, 3 slots; +4% target, -2% stop trigger, 1.5% trail after +2%; 5 calendar day time exit. Local paper simulation only.';
-const DAY = 86400000, SLIPPAGE = 0.0005, FEE = 0.0001;
+const SYMBOLS = ['SPY','QQQ','IWM','DIA','AAPL','MSFT','AMZN','GOOGL','META','NVDA','TSLA','AMD','AVGO','MU','INTC','PLTR','COIN','HOOD','UBER','NFLX','SHOP','SOFI','PYPL','CRM','ORCL','JPM','BAC','XOM','WMT','DIS'];
+const STRATEGY = 'Intraday opportunity: scan 30 stocks/ETFs for volume-confirmed breakouts or pullback recoveries above session VWAP; $10 entries, 3 slots; +1.5% target, -0.8% stop trigger, 0.5% trail after +0.75%; max hold 90 min; close 10 min before market close. Local paper simulation only.';
+const SLIPPAGE = 0.0005, FEE = 0.0001;
+const MINUTE=60000, BAR_MS=5*MINUTE;
 const dateKey = t => new Intl.DateTimeFormat('en-CA', {timeZone:'America/New_York', year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(t));
 const valid = n => Number.isFinite(n) && n > 0;
 function quote(snapshot, now) {
@@ -14,29 +15,40 @@ function quote(snapshot, now) {
   if (!valid(q?.bp) || !valid(q?.ap) || q.ap < q.bp || !Number.isFinite(age) || age < -5000 || age > 120000) return null;
   return {bid:q.bp, ask:q.ap, mid:(q.bp+q.ap)/2, spreadPercent:(q.ap/q.bp-1)*100, time:q.t};
 }
-function assess(snapshot, bars, now) {
+function sessionOpen(nextClose) {
+  const close=Date.parse(nextClose);
+  const parts=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'numeric',minute:'numeric',hourCycle:'h23'}).formatToParts(new Date(close));
+  const hour=Number(parts.find(p=>p.type==='hour').value),minute=Number(parts.find(p=>p.type==='minute').value);
+  return close-((hour*60+minute)-(9*60+30))*MINUTE;
+}
+function assess(snapshot, bars, now, openAt=0) {
   const q = quote(snapshot, now);
   if (!q) return {accepted:false, reason:'Fresh bid/ask unavailable'};
-  if (q.spreadPercent > 0.2) return {accepted:false,reason:'Spread exceeds 0.2%'};
-  const daily = (bars || []).filter(b => dateKey(Date.parse(b.t)) < dateKey(now)).sort((a,b)=>Date.parse(a.t)-Date.parse(b.t)).slice(-20);
-  if (daily.length < 20 || daily.some(b=>!valid(b.c)||!valid(b.h))) return {accepted:false,reason:'Need 20 completed daily bars'};
-  const sma = daily.reduce((s,b)=>s+b.c,0)/20;
-  const prev = daily.at(-1), high = Math.max(...daily.slice(-5).map(b=>b.h));
-  const pullback = (high/q.mid-1)*100;
-  const minute = snapshot?.minuteBar;
-  const minuteAge = now-Date.parse(minute?.t);
-  const recovering = valid(minute?.c) && valid(minute?.o) && minute.c > minute.o && Number.isFinite(minuteAge) && minuteAge >= 0 && minuteAge <= 180000;
-  const accepted = prev.c > sma && q.mid > sma && pullback >= 0.5 && pullback <= 5 && q.mid > prev.c && recovering;
-  return {accepted, reason:accepted?'Daily uptrend and pullback recovery confirmed':'Waiting for uptrend, 0.5–5% pullback and recovery above previous close', quote:q, score:pullback};
+  if (q.spreadPercent > 0.15) return {accepted:false,reason:'Spread exceeds 0.15%'};
+  const session=(bars||[]).filter(b=>Date.parse(b.t)>=openAt && Date.parse(b.t)+BAR_MS<=now && dateKey(Date.parse(b.t))===dateKey(now)).sort((a,b)=>Date.parse(a.t)-Date.parse(b.t));
+  if(session.length<6)return {accepted:false,reason:'Waiting for six completed 5-minute session bars'};
+  const recent=session.slice(-6),last=recent.at(-1),prev=recent.at(-2);
+  if(session.some(b=>![b.o,b.h,b.l,b.c,b.v].every(valid)))return {accepted:false,reason:'Invalid intraday bars'};
+  if(now-Date.parse(last.t)-BAR_MS>2*MINUTE||recent.some((b,i)=>i&&Date.parse(b.t)-Date.parse(recent[i-1].t)!==BAR_MS))return {accepted:false,reason:'Stale or missing 5-minute bars'};
+  const volume=session.reduce((s,b)=>s+b.v,0),vwap=session.reduce((s,b)=>s+(valid(b.vw)?b.vw:(b.h+b.l+b.c)/3)*b.v,0)/volume;
+  const move=(q.mid/session[0].o-1)*100,extension=(q.mid/vwap-1)*100;
+  const average=recent.slice(0,-1).reduce((s,b)=>s+b.v,0)/5,relativeVolume=last.v/average;
+  const peak=Math.max(...recent.slice(0,-2).map(b=>b.h)),dip=(peak/prev.l-1)*100;
+  const breakout=last.c>Math.max(...recent.slice(0,-1).map(b=>b.h));
+  const reclaim=prev.c<recent.at(-3).c && dip>=0.2 && dip<=2 && last.c>prev.h;
+  const accepted=move>=0.3 && move<=8 && extension>=0 && extension<=3 && relativeVolume>=1.2 && last.v*last.c>=100000 && last.c>last.o && (last.c/last.o-1)*100<=2 && q.mid>=last.c*0.999 && (breakout||reclaim);
+  const signal=breakout?'BREAKOUT':'PULLBACK RECOVERY';
+  return {accepted,reason:accepted?signal+' above session VWAP with rising volume':'Waiting for fresh breakout/recovery, VWAP trend and 1.2x volume',signal,quote:q,score:relativeVolume*2+move,metrics:{vwap,movePercent:move,relativeVolume,extensionPercent:extension}};
 }
 function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DATA_DIR || __dirname,'stock-paper-state.json'), env=process.env, io=fs, fetchImpl=globalThis.fetch, now=()=>Date.now(), timers=globalThis}={}) {
   let state={schemaVersion:1,startingBalanceUsd:100,cashUsd:100,openPositions:[],history:[],running:false,lastScanAt:null,lastError:null,rejections:[],closedDates:{},peakEquityUsd:100,maxDrawdownPercent:0};
   if (io.existsSync(file)) state=JSON.parse(io.readFileSync(file,'utf8'));
+  state.lastExitAt ||= {};
   function validate(s) {
     if (s.schemaVersion!==1 || s.startingBalanceUsd!==100 || !Number.isFinite(s.cashUsd) || s.cashUsd < -1e-8 || !Array.isArray(s.openPositions) || s.openPositions.length>3 || !Array.isArray(s.history) || !Array.isArray(s.rejections) || !s.closedDates || new Set(s.openPositions.map(p=>p.symbol)).size!==s.openPositions.length || s.openPositions.some(p=>!valid(p.quantity)||!valid(p.costBasisUsd)||!valid(p.markPriceUsd))) throw Error('Invalid Stock Bot state; refusing to reset saved account');
   }
   validate(state);
-  let timer=null,busy=false,generation=0,marketOpen=null,nextOpen=null,connection='WAITING_FOR_ALPACA',barsCache={},barsDate=null;
+  let timer=null,busy=false,generation=0,marketOpen=null,nextOpen=null,nextClose=null,connection='WAITING_FOR_ALPACA',barsCache={},lastBarsAt=-Infinity,sessionMode='WAITING',dailyPnlUsd=0;
   const configured = () => !!(env.ALPACA_PAPER_API_KEY && env.ALPACA_PAPER_SECRET_KEY);
   function commit(s) {
     validate(s); io.mkdirSync(path.dirname(file),{recursive:true});
@@ -51,41 +63,43 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
     if (!r.ok) throw Error('Alpaca connection HTTP '+r.status);
     return r.json();
   }
-  async function refreshBars() {
-    if(barsDate===dateKey(now()))return;
+  async function refreshBars(openAt) {
+    if(now()-lastBarsAt<MINUTE)return;
     let page=null, all={};
     do {
-      const p=new URLSearchParams({symbols:SYMBOLS.join(','),timeframe:'1Day',start:new Date(now()-70*DAY).toISOString(),end:new Date(now()-16*60000).toISOString(),limit:'10000',feed:'iex',adjustment:'all',sort:'asc'});
+      const p=new URLSearchParams({symbols:SYMBOLS.join(','),timeframe:'5Min',start:new Date(openAt).toISOString(),end:new Date(now()-1000).toISOString(),limit:'10000',feed:'iex',adjustment:'raw',sort:'asc'});
       if(page)p.set('page_token',page);
       const r=await request('https://data.alpaca.markets/v2/stocks/bars?'+p);
       for(const [sym,rows] of Object.entries(r.bars||{}))all[sym]=(all[sym]||[]).concat(rows);
       page=r.next_page_token;
     }while(page);
-    barsCache=all;barsDate=dateKey(now());
+    barsCache=all;lastBarsAt=now();
   }
-  function buy(symbol,q) {
-    if(!state.running||state.openPositions.length>=3||state.openPositions.some(p=>p.symbol===symbol)||state.closedDates[symbol]===dateKey(now())||state.cashUsd<10*(1+FEE))return false;
+  function buy(symbol,q,signal) {
+    const entriesToday=state.history.filter(r=>r.type==='BUY'&&r.symbol===symbol&&dateKey(Date.parse(r.time))===dateKey(now())).length;
+    if(!state.running||state.openPositions.length>=3||state.openPositions.some(p=>p.symbol===symbol)||now()-Number(state.lastExitAt[symbol]||0)<15*MINUTE||entriesToday>=2||state.cashUsd<10*(1+FEE))return false;
     const s=structuredClone(state), entryPrice=q.ask*(1+SLIPPAGE), quantity=10/entryPrice;
-    const p={id:randomUUID(),symbol,tokenAddress:symbol,entryPrice,quantity,notionalUsd:10,costBasisUsd:10*(1+FEE),entryFeeUsd:10*FEE,highestPrice:q.bid,markPriceUsd:q.bid,entryTime:new Date(now()).toISOString(),strategy:STRATEGY};
+    const p={id:randomUUID(),symbol,tokenAddress:symbol,entryPrice,quantity,notionalUsd:10,costBasisUsd:10*(1+FEE),entryFeeUsd:10*FEE,highestPrice:q.bid,markPriceUsd:q.bid,entryTime:new Date(now()).toISOString(),strategy:STRATEGY,entryReason:signal};
     s.cashUsd-=p.costBasisUsd;s.openPositions.push(p);
-    s.history.unshift({...p,type:'BUY',positionId:p.id,amountUsd:10,amountInvested:p.costBasisUsd,time:p.entryTime,entryReason:'Daily uptrend and pullback recovery',mode:'PAPER'});commit(s);return true;
+    s.history.unshift({...p,type:'BUY',positionId:p.id,amountUsd:10,amountInvested:p.costBasisUsd,time:p.entryTime,mode:'PAPER'});commit(s);return true;
   }
   function sell(id,q,reason) {
     const s=structuredClone(state),i=s.openPositions.findIndex(p=>p.id===id);if(i<0)return;
     const p=s.openPositions[i],exitPrice=q.bid*(1-SLIPPAGE),gross=p.quantity*exitPrice,fee=gross*FEE,proceeds=gross-fee,pnl=proceeds-p.costBasisUsd,time=new Date(now()).toISOString();
-    s.cashUsd+=proceeds;s.openPositions.splice(i,1);s.closedDates[p.symbol]=dateKey(now());
+    s.cashUsd+=proceeds;s.openPositions.splice(i,1);s.closedDates[p.symbol]=dateKey(now());s.lastExitAt[p.symbol]=now();
     s.history.unshift({...p,type:'SELL',positionId:p.id,exitPrice,exitTime:time,time,amountInvested:p.costBasisUsd,investedUsd:p.costBasisUsd,saleValueUsd:proceeds,amountUsd:proceeds,pnl,pnlUsd:pnl,pnlPercent:pnl/p.costBasisUsd*100,returnPercent:pnl/p.costBasisUsd*100,estimatedFeesUsd:p.entryFeeUsd+fee,exitReason:reason,reason,holdTimeMs:now()-Date.parse(p.entryTime),mode:'PAPER'});commit(s);
   }
-  function updatePositions(snapshots) {
+  function updatePositions(snapshots,flatten=false) {
     for(const p of structuredClone(state.openPositions)) {
       const q=quote(snapshots[p.symbol],now());if(!q)continue;
       const s=structuredClone(state),current=s.openPositions.find(x=>x.id===p.id);
       current.markPriceUsd=q.bid;current.highestPrice=Math.max(current.highestPrice,q.bid);commit(s);
       const change=(q.bid/p.entryPrice-1)*100, peak=(current.highestPrice/p.entryPrice-1)*100;
-      if(change<=-2)sell(p.id,q,'STOP TRIGGER -2%');
-      else if(change>=4)sell(p.id,q,'TAKE PROFIT +4%');
-      else if(peak>=2 && q.bid<=current.highestPrice*0.985)sell(p.id,q,'TRAIL 1.5% AFTER +2%');
-      else if(now()-Date.parse(p.entryTime)>=5*DAY)sell(p.id,q,'TIME EXIT 5 CALENDAR DAYS');
+      if(flatten || dateKey(Date.parse(p.entryTime))!==dateKey(now()))sell(p.id,q,flatten?'SESSION CLOSE 10 MIN BEFORE BELL':'RECOVERY EXIT FROM PREVIOUS SESSION');
+      else if(change<=-0.8)sell(p.id,q,'STOP TRIGGER -0.8%');
+      else if(change>=1.5)sell(p.id,q,'TAKE PROFIT +1.5%');
+      else if(peak>=0.75 && q.bid<=current.highestPrice*0.995)sell(p.id,q,'TRAIL 0.5% AFTER +0.75%');
+      else if(now()-Date.parse(p.entryTime)>=90*MINUTE)sell(p.id,q,'TIME EXIT 90 MIN');
     }
   }
   async function tick() {
@@ -97,22 +111,39 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
       if(gen!==generation||!state.running)return;
       const age=now()-Date.parse(clock.timestamp);
       if(!Number.isFinite(age)||Math.abs(age)>120000||typeof clock.is_open!=='boolean')throw Error('Invalid or stale market clock');
-      marketOpen=clock.is_open;nextOpen=clock.next_open;connection='CONNECTED';
-      if(!marketOpen){const s=structuredClone(state);s.lastError=null;commit(s);return;}
+      marketOpen=clock.is_open;nextOpen=clock.next_open;nextClose=clock.next_close;connection='CONNECTED';
+      if(!marketOpen){sessionMode=state.openPositions.length?'EXIT_PENDING_MARKET_CLOSED':'MARKET_CLOSED';const s=structuredClone(state);s.lastError=state.openPositions.length?'Session exit pending: no fresh regular-session quotes; will retry next open':null;commit(s);return;}
+      const closeAt=Date.parse(nextClose);if(!Number.isFinite(closeAt)||closeAt<=now())throw Error('Invalid market closing time');
+      const openAt=sessionOpen(nextClose),flatten=closeAt-now()<=10*MINUTE;
       const snapshots=await request('https://data.alpaca.markets/v2/stocks/snapshots?'+new URLSearchParams({symbols:SYMBOLS.join(','),feed:'iex'}));
       if(gen!==generation||!state.running)return;
-      updatePositions(snapshots);
-      await refreshBars();if(gen!==generation||!state.running)return;
+      updatePositions(snapshots,flatten);
+      const marked=structuredClone(state),equity=marked.cashUsd+marked.openPositions.reduce((s,p)=>s+p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE),0);
+      marked.peakEquityUsd=Math.max(marked.peakEquityUsd,equity);marked.maxDrawdownPercent=Math.max(marked.maxDrawdownPercent,(1-equity/marked.peakEquityUsd)*100);commit(marked);
+      dailyPnlUsd=state.history.filter(r=>r.type==='SELL'&&dateKey(Date.parse(r.time))===dateKey(now())).reduce((s,r)=>s+r.pnlUsd,0)+state.openPositions.reduce((s,p)=>s+p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE)-p.costBasisUsd,0);
+      sessionMode=flatten?'CLOSING_SESSION':closeAt-now()<=30*MINUTE?'NO_NEW_ENTRIES':dailyPnlUsd<=-3?'DAILY_LOSS_PAUSE':'SCANNING';
+      if(sessionMode!=='SCANNING'){
+        const s=structuredClone(state);s.lastError=flatten&&s.openPositions.length?'Waiting for fresh quotes to complete session exits':null;commit(s);return;
+      }
+      if(now()-lastBarsAt<MINUTE)return;
+      await refreshBars(openAt);if(gen!==generation||!state.running)return;
+      const currentClock=await request('https://paper-api.alpaca.markets/v2/clock');
+      if(gen!==generation||!state.running)return;
+      const checkedTimestamp=Date.parse(currentClock.timestamp),checkedClose=Date.parse(currentClock.next_close);
+      if(currentClock.is_open!==true||!Number.isFinite(checkedTimestamp)||Math.abs(now()-checkedTimestamp)>120000||!Number.isFinite(checkedClose)||checkedClose-now()<=30*MINUTE)return;
       const ranked=[],rejections=[];
-      for(const symbol of SYMBOLS){const a=assess(snapshots[symbol],barsCache[symbol],now());if(a.accepted)ranked.push({symbol,...a});else rejections.push({symbol,reason:a.reason,time:new Date(now()).toISOString()});}
-      ranked.sort((a,b)=>b.score-a.score);for(const c of ranked)buy(c.symbol,c.quote);
+      const freshSnapshots=await request('https://data.alpaca.markets/v2/stocks/snapshots?'+new URLSearchParams({symbols:SYMBOLS.join(','),feed:'iex'}));
+      if(gen!==generation||!state.running)return;
+      if(checkedClose-now()<=30*MINUTE)return;
+      for(const symbol of SYMBOLS){const a=assess(freshSnapshots[symbol],barsCache[symbol],now(),openAt);if(a.accepted)ranked.push({symbol,...a});else rejections.push({symbol,reason:a.reason,time:new Date(now()).toISOString()});}
+      ranked.sort((a,b)=>b.score-a.score);for(const c of ranked)buy(c.symbol,c.quote,c.signal);
       const s=structuredClone(state);s.lastScanAt=new Date(now()).toISOString();s.lastError=null;s.rejections=rejections;
       const eq=s.cashUsd+s.openPositions.reduce((v,p)=>v+p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE),0);
       s.peakEquityUsd=Math.max(s.peakEquityUsd,eq);s.maxDrawdownPercent=Math.max(s.maxDrawdownPercent,(1-eq/s.peakEquityUsd)*100);commit(s);
     }catch(e){if(gen===generation){connection='CONNECTION_ERROR';const s=structuredClone(state);s.lastError=e.message;commit(s);}}
     finally{busy=false;}
   }
-  function start(){if(timer)return;const s=structuredClone(state);s.running=true;commit(s);timer=timers.setInterval(()=>void tick(),60000);void tick();}
+  function start(){if(timer)return;const s=structuredClone(state);s.running=true;commit(s);timer=timers.setInterval(()=>void tick(),15000);void tick();}
   function stop(){generation++;if(timer)timers.clearInterval(timer);timer=null;const s=structuredClone(state);s.running=false;commit(s);}
   async function closeAll(){
     if(busy)return {success:false,results:[{success:false,error:'Stock monitor busy; retry shortly'}]};
@@ -121,20 +152,20 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
     busy=true;const results=[];
     try{
       const clock=await request('https://paper-api.alpaca.markets/v2/clock');
-      if(!clock.is_open||Math.abs(now()-Date.parse(clock.timestamp))>120000)throw Error('Stock market closed or market clock stale');
+      if(clock.is_open!==true||!Number.isFinite(Date.parse(clock.timestamp))||Math.abs(now()-Date.parse(clock.timestamp))>120000)throw Error('Stock market closed or market clock stale');
       const snapshots=await request('https://data.alpaca.markets/v2/stocks/snapshots?'+new URLSearchParams({symbols:state.openPositions.map(p=>p.symbol).join(','),feed:'iex'}));
       for(const p of structuredClone(state.openPositions)){const q=quote(snapshots[p.symbol],now());if(q){sell(p.id,q,'MANUAL PAPER CLOSE');results.push({success:true,symbol:p.symbol});}else results.push({success:false,symbol:p.symbol,error:'Fresh exit bid unavailable'});}
     }catch(e){results.push({success:false,error:e.message});}finally{busy=false;}
     return {success:results.every(r=>r.success),results};
   }
-  function getStatus(){return {running:state.running&&configured()&&connection==='CONNECTED',enabled:state.running,mode:'PAPER',connection:configured()?connection:'WAITING_FOR_ALPACA',marketOpen,nextOpen,lastScanAt:state.lastScanAt,lastError:state.lastError,statusMessage:!configured()?'Waiting for Alpaca paper API connection':!state.running?'Stopped':state.lastError||(!marketOpen?'Market closed; waiting for next session':'Monitoring stocks'),openPositions:state.openPositions.length,maxOpenPositions:3};}
+  function getStatus(){return {running:state.running&&configured()&&connection==='CONNECTED',enabled:state.running,mode:'PAPER',tradingStyle:'INTRADAY_OPPORTUNITY',watchlistSize:SYMBOLS.length,sessionMode,dailyPnlUsd,connection:configured()?connection:'WAITING_FOR_ALPACA',marketOpen,nextOpen,nextClose,lastScanAt:state.lastScanAt,lastError:state.lastError,statusMessage:!configured()?'Waiting for Alpaca paper API connection':!state.running?'Stopped':state.lastError||(!marketOpen?'Market closed; waiting for intraday session':sessionMode==='CLOSING_SESSION'?'Closing positions before market close':sessionMode==='NO_NEW_ENTRIES'?'Last 30 minutes: exits only':sessionMode==='DAILY_LOSS_PAUSE'?'Daily $3 loss limit: exits only':'Scanning intraday breakouts and pullback recoveries'),openPositions:state.openPositions.length,maxOpenPositions:3};}
   function getDashboardData(){
     const livePositions=state.openPositions.map(p=>{const value=p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE),pnl=value-p.costBasisUsd;return {position:p,live:{priceUsd:p.markPriceUsd,currentValue:value,pnl,pnlPercent:pnl/p.costBasisUsd*100,holdTimeMs:now()-Date.parse(p.entryTime)},pnl};});
     const equity=state.cashUsd+livePositions.reduce((s,p)=>s+p.live.currentValue,0),totalPnl=equity-100;
-    return {label:'Stock Bot',mode:'PAPER',paperOnly:true,simulation:'Local paper ledger; no broker orders',exchange:'Alpaca IEX market data',strategy:STRATEGY,startingBalance:100,startingBalanceUsd:100,cashBalance:state.cashUsd,equity,totalPnl,totalPnlPercent:totalPnl,livePositions,openPositions:livePositions,completedTrades:state.history.filter(r=>r.type==='SELL'),history:state.history,rejections:state.rejections,lastScanAt:state.lastScanAt,lastError:state.lastError,maxDrawdownPercent:state.maxDrawdownPercent,estimatedFeePercentPerSide:FEE*100,estimatedSlippagePercentPerSide:SLIPPAGE*100,nextTradeSizeUsd:10,maxOpenPositions:3,...getStatus(),openPositions:livePositions};
+    return {label:'Stock Bot',mode:'PAPER',paperOnly:true,simulation:'Local paper ledger; no broker orders',exchange:'Alpaca IEX market data',strategy:STRATEGY,startingBalance:100,startingBalanceUsd:100,cashBalance:state.cashUsd,equity,totalPnl,totalPnlPercent:totalPnl,livePositions,completedTrades:state.history.filter(r=>r.type==='SELL'),history:state.history,rejections:state.rejections,lastScanAt:state.lastScanAt,lastError:state.lastError,maxDrawdownPercent:state.maxDrawdownPercent,estimatedFeePercentPerSide:FEE*100,estimatedSlippagePercentPerSide:SLIPPAGE*100,nextTradeSizeUsd:10,maxOpenPositions:3,...getStatus(),openPositions:livePositions};
   }
   return {start,stop,tick,closeAll,getStatus,getDashboardData,getState:()=>structuredClone(state)};
 }
 let singleton;
 const instance=()=>singleton||(singleton=createStockBot());
-module.exports={createStockBot,assess,quote,SYMBOLS,STRATEGY,start:()=>instance().start(),stop:()=>instance().stop(),closeAll:()=>instance().closeAll(),getStatus:()=>instance().getStatus(),getDashboardData:()=>instance().getDashboardData()};
+module.exports={createStockBot,assess,quote,sessionOpen,SYMBOLS,STRATEGY,start:()=>instance().start(),stop:()=>instance().stop(),closeAll:()=>instance().closeAll(),getStatus:()=>instance().getStatus(),getDashboardData:()=>instance().getDashboardData()};

@@ -1,58 +1,68 @@
-# Stock Bot
+# Stock Bot — Intraday Opportunity
 
 An isolated $100 local paper ledger in the shared dashboard at `/trading/stock`.
-It reads Alpaca stock market data and market clock using GET requests only.
-It never submits orders to Alpaca, including its paper brokerage account.
+Alpaca IEX quotes, 5-minute bars and its market clock drive the simulation.
+GET requests only: no broker orders, no live trades, options, shorts or borrowing.
 
-## Connect market data
+## Connection
 
-Create an Alpaca paper account and generate paper API credentials. Set these
-in the existing dashboard service's Railway Variables panel:
+The existing dashboard Railway service uses `ALPACA_PAPER_API_KEY` and
+`ALPACA_PAPER_SECRET_KEY`. Never commit or paste these into chat.
+Without credentials it shows a waiting status and makes no market requests.
+The ledger is distinct from Alpaca's default simulated brokerage balance.
 
-- `ALPACA_PAPER_API_KEY`
-- `ALPACA_PAPER_SECRET_KEY`
+## Entry rules
 
-Do not paste credentials into chat or commit them. Redeploy after configuration.
-Without credentials, the dashboard shows the $100 ledger and a waiting status;
-it makes no market data requests and cannot trade. A successful authenticated
-market-clock request is required before the connection reports connected.
+- Scan a fixed 30-symbol universe of actively traded stocks and unleveraged ETFs.
+  This is a watchlist scanner, not a whole-market or news scanner.
+- Use at least six completed consecutive 5-minute bars from today's regular
+  session. The first possible signal is approximately 30 minutes after opening.
+- Require a fresh bid/ask with spread <= 0.15%; completed bars at most two minutes
+  behind their expected closing timestamp. Never use an incomplete candle.
+- Require +0.3% to +8% from session opening price, above session VWAP and at most
+  3% above VWAP; bullish signal candle with <= 2% gain.
+- Require signal bar volume >= 1.2x the preceding five bars' average and >= $100k
+  traded value on IEX. Volume is from this exchange, not total US volume.
+- BREAKOUT: signal close exceeds the previous five bars' highs.
+- PULLBACK RECOVERY: previous bar closes below its predecessor, dip is 0.2–2%
+  below the preceding peak, and signal bar closes above previous bar's high.
+- Current quote must hold within 0.1% of the signal close or higher.
+- Rank qualifying signals by relative volume and session price movement.
+- Three positions maximum, fixed $10 notional; keep unused cash available.
+- No duplicate open symbols. Reentry after 15 minutes, maximum two entries per
+  symbol per New York session date. No compounding.
 
-## Experimental strategy
+## Exits and session control
 
-- Watch SPY, QQQ, AAPL, MSFT, AMZN, GOOGL, META, NVDA.
-- Three maximum positions, $10 notional each; no borrowing or compounding.
-- Require previous close and current price above the 20 completed day average.
-- Require current price 0.5–5% below the highest high of the last five completed
-  days and above previous close, with a fresh bullish minute bar.
-- Fresh bid/ask (at most two minutes old) and entry spread at most 0.2%.
-- Exit all at +4%, trigger a stop at -2%, or trail 1.5% from the monitored high
-  after a +2% gain. Trail activation remains armed as the price falls.
-- Exit after five calendar days at the next available regular-session quote.
-- Prevent duplicate open symbols and same-day reentry after a close.
-- Poll every minute while enabled; daily history cached per New York date.
-- Use Alpaca market clock for weekends, holidays and shortened sessions.
+- Sell all at +1.5%, or trigger a loss exit at -0.8%.
+- After reaching +0.75%, trail 0.5% below the monitored high; activation stays armed.
+- Maximum holding time 90 minutes.
+- Stop new entries 30 minutes before the market clock's actual closing time.
+- Begin closing all positions 10 minutes before close; includes half days.
+- Pause entries at <= -$3 realized plus marked unrealized P&L for that session.
+  Existing positions continue to be monitored and exited.
+- Monitor every 15 seconds; refresh entry bars no more than once per minute.
+- Use market clock and New York timezone for holidays, weekends and DST.
+- If a halt, stale quote, outage or stopped process prevents a session exit,
+  report the pending exit and retry at next available regular-session quote.
+  Never invent a fill or silently remove the position. Previous-session positions
+  exit first when the next session opens.
 
-IEX is one exchange, not consolidated US market coverage. Daily bars and quotes
-use IEX consistently. Entry fills use ask plus 0.05% slippage; exits use bid
-minus 0.05% slippage. An illustrative 0.01% fee allowance applies to each side.
-These are simulation assumptions, not a broker fee schedule or execution promise.
-All reported ledger P&L already includes these costs.
+## Simulation and persistence
 
-Stops are triggers, not guaranteed loss limits. Overnight gaps, halts, stale
-quotes and polling delays can produce larger losses. Positions stay open when
-the market is closed or fresh quotes are unavailable. No backtest or live
-performance claim has been made; this is a first strategy for forward testing.
+Entry uses ask plus 0.05% slippage; exit uses bid minus 0.05% slippage.
+An illustrative 0.01% fee allowance applies on each side. Reported ledger P&L
+already includes these assumptions, which are not a broker fee schedule.
+IEX covers one exchange; fills and stop prices are not guaranteed. Neither
+profitability nor always being flat by the bell is guaranteed during outages.
 
-## Persistence and checks
-
-State is atomically saved in `stock-paper-state.json` on the existing persistent
-volume. Saved invalid state is rejected, never silently reset. The other bots'
-ledgers and trading modules are unchanged.
+Atomic state persists in `stock-paper-state.json` on the existing volume.
+Existing $100 cash, positions and history are preserved, never reset. Other
+bots' trading modules and accounts are unchanged.
 
 `node --test test/stock-bot.test.js`
 
-Tests cover missing credentials, fractional sizing, position limits, duplicate
-prevention, cash/P&L reconciliation, restoration, gap losses, persistent trail
-activation, closed market and stale data. Dashboard controls inherit existing
-authentication, POST and same-origin checks. Close-all uses fresh regular-session
-stock quotes and reports failure rather than inventing a fill.
+Tests cover sizing and accounting, breakouts and pullback recovery, stale/partial
+bars, duplicates, cooldown and daily entry caps, persistent trailing activation,
+loss pause, regular/half-day flatten, DST, unresolved exit recovery, and restore.
+This strategy is for forward testing; no profitable backtest is claimed.
