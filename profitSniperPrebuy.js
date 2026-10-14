@@ -1,7 +1,7 @@
 const { setTimeout: sleep } = require("node:timers/promises");
 const { constants, getMomentumFailureReasons } = require("./profitSniperStrategy");
 const CONFIRMATION_MS = 7500;
-const MAX_SAMPLE_AGE_MS = 5000;
+const MAX_SAMPLE_AGE_MS = 15000;
 const MAX_LIQUIDITY_DROP = 0.20;
 const MIN_LOCK_PERCENT = 50;
 
