@@ -63,7 +63,7 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     }
   }
   async function requestJson(url, signal) {
-    const response = await fetchImpl(url, { signal, headers: { "Accept": "application/json", "User-Agent": "OutcomeBot-Paper/1.0" } });
+    const response = await fetchImpl(url, { signal:signal || AbortSignal.timeout(8000), headers: { "Accept": "application/json", "User-Agent": "OutcomeBot-Paper/1.0" } });
     if (!response.ok) throw new Error("Coinbase market data HTTP " + response.status);
     return response.json();
   }
