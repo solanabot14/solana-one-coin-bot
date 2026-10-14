@@ -222,9 +222,11 @@ function createBot({
       const lock = await checkLiquidityLock(coin.tokenAddress);
       onLiquidityLockCheck(lock, coin);
       if (!isActive(session)) return;
-      const lockedPercent = Number(lock?.lockedPercent);
-      const lockStatusUnavailable = !Number.isFinite(lockedPercent) ||
+      const rawLockedPercent = lock?.lockedPercent;
+      const lockStatusUnavailable = rawLockedPercent === null ||
+        rawLockedPercent === undefined || rawLockedPercent === "" ||
         lock?.reason === "LOCK_STATUS_UNAVAILABLE";
+      const lockedPercent = lockStatusUnavailable ? NaN : Number(rawLockedPercent);
       const confirmedLowLock = Number.isFinite(lockedPercent) &&
         lockedPercent < ENTRY_MIN_LP_LOCK_PERCENT;
 
