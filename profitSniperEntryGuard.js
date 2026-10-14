@@ -8,7 +8,7 @@ const MIN_LIQUIDITY_RETENTION = 0.90;
 const MIN_PRICE_RETENTION = 0.90;
 const MAX_PRICE_INCREASE = 1.15;
 const MIN_REPORT_RESERVE_RATIO = 0.75;
-const MIN_LOCKED_PERCENT = 50;
+const MIN_LOCKED_PERCENT = 30;
 
 function hasCatastrophicLoss(history, tokenAddress) {
   return (Array.isArray(history) ? history : []).some(row =>

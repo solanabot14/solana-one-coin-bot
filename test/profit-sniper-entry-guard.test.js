@@ -6,7 +6,7 @@ const { getMomentumFailureReasons } = require("../profitSniperStrategy");
 const start = 1_800_000_000_000;
 const candidate = {
   chainId: "solana", tokenAddress: "mint-A", pairAddress: "pool-A", symbol: "A", signal: "BUY",
-  pairCreatedAt: start - 5 * 60_000, priceUsd: 1, liquidityUsd: 25_000,
+  pairCreatedAt: start - 15 * 60_000, priceUsd: 1, liquidityUsd: 25_000,
   volume24h: 30_000, volume5m: 2_000, priceChange5m: 2, buys5m: 8, sells5m: 4,
   reasons: []
 };
@@ -40,8 +40,10 @@ test("requires three observations over time and resets after liquidity falls", (
   assert.equal(guard.observe({ ...candidate, liquidityUsd: 20_000 }).ready, false);
 });
 
-test("a new pool can qualify without a two-minute age floor after stability checks", async () => {
-  const young = { ...candidate, pairCreatedAt: start - 30_000 };
+test("a pool must be at least 10 minutes old before stability checks can admit it", async () => {
+  const tooYoung = { ...candidate, pairCreatedAt: start - 9 * 60_000 };
+  assert.ok(getMomentumFailureReasons(tooYoung, start).includes("age"));
+  const young = { ...candidate, pairCreatedAt: start - 10 * 60_000 };
   const { guard, advance, portfolio } = rig({ freshPair: { ...pair, pairCreatedAt: young.pairCreatedAt } });
   assert.deepEqual(getMomentumFailureReasons(young, start), []);
   guard.observe(young);
@@ -100,6 +102,12 @@ test("fresh exact-pool quote and pool-specific reserve are required immediately 
 });
 
 test("rejects an unrelated RugCheck market, low reserve, and concentrated ownership", () => {
+  const lock30 = { ...report, markets: [{ pubkey: "pool-A", lp: { baseUSD: 12_500, quoteUSD: 12_500,
+    lpLockedPct: 30, lpLockedUSD: 7_500 } }] };
+  const lock29 = { ...lock30, markets: [{ ...lock30.markets[0], lp: { ...lock30.markets[0].lp,
+    lpLockedPct: 29, lpLockedUSD: 7_250 } }] };
+  assert.equal(evaluatePoolReport(lock30, candidate, 25_000), null);
+  assert.match(evaluatePoolReport(lock29, candidate, 25_000), /lock/);
   assert.match(evaluatePoolReport({ ...report, markets: [{ ...report.markets[0], pubkey: "pool-B" }] }, candidate, 25_000), /exact pool/);
   assert.match(evaluatePoolReport({ ...report, markets: [{ pubkey: "pool-A", lp: { baseUSD: 0.25, quoteUSD: 0.25, lpLockedPct: 100, lpLockedUSD: 0.5 } }] }, candidate, 25_000), /reserve/);
   assert.match(evaluatePoolReport({ ...report, risks: [{ name: "Single holder ownership" }] }, candidate, 25_000), /ownership/);
