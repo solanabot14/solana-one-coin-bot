@@ -9,16 +9,7 @@ const { getLockStatus } = require("./lpLockChecker");
 
 const POSITION_MONITOR_MS = 2000;
 const SCANNER_INTERVAL_MS = 120000;
-const REENTRY_MIN_VOLUME_5M = 3000;
-const REENTRY_MIN_VOLUME_ACCELERATION = 1.25;
-const REENTRY_MIN_MOMENTUM_5M = 0.25;
-const REENTRY_MAX_MOMENTUM_5M = 4;
-const REENTRY_MIN_TRANSACTIONS_5M = 20;
-const REENTRY_MIN_BUY_RATIO = 0.52;
-const REENTRY_MAX_BUY_RATIO = 0.80;
-const REENTRY_MIN_LP_LOCK_PERCENT = 85;
 const ENTRY_MIN_LP_LOCK_PERCENT = 60;
-const REENTRY_MAX_LIQUIDITY_DRAWDOWN = 0.12;
 const HARD_STOP_PERCENT = -10;
 const TAKE_PROFIT_1_PERCENT = 15;
 const TAKE_PROFIT_1_SELL_PERCENT = 40;
@@ -33,34 +24,6 @@ const MOMENTUM_EXIT_BUY_RATIO = 0.45;
 const MOMENTUM_EXIT_MIN_TRANSACTIONS = 10;
 const MAX_OPEN_POSITIONS = 2;
 
-function defaultReentryStateFile() {
-  if (process.env.RAILWAY_ENVIRONMENT_ID && !process.env.RAILWAY_VOLUME_MOUNT_PATH) {
-    throw new Error("Attach a Railway volume before starting the V3.1 reentry guard.");
-  }
-  const directory = process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DATA_DIR || __dirname;
-  return path.join(path.resolve(directory), "pubxV31ReentryState.json");
-}
-
-function loadReentryGuards(file, io = fs) {
-  if (!io.existsSync(file)) return new Map();
-  const parsed = JSON.parse(io.readFileSync(file, "utf8"));
-  if (!parsed || parsed.schemaVersion !== 1 || !parsed.guards || typeof parsed.guards !== "object" || Array.isArray(parsed.guards)) {
-    throw new Error("Invalid V3.1 reentry state. Restore a verified backup; the state has not been reset.");
-  }
-  return new Map(Object.entries(parsed.guards));
-}
-
-function persistReentryGuards(guards, file, io = fs) {
-  io.mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = file + "." + process.pid + "." + Date.now() + ".tmp";
-  try {
-    io.writeFileSync(temporary, JSON.stringify({ schemaVersion: 1, guards: Object.fromEntries(guards) }, null, 2), { flag: "wx", flush: true });
-    io.renameSync(temporary, file);
-  } finally {
-    if (io.existsSync(temporary)) io.unlinkSync(temporary);
-  }
-}
-
 function createBot({
   trader = paperTrader,
   getTokenData = market.getTokenData,
@@ -71,8 +34,7 @@ function createBot({
   onLiquidityLockCheck = () => {},
   positionMonitorMs = POSITION_MONITOR_MS,
   scannerIntervalMs = SCANNER_INTERVAL_MS,
-  botLabel = "V3.1 Original - 2 Slots",
-  reentryStateFile = defaultReentryStateFile()
+  botLabel = "V3.1 Original - 2 Slots"
 } = {}) {
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
   const tokenLossGuard = createTokenLossGuard({
@@ -85,7 +47,6 @@ function createBot({
   let scannerBusy = false;
   let monitorBusy = false;
   let lastError = null;
-  const tokenCooldowns = loadReentryGuards(reentryStateFile);
   const isActive = session => activeSession === session && !session.signal.aborted;
   const getPositions = () => {
     const portfolio = getPortfolio();
@@ -93,33 +54,6 @@ function createBot({
       ? portfolio.positions
       : (portfolio.position ? [portfolio.position] : []);
   };
-
-  function syncClosedTokenGuards() {
-    const portfolio = getPortfolio();
-    const openTokens = new Set(getPositions().map(position => position.tokenAddress));
-    const latestTradeByToken = new Map();
-    for (const trade of Array.isArray(portfolio.history) ? portfolio.history : []) {
-      if (trade?.tokenAddress) latestTradeByToken.set(trade.tokenAddress, trade);
-    }
-    let changed = false;
-    for (const [tokenAddress, trade] of latestTradeByToken) {
-      if (trade.type !== "SELL" || Number(trade.percentSold) !== 100 || openTokens.has(tokenAddress)) continue;
-      const exitTime = trade.exitTime || trade.timestamp || trade.createdAt;
-      if (!exitTime) continue;
-      const current = tokenCooldowns.get(tokenAddress);
-      if (current?.exitTime === exitTime) continue;
-      tokenCooldowns.set(tokenAddress, {
-        exitTime,
-        observations: 0,
-        previousVolume5m: null,
-        peakLiquidityUsd: 0,
-        released: false
-      });
-      console.log(`REENTRY LOCKED | ${trade.symbol || tokenAddress} | awaiting renewed activity after full exit`);
-      changed = true;
-    }
-    if (changed) persistReentryGuards(tokenCooldowns, reentryStateFile);
-  }
 
   const momentumEntryObservations = new Map();
 
@@ -150,45 +84,6 @@ function createBot({
     return false;
   }
 
-  function observeReentry(coin, lock) {
-    const guard = tokenCooldowns.get(coin.tokenAddress);
-    if (!guard || guard.released) return true;
-    const volume5m = Number(coin.volume5m) || 0;
-    const momentum5m = Number(coin.priceChange5m) || 0;
-    const buys5m = Number(coin.buys5m) || 0;
-    const sells5m = Number(coin.sells5m) || 0;
-    const transactions5m = buys5m + sells5m;
-    const buyRatio = transactions5m ? buys5m / transactions5m : 0;
-    const liquidityUsd = Number(coin.liquidityUsd) || 0;
-    const peakLiquidityUsd = Math.max(Number(guard.peakLiquidityUsd) || 0, liquidityUsd);
-    const liquidityHealthy = liquidityUsd > 0 && liquidityUsd >= peakLiquidityUsd * (1 - REENTRY_MAX_LIQUIDITY_DRAWDOWN);
-		const lpHealthy = Boolean(lock?.allowed) && (lock?.canonicalPumpSwapMigration === true || Number(lock.lockedPercent) >= REENTRY_MIN_LP_LOCK_PERCENT);
-    const active = lpHealthy && volume5m >= REENTRY_MIN_VOLUME_5M &&
-      momentum5m >= REENTRY_MIN_MOMENTUM_5M && momentum5m < REENTRY_MAX_MOMENTUM_5M &&
-      transactions5m >= REENTRY_MIN_TRANSACTIONS_5M &&
-      buyRatio >= REENTRY_MIN_BUY_RATIO && buyRatio <= REENTRY_MAX_BUY_RATIO && liquidityHealthy;
-    if (!active) {
-      tokenCooldowns.set(coin.tokenAddress, { ...guard, observations: 0, previousVolume5m: null, peakLiquidityUsd });
-      persistReentryGuards(tokenCooldowns, reentryStateFile);
-      console.log(`REENTRY GATE | ${coin.symbol} | locked | renewed activity criteria not met`);
-      return false;
-    }
-
-    const accelerated = guard.observations >= 1 && Number(guard.previousVolume5m) > 0 &&
-      volume5m >= Number(guard.previousVolume5m) * REENTRY_MIN_VOLUME_ACCELERATION;
-    if (accelerated) {
-      tokenCooldowns.set(coin.tokenAddress, { ...guard, observations: 2, previousVolume5m: volume5m, peakLiquidityUsd, released: true });
-      persistReentryGuards(tokenCooldowns, reentryStateFile);
-      console.log(`REENTRY GATE | ${coin.symbol} | released after two activity checks and 25% volume acceleration`);
-      return true;
-    }
-
-    tokenCooldowns.set(coin.tokenAddress, { ...guard, observations: 1, previousVolume5m: volume5m, peakLiquidityUsd, released: false });
-    persistReentryGuards(tokenCooldowns, reentryStateFile);
-    console.log(`REENTRY GATE | ${coin.symbol} | 1 of 2 activity checks; waiting for >=25% 5m volume acceleration`);
-    return false;
-  }
-
   async function runScanner(session) {
     console.log("\nStarting automatic Solana scan...\n");
     if (getPositions().length >= MAX_OPEN_POSITIONS) {
@@ -198,7 +93,6 @@ function createBot({
 
     const candidates = await discoverCandidates({ signal: session.signal });
     if (!isActive(session) || getPositions().length >= MAX_OPEN_POSITIONS) return;
-    syncClosedTokenGuards();
     if (!candidates.length) {
       console.log("No candidates passed the filters.");
       return;
@@ -242,8 +136,6 @@ function createBot({
       if (confirmedLock && (coin.signal === "BUY" || coin.signal === "STRONG BUY")) {
         momentumEntryObservations.delete(coin.tokenAddress);
       }
-      const guard = tokenCooldowns.get(coin.tokenAddress);
-      if (guard && !guard.released && !observeReentry(coin, lock)) continue;
       if (coin.signal === "WAIT") {
         coin.signal = "CONFIRMED MOMENTUM PAPER BUY";
         coin.reasons = [
@@ -279,7 +171,6 @@ function createBot({
       const trade = buy(coin);
       if (trade.success) {
         openTokens.add(coin.tokenAddress);
-        if (tokenCooldowns.delete(coin.tokenAddress)) persistReentryGuards(tokenCooldowns, reentryStateFile);
         void notifier.notifyTrade("BUY", trade.trade);
       }
       console.log("\nPAPER TRADE:", trade);
@@ -330,7 +221,6 @@ function createBot({
         console.log(`EXIT | ${position.symbol} | ${reason}`);
         const result = sell(currentPrice, percent, { expectedPosition, reason });
         if (result.success) {
-          if (percent === 100) syncClosedTokenGuards();
           void notifier.notifyTrade(reason, result.trade);
         }
         return result;
