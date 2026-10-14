@@ -36,6 +36,7 @@ function createBot({
   scannerIntervalMs = SCANNER_INTERVAL_MS,
   botLabel = "V3.1 Original - 2 Slots"
 } = {}) {
+  const stagedTp40Exit = botLabel === "PUBX-V31-ENTRY-TP40-PROFIT-LOCK-V1";
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
   const tokenLossGuard = createTokenLossGuard({
     getHistory: () => getPortfolio().history,
@@ -235,7 +236,7 @@ function createBot({
       const profitLockActive = highestProfitPercent >= PROFIT_LOCK_TRIGGER_PERCENT;
       const profitLockFloorPrice = Math.max(
         entryPrice * (1 + PROFIT_LOCK_FLOOR_PERCENT / 100),
-        Number(position.highestPrice) * (1 - TRAILING_STOP_PERCENT / 100)
+        Number(position.highestPrice) * (1 - (stagedTp40Exit && position.secondTakeProfitDone ? 10 : TRAILING_STOP_PERCENT) / 100)
       );
       if (profitLockActive && currentPrice <= profitLockFloorPrice) {
         console.log(`PROFIT LOCK FLOOR | ${position.symbol} | protected price: ${profitLockFloorPrice.toPrecision(8)}`);
@@ -261,6 +262,18 @@ function createBot({
           reason: "TAKE PROFIT 1"
         });
         if (result.success) void notifier.notifyTrade("TAKE PROFIT 1", result.trade);
+        continue;
+      }
+
+      if (stagedTp40Exit && position.firstTakeProfitDone &&
+          !position.secondTakeProfitDone && profitPercent >= 30) {
+        // TP1 leaves 60%; selling two thirds of that sells 40% of the original.
+        const result = sell(currentPrice, 100 * 40 / 60, {
+          expectedPosition,
+          takeProfit: "secondTakeProfitDone",
+          reason: "TAKE PROFIT 2"
+        });
+        if (result.success) void notifier.notifyTrade("TAKE PROFIT 2", result.trade);
         continue;
       }
 
