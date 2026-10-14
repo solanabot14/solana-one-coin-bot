@@ -13,15 +13,15 @@ The ledger is distinct from Alpaca's default simulated brokerage balance.
 
 ## Entry rules
 
-- Scan a fixed 30-symbol universe of actively traded stocks and unleveraged ETFs.
+- Scan a fixed 60-symbol universe of actively traded stocks and unleveraged ETFs.
   This is a watchlist scanner, not a whole-market or news scanner.
 - Use at least three completed consecutive 5-minute bars from today's regular
   session. The first possible signal is approximately 15 minutes after opening.
-- Require a fresh bid/ask with spread <= 0.15%; completed bars at most two minutes
-  behind their expected closing timestamp. Never use an incomplete candle.
+- Require a fresh bid/ask with spread <= 0.25%; completed bars remain current for five minutes plus
+  two minutes of publication/cache allowance after their closing timestamp. Never use an incomplete candle.
 - Require +0.3% to +8% from session opening price, above session VWAP and at most
   3% above VWAP; bullish signal candle with <= 2% gain.
-- Require signal bar volume >= 1.2x the preceding up to five bars' average and >= $100k
+- Require signal bar volume >= 1.2x the preceding up to five bars' average and >= $25k
   traded value on IEX. Volume is from this exchange, not total US volume.
 - BREAKOUT: signal close exceeds the previous up to five bars' highs.
 - PULLBACK RECOVERY: previous bar closes below its predecessor, dip is 0.2–2%
@@ -75,7 +75,7 @@ This strategy is for forward testing; no profitable backtest is claimed.
 
 ## Premarket research
 
-From 4am to 9:30am New York time on actual trading days, analyze all 30 symbols
+From 4am to 9:30am New York time on actual trading days, analyze all 60 symbols
 once per minute using consolidated SIP historical 5-minute bars. End requests
 16 minutes behind current time to respect the free plan's recent-data restriction.
 Only completed bars before that cutoff are included; actual data age is displayed.
@@ -99,3 +99,8 @@ group both sales into one position; partial sales still appear in transactions a
 realized P&L. Compounding, remaining cost basis and winner cooldown persist across
 restarts. Tests also cover partial-sale accounting, total-position win/loss, size
 cap/reset, six-entry cap and three-bar opening signals.
+
+The expanded watchlist includes Ford (F), GM, airlines, cruise operators, banks,
+energy stocks and sector ETFs. The live overview exposes every scan, qualified
+setups, entries and per-symbol skip reasons. A setup that passes market checks
+may still be skipped for cash, open slots, cooldown or the daily entry cap.

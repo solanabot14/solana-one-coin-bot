@@ -1,6 +1,48 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {createStockBot,assess,sessionOpen}=require('../stockBot');
 const MINUTE=60000,initialTime=Date.parse('2026-10-14T14:00:00Z');
+test('60 stock watchlist includes Ford and is unique',()=>{
+  const {SYMBOLS}=require('../stockBot');
+  assert.equal(SYMBOLS.length,60);assert.equal(new Set(SYMBOLS).size,60);
+  assert.ok(SYMBOLS.includes('F'));assert.ok(SYMBOLS.includes('GM'));
+});
+test('completed candles remain current between boundaries; stale quotes and missing candles still block',()=>{
+  const f=fixture();try{
+    const bars=f.bars();
+    for(const offset of [0,2,3,4.9,6.9]){
+      const time=initialTime+offset*MINUTE,snapshot={latestQuote:{bp:100.51,ap:100.52,t:new Date(time).toISOString()}};
+      assert.equal(assess(snapshot,bars,time).accepted,true,'offset '+offset);
+    }
+    const time=initialTime+7.1*MINUTE;
+    assert.match(assess({latestQuote:{bp:100.51,ap:100.52,t:new Date(time).toISOString()}},bars,time).reason,/Stale/);
+    assert.match(assess(f.snapshots().SPY,bars,initialTime+3*MINUTE).reason,/Fresh bid/);
+    assert.match(assess(f.snapshots().SPY,bars.filter((_,i)=>i!==3),initialTime).reason,/missing/);
+  }finally{f.cleanup();}
+});
+test('spread and IEX value thresholds admit moderate cost setups and reject wider or thin ones',()=>{
+  const f=fixture();try{
+    const bars=f.bars(),s=f.snapshots().SPY;
+    s.latestQuote.ap=s.latestQuote.bp*1.002;
+    bars.forEach((b,i)=>b.v=i===5?500:250);
+    assert.equal(assess(s,bars,initialTime).accepted,true);
+    s.latestQuote.ap=s.latestQuote.bp*1.0026;
+    assert.match(assess(s,bars,initialTime).reason,/Spread/);
+    s.latestQuote.ap=s.latestQuote.bp+0.01;
+    bars.forEach((b,i)=>b.v=i===5?200:100);
+    assert.match(assess(s,bars,initialTime).reason,/25k/);
+  }finally{f.cleanup();}
+});
+test('scan diagnostics include all stock symbols and disclose qualified account-limit skips',async()=>{
+  const f=fixture();try{
+    f.bot.start();await f.settle();
+    let d=f.bot.getDashboardData().scanDiagnostics;
+    assert.equal(d.scanned,60);assert.equal(d.qualified,3);assert.equal(d.entered,3);assert.ok(d.watchlist.includes('F'));
+    f.setTime(initialTime+MINUTE);await f.bot.tick();
+    d=f.bot.getDashboardData().scanDiagnostics;
+    assert.equal(d.qualified,3);assert.equal(d.entered,0);
+    assert.equal(d.skippedByReason['Setup qualified; position, cash, cooldown or daily entry limit'],3);
+  }finally{f.cleanup();}
+});
 function fixture(){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'stock-bot-')),file=path.join(dir,'state.json');
   let time=initialTime,bid=100.51,open=true,close='2026-10-14T16:00:00-04:00',stale=false,calls=[];
