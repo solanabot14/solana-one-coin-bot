@@ -15,6 +15,7 @@ const walletCopy = require("./walletCopy");
 const geminiBot = require("./geminiBot");
 const geminiTrader = require("./geminiTrader");
 const { buildGeminiAnalytics } = require("./geminiAnalytics");
+const outcomeBot = require("./outcomeBot");
 
 function getConfig(env = process.env) {
   const railway = !!env.RAILWAY_ENVIRONMENT_ID;
@@ -210,6 +211,8 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         }
         const walletResult = await walletCopy.closeAllPositions();
         results.push(...walletResult.results.map(result => ({ ...result, bot: "Decu Wallet Follow" })));
+        const outcomeResult = await outcomeBot.closeAll();
+        results.push(...outcomeResult.results.map(result => ({ ...result, bot: "Outcome Bot" })));
         const swarmResult = await swarm.closeAllPositions();
         results.push(...swarmResult.results.map(result => ({ ...result, bot: "Swarm" })));
         try {
@@ -248,6 +251,13 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       if (config.localOnly) {
         const hostname = new URL("http://" + req.headers.host).hostname;
         if (!["127.0.0.1", "localhost", "[::1]"].includes(hostname)) return json(res, { error: "Invalid host" }, 403);
+      }
+      if (route === "/api/outcome/start" || route === "/api/outcome/stop") {
+        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
+        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        if (route.endsWith("/start")) outcomeBot.start(); else outcomeBot.stop();
+        return json(res, outcomeBot.getStatus());
       }
       if (route === "/api/gemini/start" || route === "/api/gemini/stop") {
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
@@ -305,6 +315,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       }
       if (req.method !== "GET") return json(res, { error: "Method not allowed" }, 405);
       if (route === "/api/status") return json(res, { running: controls.getBotStatus(), error: controls.getLastError() });
+      if (route === "/api/outcome/status") return json(res, outcomeBot.getStatus());
       if (route === "/api/lock85/status") return json(res, { running: buyPriorityLock85.getBotStatus(), error: buyPriorityLock85.getLastError(), mode: "paper", lockThresholdPercent: 60 });
       if (route === "/api/lock85/data") return json(res, { label: "V3.1 BUY Priority Test - 60% LP Lock", mode: "paper", lockThresholdPercent: 60, account: buyPriorityLock85.buildDashboardAccount() });
       if (route === "/api/swarm") return json(res, { running: swarm.getStatus(), error: swarm.getLastError(), ...swarm.getDashboardState() });
@@ -394,7 +405,9 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           walletCopy: walletCopyData,
           walletCopyStatus: walletCopy.getStatus(),
           gemini: geminiData,
-          geminiStatus: { running: geminiBot.getStatus(), error: geminiBot.getLastError() }
+          geminiStatus: { running: geminiBot.getStatus(), error: geminiBot.getLastError() },
+          outcomeBot: outcomeBot.getDashboardData(),
+          outcomeBotStatus: outcomeBot.getStatus()
         });
       }
       if (route === "/trading/launch-sniper") { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); return res.end(fs.readFileSync(path.join(__dirname, "launchSniperPanel.html"), "utf8")); }
@@ -428,6 +441,7 @@ if (require.main === module) {
   server.listen(config.port, config.host, () => {
     walletCopy.startBot();
     geminiBot.start();
+    outcomeBot.start();
     console.log("Dashboard listening on " + config.host + ":" + config.port);
   });
   const shutdown = () => {
@@ -438,6 +452,7 @@ if (require.main === module) {
     profitSniper.stopBot();
     walletCopy.stopBot();
     geminiBot.stop();
+    outcomeBot.stop();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 12000).unref();
   };
