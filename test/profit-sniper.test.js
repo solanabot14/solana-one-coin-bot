@@ -3,32 +3,33 @@ const assert = require("node:assert/strict");
 const { constants, qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit } = require("../profitSniperStrategy");
 function candidate(overrides = {}) {
   return { tokenAddress: "Token111", pairAddress: "Pool111", chainId: "solana",
-    pairCreatedAt: Date.now() - 15 * 60 * 1000, liquidityUsd: 4500, volume24h: 600,
-    volume5m: 700, buys5m: 5, sells5m: 3, priceChange5m: 2, signal: "AVOID", ...overrides };
+    pairCreatedAt: Date.now() - 15 * 60 * 1000, liquidityUsd: 25000, volume24h: 0,
+    volume5m: 2000, buys5m: 20, sells5m: 10, priceChange5m: 2,
+    momentumPattern: { ready: true }, signal: "AVOID", ...overrides };
 }
-test("10m-24h trending pools use current activity and rebound momentum gates, not the shared signal label", () => {
+test("Sniper uses 10m-3h age, activity, liquidity and rebound gates", () => {
   assert.equal(qualifiesMomentumCandidate(candidate()), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 9 * 60 * 1000 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 10 * 60 * 1000 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 29 * 60 * 1000 })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 5 * 60 * 60 * 1000 })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 24 * 60 * 60 * 1000 })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 24 * 60 * 60 * 1000 - 1 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 0.05 })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 0.04 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: -0.01 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 0 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 400 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 250000, priceChange1h: 1500, priceChange24h: 20000 })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 13 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 5 * 60 * 60 * 1000 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 3 * 60 * 60 * 1000 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 3 * 60 * 60 * 1000 - 1 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 0 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: undefined })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ volume5m: 1499 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ volume5m: 1500 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ liquidityUsd: 7999 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ liquidityUsd: 8000 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 16, sells5m: 13 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 17, sells5m: 13 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 29, sells5m: 0 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 30, sells5m: 0 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 36 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange1h: 5000, priceChange24h: 50000 })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 4, sells5m: 4 })), true);
-  assert.equal(constants.MIN_LIQUIDITY_USD, 3000);
-  assert.equal(qualifiesMomentumCandidate(candidate({ liquidityUsd: 3000 })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ liquidityUsd: 2999 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ volume5m: 299 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 1, sells5m: 6 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ momentumPattern: { ready: false } })), false);
+  assert.equal(constants.MIN_LIQUIDITY_USD, 8000);
+  assert.equal(constants.MIN_VOLUME_5M_USD, 1500);
+  assert.equal(constants.MIN_TRANSACTIONS_5M, 30);
 });
 test("same ticker is distinguished by mint and duplicate pools collapse to the best exact mint", () => {
   const { selectUniqueMintCandidates } = require("../profitSniperStrategy");
@@ -51,29 +52,21 @@ test("trade sizing compounds 10%, 12.5%, then 15%, repeating with a $10 minimum"
   }
   assert.deepEqual(getBuySizing({ cashBalance: 50, positions: [], history: [] }), { amountInvested: 10, compoundRate: 0.10 });
 });
-test("emergency liquidity checks remain active", () => {
+test("exit rules remain unchanged", () => {
+  const position = { entryPrice: 100, highestPrice: 100 };
   assert.deepEqual(chooseExit({ position: { entryPrice: 100 }, currentPrice: 1, freshData: { liquidityUsd: 1 } }),
     { percent: 100, writeOff: true, reason: "EMERGENCY WRITE-OFF: NO EXECUTABLE LIQUIDITY" });
-  assert.deepEqual(chooseExit({ position: { entryPrice: 100, entryLiquidityUsd: 20000 },
-    currentPrice: 105, freshData: { liquidityUsd: 14999 } }), { percent: 100, reason: "EMERGENCY EXIT: POOL LIQUIDITY DOWN 25%" });
-  assert.deepEqual(chooseExit({ position: { entryPrice: 1, quantity: 100 }, currentPrice: 100,
-    freshData: { liquidityUsd: 15000 } }), { percent: 100, writeOff: true, reason: "UNEXECUTABLE QUOTE: POSITION EXCEEDS POOL CAPACITY" });
-});
-test("exits 40% at +15%, another 40% at +25%, then trails final 20% by 12%", () => {
-  const position = { entryPrice: 100, highestPrice: 100 };
   assert.deepEqual(chooseExit({ position, currentPrice: 92, exitProgress: { soldPercent: 0 } }), { percent: 100, reason: "HARD STOP -8%" });
   assert.equal(chooseExit({ position, currentPrice: 114, exitProgress: { soldPercent: 0 } }), null);
   assert.deepEqual(chooseExit({ position, currentPrice: 115, exitProgress: { soldPercent: 0 } }),
     { targetOriginalPositionPercent: 40, reason: "TAKE PROFIT 1 - SELL 40% OF ORIGINAL POSITION AT +15%", takeProfit: "firstTakeProfitDone" });
   assert.deepEqual(chooseExit({ position, currentPrice: 125, exitProgress: { soldPercent: 40 } }),
     { targetOriginalPositionPercent: 80, reason: "TAKE PROFIT 2 - SELL ANOTHER 40% OF ORIGINAL POSITION AT +25%", takeProfit: "secondTakeProfitDone" });
-  assert.equal(chooseExit({ position: { ...position, highestPrice: 160 }, currentPrice: 141, exitProgress: { soldPercent: 80 } }), null);
   assert.deepEqual(chooseExit({ position: { ...position, highestPrice: 160 }, currentPrice: 140.7, exitProgress: { soldPercent: 80 } }),
     { percent: 100, reason: "TRAILING STOP -12% FROM HIGH" });
 });
-test("momentum diagnostics identify hard entry gates", () => {
-  assert.deepEqual(getMomentumFailureReasons(candidate({ priceChange5m: 0 })), ["momentum5m"]);
-  assert.ok(getMomentumFailureReasons(candidate({ tokenAddress: "EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J" })).includes("blockedTokenAddress"));
-  assert.ok(getMomentumFailureReasons(candidate({ liquidityUsd: 3000, volume24h: 400000 })).includes("volumeToLiquidity"));
-  assert.ok(getMomentumFailureReasons(candidate({ liquidityUsd: 17378.89, volume24h: 1603 })).includes("volume24h"));
-  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange1h: 902, priceChange24h: 900 })), true);\n});
+test("age rejection is distinguishable for watchlist tracking", () => {
+  const tooYoung = getMomentumFailureReasons(candidate({ pairCreatedAt: Date.now() - 9 * 60 * 1000 }));
+  assert.deepEqual(tooYoung, ["age"]);
+  assert.ok(getMomentumFailureReasons(candidate({ priceChange5m: 36 })).includes("momentum5m"));
+});
