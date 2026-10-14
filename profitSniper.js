@@ -78,7 +78,7 @@ async function discoverCandidates(options = {}) {
   lastScanDiagnostics = {
     state: "scan_complete",
     updatedAt: new Date(now).toISOString(),
-    source: "GeckoTerminal new, trending and top pools (0-72h) + exact DexScreener pairs + RugCheck",
+    source: "GeckoTerminal new, trending and top pools (0-6h) + exact DexScreener pairs + RugCheck",
     poolsReceived: scanState?.poolsReceived ?? null,
     recentPools: candidates.length,
     activityQualified: candidates.filter(coin => launchSniper.qualifiesLaunchCandidate(coin, now, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MAX_PAIR_AGE_MINUTES * 60 * 1000)).length,
