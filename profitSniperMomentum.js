@@ -1,12 +1,44 @@
 const CONFIG = require("./profitSniperConfig");
 
-// Uses only the existing 30-second DexScreener snapshots. Buy/sell flow is an
-// approximation derived from rolling 5-minute counters; no candle/API calls are added.
+// Historical candles establish pump/pullback context. Live 30-second
+// DexScreener snapshots still provide the required rebound and buy-flow confirmation.
 function createMomentumTracker() {
   const pools = new Map();
 
+  function keyFor(coin) {
+    return String(coin?.tokenAddress || "") + ":" + String(coin?.pairAddress || "");
+  }
+
+  function hydrate(coin, candles, now = Date.now()) {
+    const key = keyFor(coin);
+    if (!key || key === ":" || pools.has(key) || !Array.isArray(candles) || candles.length < 2) return false;
+    const ordered = candles.filter(candle => Number(candle?.open) > 0 && Number(candle?.high) > 0 &&
+      Number(candle?.low) > 0 && Number(candle?.close) > 0)
+      .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+    if (ordered.length < 2) return false;
+    const basePrice = Number(ordered[0].open);
+    let peakPrice = basePrice;
+    let peakIndex = 0;
+    ordered.forEach((candle, index) => {
+      if (Number(candle.high) > peakPrice) {
+        peakPrice = Number(candle.high);
+        peakIndex = index;
+      }
+    });
+    const afterPeak = ordered.slice(peakIndex);
+    const troughPrice = Math.min(...afterPeak.map(candle => Number(candle.low)));
+    const lastPrice = Number(ordered.at(-1).close);
+    pools.set(key, {
+      firstAt: Number(ordered[0].timestamp) * 1000,
+      basePrice, peakPrice, troughPrice, lastPrice, samples: [],
+      pumpSeen: peakPrice >= basePrice * (1 + CONFIG.MIN_PUMP_PERCENT / 100),
+      historicalHydrated: true, lastAt: now
+    });
+    return true;
+  }
+
   function observe(coin, now = Date.now()) {
-    const key = String(coin?.tokenAddress || "") + ":" + String(coin?.pairAddress || "");
+    const key = keyFor(coin);
     const price = Number(coin?.priceUsd);
     const change5m = Number(coin?.priceChange5m);
     const buys5m = Number(coin?.buys5m);
@@ -65,17 +97,17 @@ function createMomentumTracker() {
     state.lastAt = now;
     pools.set(key, state);
     for (const [poolKey, item] of pools) if (now - item.lastAt > CONFIG.WATCHLIST_MAX_AGE_MS) pools.delete(poolKey);
-    return { ready, reason, pumpSeen: state.pumpSeen,
+    return { ready, reason, pumpSeen: state.pumpSeen, historicalHydrated: !!state.historicalHydrated,
       pumpPercent: state.basePrice > 0 ? (state.peakPrice / state.basePrice - 1) * 100 : null,
       peakPrice: state.peakPrice, troughPrice: state.troughPrice, retracePercent, reboundFromLowPercent, recovering, flowBuys, flowSells,
       flowSpanMs, flowIsApproximation: true };
   }
 
   function remove(coin) {
-    pools.delete(String(coin?.tokenAddress || "") + ":" + String(coin?.pairAddress || ""));
+    pools.delete(keyFor(coin));
   }
 
-  return { observe, remove, size: () => pools.size };
+  return { observe, hydrate, has: coin => pools.has(keyFor(coin)), remove, size: () => pools.size };
 }
 
 module.exports = { createMomentumTracker };

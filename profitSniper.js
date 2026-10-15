@@ -76,9 +76,21 @@ async function discoverCandidates(options = {}) {
     minimumMaturePairAgeMs: MIN_PAIR_AGE_MS, maturePoolReserve: CONFIG.MATURE_POOL_RESERVE });
   const now = Date.now();
   const currentKeys = new Set();
-  const candidates = scanned.map(raw => {
+  const candidates = [];
+  for (const raw of scanned) {
     const key = String(raw.tokenAddress || "") + ":" + String(raw.pairAddress || "");
     currentKeys.add(key);
+    const basicFailures = getMomentumFailureReasons({ ...raw, momentumPattern: { ready: true } }, now);
+    if (!basicFailures.length && !momentumTracker.has(raw)) {
+      try {
+        const ageMinutes = Math.max(1, Math.ceil((now - Number(raw.pairCreatedAt)) / 60_000) + 2);
+        const candles = await require("./geckoTerminal").getPoolCandles(raw.pairAddress,
+          raw.tokenAddress, { signal: options.signal, limit: Math.min(360, ageMinutes) });
+        momentumTracker.hydrate(raw, candles, now);
+      } catch (error) {
+        console.warn("PROFIT SNIPER HISTORICAL PATTERN UNAVAILABLE | " + raw.pairAddress + " | " + error.message);
+      }
+    }
     const momentumPattern = momentumTracker.observe(raw, now);
     const coin = { ...raw, momentumPattern };
     const failures = getMomentumFailureReasons(coin, now);
@@ -100,8 +112,8 @@ async function discoverCandidates(options = {}) {
       item.rechecks++;
       ageWatchlistRechecks++;
     }
-    return { key, coin, failures, ageMs, wasWatchlisted: wasOnWatchlist };
-  });
+    candidates.push({ key, coin, failures, ageMs, wasWatchlisted: wasOnWatchlist });
+  }
 
   const portfolio = trader.getPortfolio();
   const history = Array.isArray(portfolio?.history) ? portfolio.history : [];
@@ -165,6 +177,7 @@ async function discoverCandidates(options = {}) {
         recentBuys: pattern.flowBuys ?? null,
         recentSells: pattern.flowSells ?? null,
         flowIsApproximation: pattern.flowIsApproximation ?? true,
+        historicalHydrated: !!pattern.historicalHydrated,
         ready: !!pattern.ready,
         reason: pattern.reason || null
       },

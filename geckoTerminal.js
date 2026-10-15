@@ -5,7 +5,7 @@ const CANDLE_INTERVAL_SECONDS = 60;
 const CANDLE_CACHE_MS = 60 * 1000;
 const NEW_POOLS_CACHE_MS = 60 * 1000;
 // Keep a margin under the public API's approximate 10 requests/minute limit.
-const REQUEST_SPACING_MS = 7500;
+const REQUEST_SPACING_MS = 3000;
 const FAILURE_CACHE_MS = 30 * 1000;
 
 function wait(ms) {
@@ -99,16 +99,17 @@ function createGeckoTerminalClient({
 		return getPoolFeed("top", options);
 	}
 
-	async function getPoolCandles(poolAddress, tokenAddress, { signal } = {}) {
+	async function getPoolCandles(poolAddress, tokenAddress, { signal, limit = 60 } = {}) {
 		if (!poolAddress || !tokenAddress) return [];
-		const cacheKey = `${poolAddress}:${tokenAddress}`;
+		const normalizedLimit = Math.max(1, Math.min(1000, Math.floor(Number(limit) || 60)));
+		const cacheKey = `${poolAddress}:${tokenAddress}:${normalizedLimit}`;
 		const cached = cache.get(cacheKey);
 		if (cached && clock() - cached.at < cached.ttl) return structuredClone(cached.candles);
 
 		const request = queueRequest({ signal, execute: async () => {
 			const url = `${API_BASE}/networks/solana/pools/${encodeURIComponent(poolAddress)}/ohlcv/minute`;
 			const response = await httpGet(url, {
-				params: { aggregate: 1, limit: 60, currency: "usd", token: "base" },
+				params: { aggregate: 1, limit: normalizedLimit, currency: "usd", token: "base" },
 				headers: { Accept: "application/json;version=20230203" },
 				timeout: 10000,
 				signal
