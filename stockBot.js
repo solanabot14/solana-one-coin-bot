@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const SYMBOLS = ['SPY','QQQ','IWM','DIA','AAPL','MSFT','AMZN','GOOGL','META','NVDA','TSLA','AMD','AVGO','MU','INTC','PLTR','COIN','HOOD','UBER','NFLX','SHOP','SOFI','PYPL','CRM','ORCL','JPM','BAC','XOM','WMT','DIS','F','GM','RIVN','NIO','LCID','AAL','DAL','UAL','CCL','NCLH','RCL','SNAP','PINS','RBLX','DKNG','AFRM','XYZ','T','VZ','PFE','C','WFC','CVX','OXY','SLB','CAT','BA','GE','XLF','XLK'];
-const STRATEGY = 'Active intraday opportunity: premarket research from 4am ET (delayed data); dynamic movers/most-active/news discovery up to 180 symbols including baseline stocks/ETFs; daily ATRP 2-6%, same-time historical IEX relative volume >=2x, average SIP daily traded value >=$20m, spread <=0.15%; confirmed breakouts and pullback recoveries; 3 slots; sell 50% at +1.5%, trail remainder 0.75% with cost-adjusted break-even protection; -1.2% initial stop; 60 min max hold; close 10 min before bell. Start $10, grow size 10% after a net winning completed trade, cap $20, reset $10 after loss. Daily loss limit 2.5% of opening equity: liquidate and halt until next trading day; at most one reentry per stock, none after a stop. No entry in first 15 minutes. Local paper only; Alpaca/Benzinga recent news every 5 min, deduplicated and timestamped; news is context, never an automatic buy. Macro calendars, sector classification and primary-source verification are not yet connected.';
+const STRATEGY = 'Active intraday opportunity: premarket research from 4am ET (delayed data); dynamic movers/most-active/news discovery up to 180 symbols including baseline stocks/ETFs; daily ATRP 2-6%, same-time historical IEX relative volume >=2x, average SIP daily traded value >=$20m, spread <=0.15%; confirmed breakouts and pullback recoveries; 3 slots; sell 50% at +1.5%, trail remainder 0.75% with cost-adjusted break-even protection; -1.2% initial stop; 60 min max hold; close 10 min before bell. Start $10, grow size 10% after a net winning completed trade, cap $20, reset $10 after loss. Daily loss limit 2.5% of opening equity: liquidate and halt until next trading day; at most one reentry per stock, none after a stop. No entry in first 15 minutes. Local paper only; Alpaca/Benzinga recent news every 5 min, deduplicated and timestamped; news is context, never an automatic buy. BLS/BEA/Fed calendars; pause new entries 5 min before/10 min after high-impact releases and 13:45-15:00 ET on FOMC decision days; stale/incomplete calendars block entries. SEC identity, recent filings and SIC sector proxies; at most 2 positions per sector; SPY relative strength; SEC filing corroboration does not verify sentiment. Planned risk <=0.25% equity per trade before gaps. Sector/news research runs in background; exits remain active.';
 const SCAN_FILTERS = Object.freeze({minAtrPercent:2,maxAtrPercent:6,minTimeRelativeVolume:2,maxSpreadPercent:0.15,minAverageDailyDollarVolume:20000000,minVolumeSessions:5,volumeLookbackSessions:10});
 const SLIPPAGE = 0.0005, FEE = 0.0001;
 const RISK_RULES=Object.freeze({dailyLossPercent:2.5,maxEntriesPerSymbolPerDay:2,noReentryAfterStop:true,entryDelayMinutes:15});
@@ -143,8 +143,101 @@ function rankPremarket(barsBySymbol,reference,now,start,end,symbols=SYMBOLS) {
   }
   return rows.sort((a,b)=>b.score-a.score);
 }
+const RESEARCH_SOURCES=Object.freeze({BLS:'https://www.bls.gov/schedule/news_release/bls.ics',BEA:'https://www.bea.gov/news/schedule/ics/online-calendar-subscription.ics',FED:'https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm',SEC_TICKERS:'https://www.sec.gov/files/company_tickers.json'});
+const SECTOR_BENCHMARKS=Object.freeze({TECHNOLOGY:'XLK',HEALTHCARE:'XLV',FINANCIALS:'XLF',ENERGY:'XLE',MATERIALS:'XLB',INDUSTRIALS:'XLI',CONSUMER_DISCRETIONARY:'XLY',CONSUMER_STAPLES:'XLP',UTILITIES:'XLU',REAL_ESTATE:'XLRE',COMMUNICATION:'XLC',BROAD_MARKET:'SPY'});
+const BENCHMARK_SYMBOLS=[...new Set(Object.values(SECTOR_BENCHMARKS))];
+function easternTimestamp(day,hour,minute=0){
+  let value=Date.parse(day+'T'+String(hour).padStart(2,'0')+':'+String(minute).padStart(2,'0')+':00Z');
+  const target=value;
+  for(let i=0;i<3;i++){
+    const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date(value));
+    const p=Object.fromEntries(parts.map(p=>[p.type,p.value]));
+    const rendered=Date.parse(`${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}Z`);
+    value+=target-rendered;
+  }
+  return value;
+}
+function parseEconomicCalendar(text,source){
+  if(!text.includes('BEGIN:VCALENDAR'))throw Error(source+' invalid iCalendar response');
+  const unfolded=text.replace(/\r?\n[ \t]/g,''),events=[];
+  for(const match of unfolded.matchAll(/BEGIN:VEVENT([\s\S]*?)END:VEVENT/g)){
+    const block=match[1],start=/^DTSTART([^:\r\n]*):([^\r\n]+)/m.exec(block),summary=/^SUMMARY:([^\r\n]+)/m.exec(block);
+    if(!start||!summary)continue;
+    const dt=/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z?)$/.exec(start[2].trim());
+    if(!dt||(!dt[7]&&!/TZID=(US-Eastern|America\/New_York)/.test(start[1])))continue;
+    const day=`${dt[1]}-${dt[2]}-${dt[3]}`,t=dt[7]?Date.parse(`${day}T${dt[4]}:${dt[5]}:${dt[6]}Z`):easternTimestamp(day,Number(dt[4]),Number(dt[5]));
+    const title=summary[1].replace(/\\n/g,' ').replace(/\\([,;\\])/g,'$1');
+    const highImpact=/^(Consumer Price Index|Producer Price Index|Employment Situation|Job Openings and Labor Turnover|Employment Cost Index|Productivity and Costs)|Gross Domestic Product|\bGDP\b|Personal Income and Outlays/i.test(title)&&!/by (State|County)|Metropolitan/i.test(title);
+    if(Number.isFinite(t))events.push({title,time:new Date(t).toISOString(),source,url:RESEARCH_SOURCES[source],highImpact});
+  }
+  if(!events.length)throw Error(source+' calendar contained no supported events');
+  return events;
+}
+function parseFedCalendar(html){
+  const events=[],months=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const headers=[...html.matchAll(/(\d{4}) FOMC Meetings/g)];
+  for(let i=0;i<headers.length;i++){
+    const year=Number(headers[i][1]),section=html.slice(headers[i].index,headers[i+1]?.index??html.length);
+    const rx=/class="[^"]*fomc-meeting__month[^"]*"[^>]*>\s*<strong>([^<]+)<\/strong>[\s\S]*?class="[^"]*fomc-meeting__date[^"]*"[^>]*>([^<]+)/g;
+    for(const row of section.matchAll(rx)){
+      const month=months.indexOf(row[1].trim());if(month<0)continue;
+      const days=row[2].replace(/&ndash;|&#8211;|–/g,'-').match(/\d+/g);if(!days?.length)continue;
+      const day=`${year}-${String(month+1).padStart(2,'0')}-${String(Number(days.at(-1))).padStart(2,'0')}`;
+      events.push({title:'FOMC decision-day precaution window',time:new Date(easternTimestamp(day,14)).toISOString(),source:'FED',url:RESEARCH_SOURCES.FED,highImpact:true,windowBeforeMinutes:15,windowAfterMinutes:60,timeBasis:'Bot precaution centered on customary 14:00 ET decision time; calendar confirms meeting date, not exact release time'});
+    }
+  }
+  if(!events.length)throw Error('Federal Reserve meeting dates could not be parsed');
+  return events;
+}
+function macroEntryGate(calendar,at){
+  const required=['BLS','BEA','FED'];
+  if(!required.every(name=>calendar?.sources?.[name]?.lastSuccessAt&&at-Date.parse(calendar.sources[name].lastSuccessAt)<=24*60*MINUTE&&calendar.sources[name].coverageThrough>=dateKey(at)))return {allowed:false,reason:'Economic calendar incomplete or stale; exits remain active'};
+  const event=(calendar.events||[]).find(e=>e.highImpact&&at>=Date.parse(e.time)-(e.windowBeforeMinutes??5)*MINUTE&&at<=Date.parse(e.time)+(e.windowAfterMinutes??10)*MINUTE);
+  return event?{allowed:false,reason:'Economic-event entry pause: '+event.title,event}:{allowed:true};
+}
+function sectorFromSic(sic){
+  const n=Number(sic);if(!n)return 'UNKNOWN';
+  if(n>=6500&&n<6600||n===6798)return 'REAL_ESTATE';
+  if(n>=6000&&n<6500||n>=6600&&n<6800)return 'FINANCIALS';
+  if(n>=4900&&n<5000)return 'UTILITIES';
+  if(n>=4800&&n<4900||n>=7800&&n<7900)return 'COMMUNICATION';
+  if(n>=2830&&n<2840||n>=3840&&n<3860||n>=8000&&n<8100)return 'HEALTHCARE';
+  if(n>=3570&&n<3580||n>=3660&&n<3680||n>=7370&&n<7380)return 'TECHNOLOGY';
+  if(n>=1200&&n<1400||n>=2900&&n<3000)return 'ENERGY';
+  if(n>=1000&&n<1200||n>=1400&&n<1500||n>=2600&&n<2830||n>=2840&&n<2900||n>=3300&&n<3400)return 'MATERIALS';
+  if(n>=2000&&n<2200||n>=5400&&n<5500)return 'CONSUMER_STAPLES';
+  if(n>=2300&&n<2600||n>=3700&&n<3720||n>=5000&&n<6000||n>=7000&&n<7300||n>=7900&&n<8000)return 'CONSUMER_DISCRETIONARY';
+  if(n>=1500&&n<1800||n>=3000&&n<4800||n>=7300&&n<7800||n>=8700&&n<8800)return 'INDUSTRIALS';
+  return 'UNKNOWN';
+}
+function secProfile(data,symbol,at){
+  if(!(data.tickers||[]).some(t=>t.replace(/-/g,'.')===symbol.replace(/-/g,'.')))throw Error('SEC ticker identity mismatch');
+  const r=data.filings?.recent||{},filings=[];
+  for(let i=0;i<(r.accessionNumber||[]).length;i++){
+    const accepted=Date.parse(r.acceptanceDateTime?.[i]);
+    if(!Number.isFinite(accepted)||accepted>at||at-accepted>7*24*60*MINUTE)continue;
+    const accession=r.accessionNumber[i],document=r.primaryDocument?.[i];
+    if(!/^\d{10}-\d{2}-\d{6}$/.test(accession)||!document)continue;
+    filings.push({form:r.form[i],filedAt:r.filingDate[i],acceptedAt:new Date(accepted).toISOString(),items:r.items?.[i]||'',url:`https://www.sec.gov/Archives/edgar/data/${Number(data.cik)}/${accession.replace(/-/g,'')}/${document}`});
+  }
+  return {symbol,cik:String(data.cik),companyName:data.name,sic:data.sic,sicDescription:data.sicDescription,sector:sectorFromSic(data.sic),sectorBasis:'Approximate SIC-to-sector proxy; not GICS classification',checkedAt:new Date(at).toISOString(),status:'AVAILABLE',filings,bankruptcyFlag:filings.some(f=>f.form==='8-K'&&f.items.split(/,\s*/).includes('1.03')),offeringFlag:filings.some(f=>/^(S-1|S-3|F-1|F-3|424B)/.test(f.form))};
+}
+function corroborateNews(news,profile){
+  if(!profile||profile.status!=='AVAILABLE')return {...news,verification:'SEC_LOOKUP_PENDING',evidence:[]};
+  const title=news.headline||'',item=/earnings|financial results|quarterly results/i.test(title)?'2.02':/appoints|chief executive|new ceo|resign/i.test(title)?'5.02':null;
+  const published=Date.parse(news.publishedAt);
+  const evidence=item?profile.filings.filter(f=>f.form==='8-K'&&f.items.split(/,\s*/).includes(item)&&Math.abs(Date.parse(f.acceptedAt)-published)<=48*60*MINUTE):[];
+  return {...news,verification:evidence.length?'RELATED_EVENT_CORROBORATED_BY_SEC':'NO_MATCHING_SEC_EVENT',evidence,verificationScope:'Confirms related event filing only; headline accuracy, numbers, sentiment and expected price direction are not verified'};
+}
+function sessionStrength(bars,at,openAt){
+  const rows=(bars||[]).filter(b=>Date.parse(b.t)>=openAt&&Date.parse(b.t)+BAR_MS<=at&&valid(b.o)&&valid(b.c)&&valid(b.v)).sort((a,b)=>Date.parse(a.t)-Date.parse(b.t));
+  if(!rows.length||at-Date.parse(rows.at(-1).t)-BAR_MS>BAR_MS+2*MINUTE)return null;
+  const volume=rows.reduce((s,b)=>s+b.v,0),vwap=rows.reduce((s,b)=>s+(valid(b.vw)?b.vw:(b.h+b.l+b.c)/3)*b.v,0)/volume;
+  return {returnPercent:(rows.at(-1).c/rows[0].o-1)*100,aboveVwap:rows.at(-1).c>=vwap};
+}
+
 function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DATA_DIR || __dirname,'stock-paper-state.json'), env=process.env, io=fs, fetchImpl=globalThis.fetch, now=()=>Date.now(), timers=globalThis}={}) {
-  let symbols=[...SYMBOLS],lastDiscoveryAt=-Infinity,discoveryDate=null;
+  let symbols=[...new Set([...SYMBOLS,...BENCHMARK_SYMBOLS])],lastDiscoveryAt=-Infinity,discoveryDate=null;
   let state={schemaVersion:1,startingBalanceUsd:100,cashUsd:100,openPositions:[],history:[],running:false,lastScanAt:null,lastError:null,rejections:[],closedDates:{},peakEquityUsd:100,maxDrawdownPercent:0};
   if (io.existsSync(file)) state=JSON.parse(io.readFileSync(file,'utf8'));
   state.lastExitAt ||= {};
@@ -218,6 +311,77 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
     if (!r.ok) throw Error('Alpaca connection HTTP '+r.status);
     return r.json();
   }
+  let enrichmentBusy=false,lastEnrichmentAt=-Infinity,lastCalendarAttempt=-Infinity,tickerMap=null,tickerMapAt=-Infinity;
+  async function publicResearch(url,json=false){
+    const u=new URL(url);
+    if(u.protocol!=='https:'||!['www.bls.gov','www.bea.gov','www.federalreserve.gov','www.sec.gov','data.sec.gov'].includes(u.hostname))throw Error('Unexpected public research host');
+    const response=await fetchImpl(url,{method:'GET',signal:AbortSignal.timeout(10000),headers:{'User-Agent':env.SEC_USER_AGENT||'StockPaperResearch/1.0 (+https://github.com/solanabot14/solana-one-coin-bot)',Accept:json?'application/json':'text/calendar,text/html;q=0.9'}});
+    if(!response.ok)throw Error('Public research HTTP '+response.status+' ('+u.hostname+')');
+    return json?response.json():response.text();
+  }
+  async function enrichResearch(gen){
+    if(enrichmentBusy||now()-lastEnrichmentAt<30000)return;
+    enrichmentBusy=true;lastEnrichmentAt=now();
+    try{
+      if(now()-lastCalendarAttempt>=60*MINUTE){
+        lastCalendarAttempt=now();
+        const names=['BLS','BEA','FED'],outcomes=await Promise.allSettled(names.map(async name=>{
+          const text=await publicResearch(RESEARCH_SOURCES[name]),events=name==='FED'?parseFedCalendar(text):parseEconomicCalendar(text,name);
+          if(!events.some(e=>dateKey(Date.parse(e.time))>=dateKey(now())))throw Error(name+' has no current/future calendar coverage');
+          return events;
+        }));
+        if(gen!==generation||!state.running)return;
+        const copy=structuredClone(state),calendar=copy.economicCalendar||{events:[],sources:{}};
+        outcomes.forEach((r,i)=>{
+          const name=names[i];
+          if(r.status==='fulfilled'){
+            calendar.events=calendar.events.filter(e=>e.source!==name).concat(r.value.filter(e=>Date.parse(e.time)>=now()-24*60*MINUTE));
+            calendar.sources[name]={status:'AVAILABLE',lastSuccessAt:new Date(now()).toISOString(),coverageThrough:r.value.reduce((last,e)=>dateKey(Date.parse(e.time))>last?dateKey(Date.parse(e.time)):last,''),url:RESEARCH_SOURCES[name]};
+          }else calendar.sources[name]={...(calendar.sources[name]||{}),status:'UNAVAILABLE',lastAttemptAt:new Date(now()).toISOString(),error:r.reason.message,url:RESEARCH_SOURCES[name]};
+        });
+        calendar.events.sort((a,b)=>Date.parse(a.time)-Date.parse(b.time));calendar.checkedAt=new Date(now()).toISOString();calendar.timezone='America/New_York';copy.economicCalendar=calendar;commit(copy);
+        console.info('Stock economic calendars: '+JSON.stringify({sources:calendar.sources,eventCount:calendar.events.length,gate:macroEntryGate(calendar,now())}));
+      }
+      if(!tickerMap||now()-tickerMapAt>24*60*MINUTE){
+        const data=await publicResearch(RESEARCH_SOURCES.SEC_TICKERS,true);
+        const map={};for(const entry of Object.values(data))if(entry.ticker&&Number(entry.cik_str)>0)map[entry.ticker.replace(/-/g,'.')]=entry.cik_str;
+        if(!Object.keys(map).length)throw Error('SEC ticker map empty');
+        if(gen!==generation||!state.running)return;tickerMap=map;tickerMapAt=now();
+      }
+      // Sequential requests, at most six per batch. This job never blocks quote monitoring.
+      const priorities=[...new Set([...state.openPositions.map(p=>p.symbol),...(state.marketResearch?.symbols||symbols)])];
+      const profiles=state.secResearch?.profiles||{},pending=priorities.filter(symbol=>{
+        const p=profiles[symbol];return !p||now()-Date.parse(p.checkedAt)> (p.status==='UNAVAILABLE'?15*MINUTE:6*60*MINUTE);
+      }).slice(0,6);
+      for(const symbol of pending){
+        let profile;
+        const etfSector=Object.keys(SECTOR_BENCHMARKS).find(sector=>SECTOR_BENCHMARKS[sector]===symbol);
+        if(etfSector||['QQQ','IWM','DIA'].includes(symbol))profile={symbol,status:'BENCHMARK_ETF',sector:etfSector||'BROAD_MARKET',checkedAt:new Date(now()).toISOString(),filings:[],sectorBasis:'Explicit benchmark ETF mapping'};
+        else if(!tickerMap[symbol])profile={symbol,status:'NO_CIK_MAPPING',sector:'UNKNOWN',checkedAt:new Date(now()).toISOString(),filings:[]};
+        else{
+          try{const data=await publicResearch('https://data.sec.gov/submissions/CIK'+String(tickerMap[symbol]).padStart(10,'0')+'.json',true);profile=secProfile(data,symbol,now());}
+          catch(error){profile={symbol,status:'UNAVAILABLE',sector:'UNKNOWN',checkedAt:new Date(now()).toISOString(),error:error.message,filings:[]};}
+          await new Promise(resolve=>setTimeout(resolve,150));
+        }
+        if(gen!==generation||!state.running)return;
+        const copy=structuredClone(state);copy.secResearch||={profiles:{}};copy.secResearch.profiles||={};copy.secResearch.profiles[symbol]=profile;delete copy.secResearch.lastError;copy.secResearch.lastUpdatedAt=new Date(now()).toISOString();copy.secResearch.source=RESEARCH_SOURCES.SEC_TICKERS;commit(copy);
+      }
+      console.info('Stock SEC research: '+JSON.stringify({profiles:Object.keys(state.secResearch?.profiles||{}).length,latestBatch:pending.map(symbol=>({symbol,status:state.secResearch?.profiles?.[symbol]?.status,sector:state.secResearch?.profiles?.[symbol]?.sector}))}));
+    }catch(error){
+      if(gen===generation&&state.running){const copy=structuredClone(state);copy.secResearch||={profiles:{}};console.warn('Stock SEC research unavailable: '+error.message);copy.secResearch.lastError=error.message;copy.secResearch.lastAttemptAt=new Date(now()).toISOString();commit(copy);}
+    }finally{enrichmentBusy=false;}
+  }
+  function researchGate(symbol,at=now()){
+    const macro=macroEntryGate(state.economicCalendar,at);if(!macro.allowed)return macro;
+    const profile=state.secResearch?.profiles?.[symbol];
+    if(!profile||!['AVAILABLE','BENCHMARK_ETF'].includes(profile.status)||!Number.isFinite(Date.parse(profile.checkedAt))||Date.parse(profile.checkedAt)>at||at-Date.parse(profile.checkedAt)>24*60*MINUTE||profile.sector==='UNKNOWN')return {allowed:false,reason:'SEC identity / sector research pending or unavailable'};
+    if(profile.bankruptcyFlag)return {allowed:false,reason:'SEC bankruptcy event: new entries blocked'};
+    const sector=profile.sector;
+    const count=state.openPositions.filter(p=>(p.entryMetrics?.sector||state.secResearch?.profiles?.[p.symbol]?.sector||'UNKNOWN')===sector).length;
+    if(count>=2)return {allowed:false,reason:'Maximum two positions in the same SIC sector proxy'};
+    return {allowed:true,profile};
+  }
+
   async function discover(gen) {
     if(now()-lastDiscoveryAt<5*MINUTE)return;
     lastDiscoveryAt=now();
@@ -235,10 +399,11 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
     }).map(n=>({id:n.id,headline:n.headline,url:n.url,source:n.source,publishedAt:n.created_at,symbols:n.symbols||[],verification:'News feed only; primary-source verification pending'}));
     const discovered=[...(movers.gainers||[]).map(r=>r.symbol),...(active.most_actives||[]).map(r=>r.symbol),...news.flatMap(n=>n.symbols)].filter(v=>typeof v==='string'&&/^[A-Z][A-Z0-9.]{0,9}$/.test(v));
     const today=dateKey(now()),prior=discoveryDate===today?symbols:SYMBOLS;
-    const next=[...new Set([...state.openPositions.map(p=>p.symbol),...discovered,...prior])].slice(0,180);
-    if(next.join(',')!==symbols.join(',')){symbols=next;baselineDate=null;referenceDate=null;lastBaselineAttempt=-Infinity;lastBarsAt=-Infinity;}
+    const next=[...new Set([...state.openPositions.map(p=>p.symbol),...BENCHMARK_SYMBOLS,...discovered,...prior])].slice(0,180);
+    if(next.slice().sort().join(',')!==symbols.slice().sort().join(',')){symbols=next;referenceDate=null;lastBaselineAttempt=-Infinity;lastBarsAt=-Infinity;}
     discoveryDate=today;
-    const copy=structuredClone(state);copy.marketResearch={updatedAt:new Date(now()).toISOString(),symbols,news,errors,sourceStatus:Object.fromEntries(names.map((name,i)=>[name,results[i].status==='fulfilled'?'AVAILABLE':'UNAVAILABLE'])),macroCalendarStatus:'NOT_CONNECTED',sectorExposureStatus:'NOT_CONNECTED',primarySourceVerificationStatus:'NOT_CONNECTED',note:'Screeners may reflect previous session before open; price/volume confirmation remains required. IEX execution quotes and 16-minute delayed SIP premarket research.'};commit(copy);
+    console.info('Stock research discovery: '+JSON.stringify({sources:Object.fromEntries(names.map((name,i)=>[name,results[i].status==='fulfilled'?'AVAILABLE':'UNAVAILABLE'])),symbols:symbols.length,news:news.length,errors}));
+    const copy=structuredClone(state);copy.marketResearch={updatedAt:new Date(now()).toISOString(),symbols,news,errors,sourceStatus:Object.fromEntries(names.map((name,i)=>[name,results[i].status==='fulfilled'?'AVAILABLE':'UNAVAILABLE'])),macroCalendarStatus:macroEntryGate(state.economicCalendar,now()).allowed?'AVAILABLE':'PAUSE_OR_INCOMPLETE',sectorExposureStatus:'SEC_SIC_PROXY',primarySourceVerificationStatus:'SEC_EVENT_CORROBORATION',note:'Screeners may reflect previous session before open; price/volume confirmation remains required. IEX execution quotes and 16-minute delayed SIP premarket research.'};commit(copy);
   }
   async function refreshBars(openAt) {
     if(now()-lastBarsAt<MINUTE)return;
@@ -258,15 +423,20 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
     return all;
   }
   async function refreshBaselines(openAt,gen) {
-    const today=dateKey(now());if(baselineDate===today)return;
-    if(now()-lastBaselineAttempt<5*MINUTE)throw Error('Historical scanner data unavailable; retry in five minutes; exits remain active');
+    const today=dateKey(now());
+    if(baselineDate!==today){baselines={};baselineDate=today;lastBaselineAttempt=-Infinity;}
+    const missing=symbols.filter(symbol=>!baselines[symbol]).slice(0,12);if(!missing.length)return;
+    if(now()-lastBaselineAttempt<MINUTE)return;
     lastBaselineAttempt=now();
-    const shared={symbols:symbols.join(','),end:new Date(openAt-330*MINUTE-1000).toISOString(),limit:'10000',sort:'asc'};
-    const daily=await collectBars({...shared,timeframe:'1Day',start:new Date(openAt-45*86400000).toISOString(),feed:'sip',adjustment:'split'});
-    const historical=await collectBars({...shared,timeframe:'5Min',start:new Date(openAt-21*86400000).toISOString(),feed:'iex',adjustment:'raw'});
-    if(gen!==generation||!state.running)return;
-    baselines=buildBaselines(daily,historical,today,symbols);baselineDate=today;
+    const shared={symbols:missing.join(','),end:new Date(openAt-330*MINUTE-1000).toISOString(),limit:'10000',sort:'asc'};
+    try{
+      const daily=await collectBars({...shared,timeframe:'1Day',start:new Date(openAt-45*86400000).toISOString(),feed:'sip',adjustment:'split'});
+      const historical=await collectBars({...shared,timeframe:'5Min',start:new Date(openAt-21*86400000).toISOString(),feed:'iex',adjustment:'raw'});
+      if(gen!==generation||!state.running)return;
+      Object.assign(baselines,buildBaselines(daily,historical,today,missing));
+    }catch(error){console.warn('Stock historical baseline warmup: '+error.message);}
   }
+
   async function researchPremarket(openAt,gen) {
     if(now()-lastResearchAt<MINUTE)return;
     lastResearchAt=now();const start=openAt-330*MINUTE,end=now()-16*MINUTE,today=dateKey(now());
@@ -278,15 +448,17 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
       }
       const bars=await collectBars({symbols:symbols.join(','),timeframe:'5Min',start:new Date(start).toISOString(),end:new Date(end).toISOString(),limit:'10000',feed:'sip',adjustment:'raw',sort:'asc'});
       if(gen!==generation||!state.running)return;
+      await refreshBaselines(openAt,gen);if(gen!==generation||!state.running)return;
       const rankings=rankPremarket(bars,referenceCloses,now(),start,end,symbols),benchmark=rankings.find(r=>r.symbol==='SPY');
       const s=structuredClone(state);s.premarketAnalysis={sessionDate:today,lastUpdatedAt:new Date(now()).toISOString(),source:'Consolidated SIP historical data',minimumDelayMinutes:16,rankings,status:rankings.length?'Premarket watchlist ranked; research only':'No delayed premarket bars available yet',benchmarkGapPercent:benchmark?.gapPercent??null};if(!s.openPositions.length)s.lastError=null;commit(s);
     }catch(e){if(gen!==generation)return;const s=structuredClone(state);s.premarketAnalysis={...(s.premarketAnalysis||{}),sessionDate:today,lastAttemptAt:new Date(now()).toISOString(),status:'Premarket data unavailable',error:e.message,minimumDelayMinutes:16};commit(s);}
   }
   function buy(symbol,q,signal,metrics) {
+    if(!researchGate(symbol).allowed)return false;
     const entriesToday=state.history.filter(r=>r.type==='BUY'&&r.symbol===symbol&&dateKey(Date.parse(r.time))===dateKey(now())).length;
     const stoppedToday=state.history.some(r=>r.type==='SELL'&&r.symbol===symbol&&dateKey(Date.parse(r.time))===dateKey(now())&&(r.exitCategory||exitCategory(r.reason))==='STOP');
     const cooldown=(state.lastExitWon[symbol]?5:15)*MINUTE;
-    const equity=state.cashUsd+state.openPositions.reduce((s,p)=>s+p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE),0),notional=Math.min(state.nextEntryUsd,20,equity*0.2);
+    const equity=state.cashUsd+state.openPositions.reduce((s,p)=>s+p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE),0),notional=Math.min(state.nextEntryUsd,20,equity*0.2,equity*0.0025/(0.012+2*SLIPPAGE+2*FEE+q.spreadPercent/100));
     if(!state.running||state.riskSession?.halted||stoppedToday||state.openPositions.length>=3||state.openPositions.some(p=>p.symbol===symbol)||now()-Number(state.lastExitAt[symbol]||0)<cooldown||entriesToday>=2||notional<10||state.cashUsd<notional*(1+FEE))return false;
     const s=structuredClone(state), entryPrice=q.ask*(1+SLIPPAGE), quantity=notional/entryPrice;
     const p={id:randomUUID(),symbol,tokenAddress:symbol,entryPrice,entryReferencePriceUsd:q.mid,entryQuoteTime:q.time,quantity,originalQuantity:quantity,notionalUsd:notional,costBasisUsd:notional*(1+FEE),originalCostBasisUsd:notional*(1+FEE),entryFeeUsd:notional*FEE,highestPrice:q.bid,lowestPrice:q.bid,markPriceUsd:q.bid,lastMarkAt:q.time,maxRunUpPercent:0,maxAdverseExcursionPercent:Math.min(0,(q.bid/entryPrice-1)*100),maxDrawdownPercent:0,excursionCoverage:'Observed bid quotes during 15-second monitoring; not tick-by-tick extremes',entryTime:new Date(now()).toISOString(),strategy:STRATEGY,entryReason:signal,entryMetrics:metrics,partialTaken:false,realizedPnlUsd:0};
@@ -341,11 +513,12 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
       if(!Number.isFinite(age)||Math.abs(age)>120000||typeof clock.is_open!=='boolean')throw Error('Invalid or stale market clock');
       marketOpen=clock.is_open;nextOpen=clock.next_open;nextClose=clock.next_close;connection='CONNECTED';
       ensureRiskSession(marketOpen);
+      void enrichResearch(gen);
       if(!marketOpen){
         const opening=Date.parse(nextOpen),premarket=Number.isFinite(opening)&&dateKey(opening)===dateKey(now())&&now()>=opening-330*MINUTE&&now()<opening;
         sessionMode=state.openPositions.length?'EXIT_PENDING_MARKET_CLOSED':premarket?'PREMARKET_ANALYSIS':'MARKET_CLOSED';
         const s=structuredClone(state);s.lastError=state.openPositions.length?'Session exit pending: no fresh regular-session quotes; will retry next open':null;commit(s);
-        if(premarket){await discover(gen);await researchPremarket(opening,gen);}return;
+        await discover(gen);if(premarket)await researchPremarket(opening,gen);return;
       }
       const closeAt=Date.parse(nextClose);if(!Number.isFinite(closeAt)||closeAt<=now())throw Error('Invalid market closing time');
       const openAt=sessionOpen(nextClose),flatten=closeAt-now()<=10*MINUTE;
@@ -380,12 +553,28 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
       if(applyDailyRisk(freshSnapshots)){sessionMode='DAILY_LOSS_PAUSE';return;}
       updatePositions(freshSnapshots,checkedClose-now()<=10*MINUTE);
       if(applyDailyRisk(freshSnapshots)){sessionMode='DAILY_LOSS_PAUSE';return;}
-      for(const symbol of symbols){const a=assess(freshSnapshots[symbol],barsCache[symbol],now(),openAt,baselines[symbol]);if(a.accepted){const research=state.premarketAnalysis?.sessionDate===dateKey(now())?state.premarketAnalysis.rankings?.find(r=>r.symbol===symbol&&r.longWatchCandidate):null;ranked.push({symbol,...a,metrics:{...a.metrics,news:(state.marketResearch?.news||[]).filter(n=>n.symbols.includes(symbol)),researchAsOf:state.marketResearch?.updatedAt||null},score:a.score+Math.min(3,(research?.score||0)*0.1)+Math.min(2,(state.marketResearch?.news||[]).filter(n=>n.symbols.includes(symbol)).length)});}else rejections.push({symbol,reason:a.reason,metrics:a.metrics||null,time:new Date(now()).toISOString()});}
+      const marketStrength=sessionStrength(barsCache.SPY,now(),openAt);
+      for(const symbol of symbols){
+        const a=assess(freshSnapshots[symbol],barsCache[symbol],now(),openAt,baselines[symbol]);
+        if(!a.accepted){rejections.push({symbol,reason:a.reason,metrics:a.metrics||null,time:new Date(now()).toISOString()});continue;}
+        const gate=researchGate(symbol);
+        const own=sessionStrength(barsCache[symbol],now(),openAt),sector=gate.profile?.sector||'UNKNOWN',benchmark=SECTOR_BENCHMARKS[sector];
+        const sectorStrength=sessionStrength(barsCache[benchmark],now(),openAt);
+        const relativeToMarket=own&&marketStrength?own.returnPercent-marketStrength.returnPercent:null;
+        const relativeToSector=own&&sectorStrength?own.returnPercent-sectorStrength.returnPercent:null;
+        const news=(state.marketResearch?.news||[]).filter(n=>n.symbols.includes(symbol)).map(n=>corroborateNews(n,gate.profile));
+        const metrics={...a.metrics,news,researchAsOf:state.marketResearch?.updatedAt||null,sector,sectorBasis:gate.profile?.sectorBasis,sectorBenchmark:benchmark,relativeToMarketPercent:relativeToMarket,relativeToSectorPercent:relativeToSector,sectorAboveVwap:sectorStrength?.aboveVwap??null,secEvidence:gate.profile?.filings||[],secCheckedAt:gate.profile?.checkedAt,offeringFlag:gate.profile?.offeringFlag||false,macroGate:macroEntryGate(state.economicCalendar,now()),riskBudgetPercent:0.25};
+        const reason=!gate.allowed?gate.reason:relativeToMarket===null?'Fresh SPY benchmark bars unavailable':relativeToMarket< -0.25?'Underperforming SPY by more than 0.25 percentage points':null;
+        if(reason){rejections.push({symbol,reason,metrics,time:new Date(now()).toISOString()});continue;}
+        const research=state.premarketAnalysis?.sessionDate===dateKey(now())?state.premarketAnalysis.rankings?.find(r=>r.symbol===symbol&&r.longWatchCandidate):null;
+        const newsScore=Math.min(2,news.reduce((sum,n)=>sum+(n.evidence.length?1:0.25),0));
+        ranked.push({symbol,...a,metrics,score:a.score+Math.min(3,(research?.score||0)*0.1)+newsScore+Math.max(-2,Math.min(2,relativeToSector||0))});
+      }
       ranked.sort((a,b)=>b.score-a.score);
       let entered=0;
-      for(const c of ranked){if(buy(c.symbol,c.quote,c.signal,c.metrics)){entered++;if(applyDailyRisk(freshSnapshots)){sessionMode='DAILY_LOSS_PAUSE';break;}}else rejections.push({symbol:c.symbol,reason:'Setup qualified; position, cash, cooldown or daily entry limit',metrics:c.metrics,time:new Date(now()).toISOString()});}
+      for(const c of ranked){if(buy(c.symbol,c.quote,c.signal,c.metrics)){entered++;if(applyDailyRisk(freshSnapshots)){sessionMode='DAILY_LOSS_PAUSE';break;}}else rejections.push({symbol:c.symbol,reason:researchGate(c.symbol).allowed?'Setup qualified; position, cash, risk budget, cooldown or daily entry limit':researchGate(c.symbol).reason,metrics:c.metrics,time:new Date(now()).toISOString()});}
       const s=structuredClone(state);s.lastScanAt=new Date(now()).toISOString();s.lastError=null;s.rejections=rejections;
-      s.scanDiagnostics={scanned:symbols.length,qualified:ranked.length,entered,lastScanAt:s.lastScanAt,watchlist:symbols,filters:SCAN_FILTERS,baselineSessionDate:baselineDate,qualifiedSetups:ranked.map(c=>({symbol:c.symbol,signal:c.signal,score:c.score,metrics:c.metrics})),skippedByReason:rejections.reduce((out,r)=>{out[r.reason]=(out[r.reason]||0)+1;return out;},{})};
+      s.scanDiagnostics={scanned:symbols.length,qualified:ranked.length,entered,lastScanAt:s.lastScanAt,watchlist:symbols,filters:SCAN_FILTERS,baselineSessionDate:baselineDate,baselineSymbolsReady:Object.keys(baselines).length,qualifiedSetups:ranked.map(c=>({symbol:c.symbol,signal:c.signal,score:c.score,metrics:c.metrics})),skippedByReason:rejections.reduce((out,r)=>{out[r.reason]=(out[r.reason]||0)+1;return out;},{})};
       const eq=s.cashUsd+s.openPositions.reduce((v,p)=>v+p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE),0);
       s.peakEquityUsd=Math.max(s.peakEquityUsd,eq);s.maxDrawdownPercent=Math.max(s.maxDrawdownPercent,(1-eq/s.peakEquityUsd)*100);commit(s);
     }catch(e){if(gen===generation){connection='CONNECTION_ERROR';const s=structuredClone(state);s.lastError=e.message;commit(s);}}
@@ -407,7 +596,7 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
     }catch(e){results.push({success:false,error:e.message});}finally{busy=false;}
     return {success:results.every(r=>r.success),results};
   }
-  function getStatus(){return {running:state.running&&configured()&&connection==='CONNECTED',enabled:state.running,mode:'PAPER',tradingStyle:'INTRADAY_OPPORTUNITY',watchlistSize:symbols.length,sessionMode,dailyPnlUsd:state.riskSession?equityOf()-state.riskSession.capitalUsd:dailyPnlUsd,riskRules:RISK_RULES,riskSession:state.riskSession||null,pendingExits:state.openPositions.filter(p=>p.pendingExitReason).map(p=>({symbol:p.symbol,reason:p.pendingExitReason})),connection:configured()?connection:'WAITING_FOR_ALPACA',marketOpen,nextOpen,nextClose,lastScanAt:state.lastScanAt,lastError:state.lastError,premarketLastUpdatedAt:state.premarketAnalysis?.lastUpdatedAt||null,premarketDataDelayMinutes:16,statusMessage:!configured()?'Waiting for Alpaca paper API connection':!state.running?'Stopped':state.lastError||(sessionMode==='PREMARKET_ANALYSIS'?'Analyzing premarket movers; consolidated data delayed at least 16 min; no premarket orders':!marketOpen?'Market closed; next research window starts 4am ET':sessionMode==='CLOSING_SESSION'?'Closing positions before market close':sessionMode==='NO_NEW_ENTRIES'?'Last 30 minutes: exits only':sessionMode==='DAILY_LOSS_PAUSE'?'Daily 2.5% loss limit reached: liquidating; entries halted until next trading day':sessionMode==='OPENING_WAIT'?'First 15 minutes: monitoring only':sessionMode==='EXIT_PENDING_QUOTE'?'Pending liquidation: waiting for fresh quotes':'Scanning intraday breakouts and pullback recoveries'),openPositions:state.openPositions.length,maxOpenPositions:3};}
+  function getStatus(){return {running:state.running&&configured()&&connection==='CONNECTED',enabled:state.running,mode:'PAPER',tradingStyle:'INTRADAY_OPPORTUNITY',watchlistSize:symbols.length,sessionMode,dailyPnlUsd:state.riskSession?equityOf()-state.riskSession.capitalUsd:dailyPnlUsd,riskRules:RISK_RULES,riskSession:state.riskSession||null,pendingExits:state.openPositions.filter(p=>p.pendingExitReason).map(p=>({symbol:p.symbol,reason:p.pendingExitReason})),connection:configured()?connection:'WAITING_FOR_ALPACA',marketOpen,nextOpen,nextClose,lastScanAt:state.lastScanAt,lastError:state.lastError,premarketLastUpdatedAt:state.premarketAnalysis?.lastUpdatedAt||null,premarketDataDelayMinutes:16,researchStatus:{macroGate:macroEntryGate(state.economicCalendar,now()),secProfiles:Object.keys(state.secResearch?.profiles||{}).length,secError:state.secResearch?.lastError||null},statusMessage:!configured()?'Waiting for Alpaca paper API connection':!state.running?'Stopped':state.lastError||(sessionMode==='PREMARKET_ANALYSIS'?'Analyzing premarket movers; consolidated data delayed at least 16 min; no premarket orders':!marketOpen?'Market closed; next research window starts 4am ET':sessionMode==='CLOSING_SESSION'?'Closing positions before market close':sessionMode==='NO_NEW_ENTRIES'?'Last 30 minutes: exits only':sessionMode==='DAILY_LOSS_PAUSE'?'Daily 2.5% loss limit reached: liquidating; entries halted until next trading day':sessionMode==='OPENING_WAIT'?'First 15 minutes: monitoring only':sessionMode==='EXIT_PENDING_QUOTE'?'Pending liquidation: waiting for fresh quotes':(!macroEntryGate(state.economicCalendar,now()).allowed?macroEntryGate(state.economicCalendar,now()).reason:'Scanning news, sector strength, intraday breakouts and pullback recoveries')),openPositions:state.openPositions.length,maxOpenPositions:3};}
   function getDashboardData(){
     const livePositions=state.openPositions.map(p=>{const value=p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE),pnl=value-p.costBasisUsd;return {position:p,live:{priceUsd:p.markPriceUsd,currentValue:value,pnl,pnlPercent:pnl/p.costBasisUsd*100,holdTimeMs:now()-Date.parse(p.entryTime)},pnl};});
     const equity=state.cashUsd+livePositions.reduce((s,p)=>s+p.live.currentValue,0),totalPnl=equity-100;
@@ -422,12 +611,12 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
       trade.maxDrawdownPercent ??= null;trade.maxRunUpPercent ??= null;
     }
     const reports=tradeReports(state.history,completedTrades,now());
-    return {label:'Stock Bot',marketResearch:state.marketResearch||null,reports,mode:'PAPER',paperOnly:true,simulation:'Local paper ledger; no broker orders',exchange:'Alpaca IEX market data',strategy:STRATEGY,scannerFilters:SCAN_FILTERS,premarketAnalysis:state.premarketAnalysis||null,scanDiagnostics:state.scanDiagnostics||null,startingBalance:100,startingBalanceUsd:100,cashBalance:state.cashUsd,equity,totalPnl,totalPnlPercent:totalPnl,livePositions,completedTrades,history:state.history,rejections:state.rejections,lastScanAt:state.lastScanAt,lastError:state.lastError,maxDrawdownPercent:state.maxDrawdownPercent,estimatedFeePercentPerSide:FEE*100,estimatedSlippagePercentPerSide:SLIPPAGE*100,nextTradeSizeUsd:state.nextEntryUsd,compoundIncrementPercent:10,maxTradeSizeUsd:20,maxEntriesPerSymbolPerDay:2,maxReentriesPerSymbolPerDay:1,maxOpenPositions:3,...getStatus(),openPositions:livePositions};
+    return {label:'Stock Bot',marketResearch:state.marketResearch||null,economicCalendar:state.economicCalendar||null,macroEntryGate:macroEntryGate(state.economicCalendar,now()),secResearch:state.secResearch||null,sectorExposure:state.openPositions.reduce((out,p)=>{const sector=p.entryMetrics?.sector||state.secResearch?.profiles?.[p.symbol]?.sector||'UNKNOWN';out[sector]=(out[sector]||0)+1;return out;},{}),reports,mode:'PAPER',paperOnly:true,simulation:'Local paper ledger; no broker orders',exchange:'Alpaca IEX market data',strategy:STRATEGY,scannerFilters:SCAN_FILTERS,premarketAnalysis:state.premarketAnalysis||null,scanDiagnostics:state.scanDiagnostics||null,startingBalance:100,startingBalanceUsd:100,cashBalance:state.cashUsd,equity,totalPnl,totalPnlPercent:totalPnl,livePositions,completedTrades,history:state.history,rejections:state.rejections,lastScanAt:state.lastScanAt,lastError:state.lastError,maxDrawdownPercent:state.maxDrawdownPercent,estimatedFeePercentPerSide:FEE*100,estimatedSlippagePercentPerSide:SLIPPAGE*100,nextTradeSizeUsd:state.nextEntryUsd,compoundIncrementPercent:10,maxTradeSizeUsd:20,maxEntriesPerSymbolPerDay:2,maxReentriesPerSymbolPerDay:1,maxOpenPositions:3,...getStatus(),openPositions:livePositions};
   }
   return {start,stop,tick,closeAll,getStatus,getDashboardData,getState:()=>structuredClone(state)};
 }
 let singleton;
 const instance=()=>singleton||(singleton=createStockBot());
-module.exports={createStockBot,assess,quote,sessionOpen,rankPremarket,buildBaselines,sameTimeVolume,SYMBOLS,STRATEGY,SCAN_FILTERS,RISK_RULES,tradeReports,exitCategory,start:()=>instance().start(),stop:()=>instance().stop(),closeAll:()=>instance().closeAll(),getStatus:()=>instance().getStatus(),getDashboardData:()=>instance().getDashboardData()};
+module.exports={parseEconomicCalendar,parseFedCalendar,macroEntryGate,easternTimestamp,sectorFromSic,secProfile,corroborateNews,sessionStrength,createStockBot,assess,quote,sessionOpen,rankPremarket,buildBaselines,sameTimeVolume,SYMBOLS,STRATEGY,SCAN_FILTERS,RISK_RULES,tradeReports,exitCategory,start:()=>instance().start(),stop:()=>instance().stop(),closeAll:()=>instance().closeAll(),getStatus:()=>instance().getStatus(),getDashboardData:()=>instance().getDashboardData()};
 
 
