@@ -10,16 +10,56 @@ const MIN_VOLUME_5M_USD = 1500;
 const MIN_TRANSACTIONS_5M = 12;
 const MIN_BUY_RATIO_5M = 0.55;
 const DEXSCREENER_PAIR_API = "https://api.dexscreener.com/latest/dex/pairs/solana";
+const DEXSCREENER_TOKEN_API = "https://api.dexscreener.com/tokens/v1/solana";
+const DEXSCREENER_BOOST_FEEDS = [
+  "https://api.dexscreener.com/token-boosts/top/v1",
+  "https://api.dexscreener.com/token-boosts/latest/v1"
+];
 const MAX_PAIR_ADDRESSES_PER_REQUEST = 30;
 const MAX_TRACKED_NEW_POOLS = 60;
 const MAX_TRACKED_MATURE_POOLS = 90;
 const MATURE_AGE_BUCKETS_MS = [0, 5 * 60 * 1000, 30 * 60 * 1000,
-  60 * 60 * 1000, 3 * 60 * 60 * 1000, 6 * 60 * 60 * 1000];
+  60 * 60 * 1000, 3 * 60 * 60 * 1000, 6 * 60 * 60 * 1000,
+  12 * 60 * 60 * 1000, 24 * 60 * 60 * 1000];
 const PAIR_REQUEST_TIMEOUT_MS = 10000;
 const trackedLaunchPools = new Map();
 const trackedMaturePools = new Map();
 const MAX_MATURE_PAIR_AGE_MS = 72 * 60 * 60 * 1000;
 let lastScanDiagnostics = null;
+
+function boostedPairScore(pair) {
+  return (Number(pair?.txns?.m5?.buys) || 0) + (Number(pair?.txns?.m5?.sells) || 0) +
+    (Number(pair?.volume?.m5) || 0) / 1000 + (Number(pair?.liquidity?.usd) || 0) / 10000;
+}
+
+function selectBoostedPumpSwapPairs(pairs, tokenAddresses) {
+  const allowedTokens = new Set(tokenAddresses);
+  const bestByToken = new Map();
+  for (const pair of Array.isArray(pairs) ? pairs : []) {
+    const tokenAddress = pair?.baseToken?.address;
+    if (pair?.chainId !== "solana" || String(pair?.dexId).toLowerCase() !== "pumpswap" ||
+        !allowedTokens.has(tokenAddress) || !pair?.pairAddress || !Number(pair?.pairCreatedAt)) continue;
+    const current = bestByToken.get(tokenAddress);
+    if (!current || boostedPairScore(pair) > boostedPairScore(current)) bestByToken.set(tokenAddress, pair);
+  }
+  return [...bestByToken.values()];
+}
+
+async function fetchDexScreenerBoostedPumpSwapPairs(signal) {
+  const boostResults = await Promise.allSettled(DEXSCREENER_BOOST_FEEDS.map(url =>
+    axios.get(url, { timeout: PAIR_REQUEST_TIMEOUT_MS, signal })
+  ));
+  const tokenAddresses = [...new Set(boostResults.flatMap(result => result.status === "fulfilled" &&
+    Array.isArray(result.value?.data) ? result.value.data : [])
+    .filter(item => item?.chainId === "solana" && item?.tokenAddress)
+    .map(item => item.tokenAddress))].slice(0, MAX_PAIR_ADDRESSES_PER_REQUEST);
+  if (!tokenAddresses.length || signal?.aborted) return [];
+  const response = await axios.get(DEXSCREENER_TOKEN_API + "/" + tokenAddresses.join(","), {
+    timeout: PAIR_REQUEST_TIMEOUT_MS,
+    signal
+  });
+  return selectBoostedPumpSwapPairs(response?.data, tokenAddresses);
+}
 
 
 function addressFromResourceId(id) {
@@ -210,7 +250,7 @@ async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQU
   const now = Date.now();
   const diagnostics = {
     updatedAt: new Date(now).toISOString(),
-    source: includeMaturePools ? "GeckoTerminal new + trending + top pools + exact DexScreener pairs" : includeTrendingPools ? "GeckoTerminal trending (5m) + new pools + exact DexScreener pair data" : "GeckoTerminal new pools + DexScreener pair data",
+    source: includeMaturePools ? "GeckoTerminal new + trending + top pools + DexScreener boosted PumpSwap + exact pairs" : includeTrendingPools ? "GeckoTerminal trending (5m) + new pools + exact DexScreener pair data" : "GeckoTerminal new pools + DexScreener pair data",
     poolsReceived: 0,
     poolsInAgeWindow: 0,
     poolsTracked: 0,
@@ -232,7 +272,13 @@ async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQU
       ...(includeTrendingPools ? [["GECKOTERMINAL_TRENDING_POOL",
         () => geckoTerminal.getTrendingSolanaPools({ signal, duration: "5m" })]] : [])
     ];
-    const feedResults = await Promise.allSettled(feedRequests.map(([, request]) => request()));
+    const [feedResults, boostedResult] = await Promise.all([
+      Promise.allSettled(feedRequests.map(([, request]) => request())),
+      includeMaturePools ? fetchDexScreenerBoostedPumpSwapPairs(signal)
+        .then(value => ({ status: "fulfilled", value }))
+        .catch(reason => ({ status: "rejected", reason }))
+        : Promise.resolve({ status: "fulfilled", value: [] })
+    ]);
     const feeds = [];
     diagnostics.sourceErrors = [];
     feedResults.forEach((result, index) => {
@@ -240,6 +286,24 @@ async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQU
       if (result.status === "fulfilled") feeds.push([source, result.value]);
       else diagnostics.sourceErrors.push({ source, error: result.reason?.message || String(result.reason) });
     });
+    const boostedPairs = boostedResult.status === "fulfilled" ? boostedResult.value : [];
+    if (boostedResult.status === "rejected") diagnostics.sourceErrors.push({
+      source: "DEXSCREENER_BOOSTED_PUMPSWAP",
+      error: boostedResult.reason?.message || String(boostedResult.reason)
+    });
+    diagnostics.boostedPairsReceived = boostedPairs.length;
+    diagnostics.poolsReceived += boostedPairs.length;
+    for (const pair of boostedPairs) {
+      const descriptor = {
+        poolAddress: pair.pairAddress,
+        tokenAddress: pair.baseToken.address,
+        createdAt: Number(pair.pairCreatedAt),
+        discoverySource: "DEXSCREENER_BOOSTED_PUMPSWAP"
+      };
+      if (descriptor.createdAt <= now + 60000 && now - descriptor.createdAt <= maximumPairAgeMs) {
+        trackedPools.set(descriptor.poolAddress, descriptor);
+      }
+    }
     diagnostics.poolsReceived = feeds.reduce((sum, [, pools]) => sum + (Array.isArray(pools) ? pools.length : 0), 0);
     for (const [source, pools] of feeds) {
       for (const pool of Array.isArray(pools) ? pools : []) {
@@ -312,6 +376,7 @@ async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQU
 
 
 module.exports = { discoverLaunchCandidates, mapLaunchPair, qualifiesLaunchCandidate, qualifiesPoolObservation,
-  selectTrackedPools, selectTrackedPoolsAcrossAgeWindow, estimateExecutionCosts, getScanDiagnostics: () => lastScanDiagnostics,
+  selectTrackedPools, selectTrackedPoolsAcrossAgeWindow, selectBoostedPumpSwapPairs, estimateExecutionCosts,
+  getScanDiagnostics: () => lastScanDiagnostics,
   thresholds: { minimumLiquidityUsd: MIN_LIQUIDITY_USD, minimumVolume24hUsd: MIN_VOLUME_24H_USD, minimumVolume5mUsd: MIN_VOLUME_5M_USD } };
 
