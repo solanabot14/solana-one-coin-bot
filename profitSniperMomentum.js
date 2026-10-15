@@ -27,7 +27,7 @@ function createMomentumTracker() {
     const sellDelta = previous && Number.isFinite(sells5m) && Number.isFinite(previous.sells5m)
       ? Math.max(0, sells5m - previous.sells5m) : 0;
     state.samples.push({ at: now, price, buys5m, sells5m, buyDelta, sellDelta });
-    state.samples = state.samples.filter(item => now - item.at <= CONFIG.RECOVERY_FLOW_WINDOW_MS + 30_000);
+    state.samples = state.samples.filter(item => now - item.at <= CONFIG.RECOVERY_FLOW_WINDOW_MS + CONFIG.MAX_SNAPSHOT_INTERVAL_MS);
     state.peakPrice = Math.max(state.peakPrice, price);
     state.pumpSeen = state.pumpSeen || price >= state.basePrice * (1 + CONFIG.MIN_PUMP_PERCENT / 100);
 
@@ -41,7 +41,7 @@ function createMomentumTracker() {
     const ready = state.pumpSeen &&
       retracePercent >= CONFIG.MIN_RETRACE_PERCENT &&
       retracePercent <= CONFIG.MAX_ENTRY_RETRACE_PERCENT &&
-      recovering && flowSpanMs >= 20_000 && flowBuys > flowSells;
+      recovering && flowSpanMs >= CONFIG.MIN_RECOVERY_FLOW_SPAN_MS && flowBuys > flowSells;
     const reason = retracePercent > CONFIG.MAX_RETRACE_PERCENT ? "retrace_over_35_percent"
       : !state.pumpSeen ? "pump_not_observed"
       : retracePercent < CONFIG.MIN_RETRACE_PERCENT ? "retrace_below_15_percent"
