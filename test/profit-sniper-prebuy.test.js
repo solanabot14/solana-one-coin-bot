@@ -65,7 +65,7 @@ test("liquidity collapse, missing data, disagreement, and stale responses fail c
   for (const options of cases) assert.equal((await fixture(options).guard.prepareEntry(coin)).allowed, false);
 });
 test("exact 20% liquidity drop remains eligible", async () => {
-  const { guard } = fixture({ first: pair({ liquidity: 25000 }), final: pair({ liquidity: 20000 }) });
+  const { guard } = fixture({ first: pair({ liquidity: 25000 }), final: pair({ liquidity: 20000 }), lockReport: report({ liquidity: 20000 }) });
   assert.equal((await guard.prepareEntry(coin)).allowed, true);
 });
 test("fresh 5m move must remain under the chase cap", async () => {
