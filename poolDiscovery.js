@@ -161,8 +161,19 @@ function measureCandidateGates(candidates, now = Date.now(), minimumLiquidityUsd
   return gates;
 }
 
+function selectTrackedPools(poolDescriptors, now, maxTrackedPools, minimumMaturePairAgeMs = 0, maturePoolReserve = 0) {
+  const sorted = [...poolDescriptors].sort((a, b) => b.createdAt - a.createdAt);
+  const reserve = Math.max(0, Math.min(maxTrackedPools, Number(maturePoolReserve) || 0));
+  const mature = reserve && minimumMaturePairAgeMs > 0
+    ? sorted.filter(item => now - item.createdAt >= minimumMaturePairAgeMs).slice(0, reserve) : [];
+  const matureAddresses = new Set(mature.map(item => item.poolAddress));
+  return [...mature, ...sorted.filter(item => !matureAddresses.has(item.poolAddress))]
+    .slice(0, maxTrackedPools);
+}
+
 async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQUIDITY_USD, minimumVolume24hUsd = MIN_VOLUME_24H_USD,
-  includeObservationCandidates = false, includeMaturePools = false, includeTrendingPools = false, maximumPairAgeMs } = {}) {
+  includeObservationCandidates = false, includeMaturePools = false, includeTrendingPools = false, maximumPairAgeMs,
+  minimumMaturePairAgeMs = 0, maturePoolReserve = 0 } = {}) {
   maximumPairAgeMs = Number.isFinite(Number(maximumPairAgeMs))
     ? Number(maximumPairAgeMs)
     : includeMaturePools ? MAX_MATURE_PAIR_AGE_MS : MAX_PAIR_AGE_MS;
@@ -204,7 +215,8 @@ async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQU
     }
     const maxTrackedPools = includeMaturePools ? MAX_TRACKED_MATURE_POOLS : MAX_TRACKED_NEW_POOLS;
     if (trackedPools.size > maxTrackedPools) {
-      const newest = [...trackedPools.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, maxTrackedPools);
+      const newest = selectTrackedPools(trackedPools.values(), now, maxTrackedPools,
+        minimumMaturePairAgeMs, maturePoolReserve);
       trackedPools.clear();
       for (const descriptor of newest) trackedPools.set(descriptor.poolAddress, descriptor);
     }
@@ -258,4 +270,7 @@ async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQU
 }
 
 
-module.exports = { discoverLaunchCandidates, mapLaunchPair, qualifiesLaunchCandidate, qualifiesPoolObservation, estimateExecutionCosts, getScanDiagnostics: () => lastScanDiagnostics, thresholds: { minimumLiquidityUsd: MIN_LIQUIDITY_USD, minimumVolume24hUsd: MIN_VOLUME_24H_USD, minimumVolume5mUsd: MIN_VOLUME_5M_USD } };
+module.exports = { discoverLaunchCandidates, mapLaunchPair, qualifiesLaunchCandidate, qualifiesPoolObservation,
+  selectTrackedPools, estimateExecutionCosts, getScanDiagnostics: () => lastScanDiagnostics,
+  thresholds: { minimumLiquidityUsd: MIN_LIQUIDITY_USD, minimumVolume24hUsd: MIN_VOLUME_24H_USD, minimumVolume5mUsd: MIN_VOLUME_5M_USD } };
+

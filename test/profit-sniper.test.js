@@ -7,15 +7,15 @@ function candidate(overrides = {}) {
     volume5m: 2000, buys5m: 20, sells5m: 10, priceChange5m: 2,
     momentumPattern: { ready: true }, signal: "AVOID", ...overrides };
 }
-test("Sniper uses 10m-3h age, activity, liquidity and rebound gates", () => {
+test("Sniper uses 10m-6h age, activity, liquidity and rebound gates", () => {
   assert.equal(qualifiesMomentumCandidate(candidate()), true);
   const now = Date.now();
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 9 * 60 * 1000 }), now), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 10 * 60 * 1000 }), now), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 29 * 60 * 1000 }), now), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 5 * 60 * 60 * 1000 }), now), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 3 * 60 * 60 * 1000 }), now), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 3 * 60 * 60 * 1000 - 1 }), now), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 5 * 60 * 60 * 1000 }), now), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 6 * 60 * 60 * 1000 }), now), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 6 * 60 * 60 * 1000 - 1 }), now), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 0 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: undefined })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume5m: 1499 })), false);
@@ -78,7 +78,7 @@ test("age rejection is distinguishable for watchlist tracking", () => {
   assert.ok(getMomentumFailureReasons(candidate({ priceChange5m: 36 })).includes("momentum5m"));
 });
 
-test("cached scans detect pump, 15-25% retrace and recovery with estimated buy flow", () => {
+test("cached scans require a 30% pump, 15-30% retrace and 5% rebound with buy flow", () => {
   const { createMomentumTracker } = require("../profitSniperMomentum");
   const tracker = createMomentumTracker();
   const base = { tokenAddress: "mint-rebound", pairAddress: "pool-rebound" };
@@ -87,11 +87,13 @@ test("cached scans detect pump, 15-25% retrace and recovery with estimated buy f
   assert.equal(sample(0, 1, 100, 100, 0).ready, false);
   assert.equal(sample(30_000, 1.31, 110, 100, 31).pumpSeen, true);
   sample(60_000, 1.50, 120, 100, 20);
-  assert.equal(sample(90_000, 1.22, 125, 100, 2).ready, false);
-  const rebound = sample(120_000, 1.24, 135, 101, 3);
+  assert.equal(sample(90_000, 1.20, 125, 100, 2).ready, false);
+  assert.equal(sample(105_000, 1.24, 130, 101, 3).ready, false);
+  const rebound = sample(120_000, 1.26, 140, 101, 4);
   assert.equal(rebound.ready, true);
   assert.equal(rebound.flowIsApproximation, true);
   const exhausted = sample(150_000, 0.95, 136, 102, -5);
   assert.equal(exhausted.reason, "retrace_over_35_percent");
 });
+
 
