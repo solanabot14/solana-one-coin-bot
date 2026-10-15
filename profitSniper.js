@@ -8,6 +8,7 @@ const { createBot } = require("./bot");
 const strategy = require("./profitSniperStrategy");
 const CONFIG = require("./profitSniperConfig");
 const { createMomentumTracker } = require("./profitSniperMomentum");
+const { createRecoveryWatchlist } = require("./profitSniperRecoveryWatchlist");
 const { createSniperEntryGuard } = require("./profitSniperEntryGuard");
 const { WINDOW_MS, buildProfitSniper48h } = require("./profitSniperAnalytics");
 const { constants } = strategy;
@@ -48,6 +49,13 @@ let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, so
 const entryGuard = createSniperEntryGuard();
 const momentumTracker = createMomentumTracker();
 const ageWatchlist = new Map();
+const recoveryWatchlist = createRecoveryWatchlist({
+  maxAgeMs: CONFIG.RECOVERY_WATCHLIST_MAX_AGE_MS,
+  maxSize: CONFIG.RECOVERY_WATCHLIST_MAX_SIZE,
+  minimumLiquidityUsd: MIN_LIQUIDITY_USD,
+  minimumVolume5mUsd: MIN_VOLUME_5M_USD,
+  maximumRetracePercent: CONFIG.MAX_RETRACE_PERCENT
+});
 const cumulativeRejectionCounts = {};
 const TELEMETRY_PATH = statePath("profitSniperTelemetry48h.json");
 let rejectionEvents48h = [];
@@ -93,6 +101,7 @@ async function discoverCandidates(options = {}) {
     }
     const momentumPattern = momentumTracker.observe(raw, now);
     const coin = { ...raw, momentumPattern };
+    recoveryWatchlist.remember(coin, now);
     const failures = getMomentumFailureReasons(coin, now);
     const ageMs = now - Number(coin.pairCreatedAt);
     const wasOnWatchlist = ageWatchlist.has(key);
@@ -113,6 +122,35 @@ async function discoverCandidates(options = {}) {
       ageWatchlistRechecks++;
     }
     candidates.push({ key, coin, failures, ageMs, wasWatchlisted: wasOnWatchlist });
+  }
+
+  // Discovery feeds rotate quickly. Keep promising exact pools warm with fresh
+  // DexScreener quotes so a temporary feed omission cannot erase confirmation.
+  const missingRecovery = recoveryWatchlist.missing(currentKeys, now);
+  if (missingRecovery.length) {
+    const uniqueByMint = new Map();
+    for (const item of missingRecovery) {
+      const current = uniqueByMint.get(item.tokenAddress);
+      if (!current || Number(item.lastSnapshot?.liquidityUsd) > Number(current.lastSnapshot?.liquidityUsd))
+        uniqueByMint.set(item.tokenAddress, item);
+    }
+    const tracked = [...uniqueByMint.values()];
+    const pairAddresses = new Map(tracked.map(item => [item.tokenAddress, item.pairAddress]));
+    const freshByMint = await market.getTokensData(tracked.map(item => item.tokenAddress),
+      { signal: options.signal, pairAddresses });
+    for (const item of tracked) {
+      const fresh = freshByMint.get(item.tokenAddress);
+      if (!fresh || fresh.pairAddress !== item.pairAddress) continue;
+      const raw = { ...item.lastSnapshot, ...fresh, pairAddress: item.pairAddress,
+        tokenAddress: item.tokenAddress };
+      const momentumPattern = momentumTracker.observe(raw, now);
+      const coin = { ...raw, momentumPattern, recoveryWatchlistRecheck: true };
+      recoveryWatchlist.recordDirectRecheck(item.key, coin, now);
+      recoveryWatchlist.remember(coin, now);
+      currentKeys.add(item.key);
+      candidates.push({ key: item.key, coin, failures: getMomentumFailureReasons(coin, now),
+        ageMs: now - Number(coin.pairCreatedAt), wasWatchlisted: ageWatchlist.has(item.key) });
+    }
   }
 
   const portfolio = trader.getPortfolio();
@@ -188,6 +226,7 @@ async function discoverCandidates(options = {}) {
         reason: pattern.reason || null
       },
       fromAgeWatchlist: wasWatchlisted,
+      fromRecoveryWatchlist: !!coin.recoveryWatchlistRecheck,
       reason: failures.length ? [...new Set(failures)].join(",") : "entry_candidate_selected"
     };
     logs.push(record);
@@ -225,6 +264,9 @@ async function discoverCandidates(options = {}) {
     momentumRejectedGates: rejectedGates,
     rejectionCountsLifetime: { ...cumulativeRejectionCounts },
     ageWatchlistPending: ageWatchlist.size,
+    recoveryWatchlistPending: recoveryWatchlist.size(),
+    recoveryWatchlistDirectRechecks: recoveryWatchlist.values()
+      .reduce((sum, item) => sum + item.directRechecks, 0),
     ageWatchlistRechecks,
     entriesFromAgeWatchlist: history.filter(row => row?.type === "BUY" &&
       (row.entryReasons || []).includes("AGE WATCHLIST REENTRY")).length,
@@ -239,6 +281,7 @@ async function discoverCandidates(options = {}) {
   console.log("PROFIT SNIPER SCAN | pools observed: " + scanned.length +
     " | entry-qualified: " + qualified.length +
     " | watchlist pending: " + ageWatchlist.size +
+    " | recovery tracking: " + recoveryWatchlist.size() +
     " | rejected gates: " + (Object.keys(rejectedGates).length ? JSON.stringify(rejectedGates) : "none"));
   return qualified;
 }
@@ -354,6 +397,7 @@ function getStatus() {
       rejectionCounts: { ...cumulativeRejectionCounts },
       poolStability: entryGuard.getStatus(),
       ageWatchlistPending: ageWatchlist.size,
+      recoveryWatchlistPending: recoveryWatchlist.size(),
       ageWatchlistRechecks,
       entriesFromAgeWatchlist: (trader.getPortfolio().history || []).filter(row => row?.type === "BUY" &&
         (row.entryReasons || []).includes("AGE WATCHLIST REENTRY")).length,
