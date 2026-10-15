@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { mapLaunchPair, qualifiesLaunchCandidate, qualifiesPoolObservation, thresholds } = require("../poolDiscovery");
+const { mapLaunchPair, qualifiesLaunchCandidate, qualifiesPoolObservation, selectTrackedPools, thresholds } = require("../poolDiscovery");
 
 const now = 1_800_000_000_000;
 function candidate(overrides = {}) {
@@ -68,4 +68,18 @@ test("rejects weak liquidity, volume, activity, or buy ratio", () => {
 test("does not qualify a pair without recent transaction data", () => {
   assert.equal(qualifiesLaunchCandidate(candidate({ buys5m: 0, sells5m: 0 }), now), false);
 });
+
+test("reserves discovery capacity for pools mature enough to enter", () => {
+  const young = Array.from({ length: 100 }, (_, index) => ({
+    poolAddress: `young-${index}`, createdAt: now - index * 1000
+  }));
+  const mature = Array.from({ length: 5 }, (_, index) => ({
+    poolAddress: `mature-${index}`, createdAt: now - (20 + index) * 60 * 1000
+  }));
+  const selected = selectTrackedPools([...young, ...mature], now, 10, 10 * 60 * 1000, 3);
+  assert.equal(selected.length, 10);
+  assert.equal(selected.filter(item => item.poolAddress.startsWith("mature-")).length, 3);
+  assert.equal(selected.filter(item => item.poolAddress.startsWith("young-")).length, 7);
+});
+
 

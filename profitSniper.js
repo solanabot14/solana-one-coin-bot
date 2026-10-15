@@ -53,7 +53,8 @@ let ageWatchlistRechecks = 0;
 async function discoverCandidates(options = {}) {
   const scanned = await poolDiscovery.discoverLaunchCandidates({ ...options, minimumLiquidityUsd: MIN_LIQUIDITY_USD,
     minimumVolume24hUsd: MIN_VOLUME_24H_USD, includeObservationCandidates: true,
-    includeMaturePools: true, includeTrendingPools: true, maximumPairAgeMs: MAX_PAIR_AGE_MINUTES * 60 * 1000 });
+    includeMaturePools: true, includeTrendingPools: true, maximumPairAgeMs: MAX_PAIR_AGE_MINUTES * 60 * 1000,
+    minimumMaturePairAgeMs: MIN_PAIR_AGE_MS, maturePoolReserve: CONFIG.MATURE_POOL_RESERVE });
   const now = Date.now();
   const currentKeys = new Set();
   const candidates = scanned.map(raw => {
@@ -361,5 +362,6 @@ module.exports = {
     minimumTradeUsd: MINIMUM_TRADE_USD
   }
 };
+
 
 
