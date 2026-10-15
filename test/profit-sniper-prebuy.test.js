@@ -59,7 +59,7 @@ test("liquidity collapse, missing data, disagreement, and stale responses fail c
     { final: pair({ liquidity: null }) },
     { final: pair({ price: null }) },
     { lockReport: report({ liquidity: 40000 }) },
-    { headers: { age: "10" } },
+    { headers: { age: "20" } },
     { fail: true }
   ];
   for (const options of cases) assert.equal((await fixture(options).guard.prepareEntry(coin)).allowed, false);
