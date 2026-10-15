@@ -47,7 +47,7 @@ function getMomentumFailureReasons(coin, now = Date.now()) {
   if (buyRatio < MIN_BUY_RATIO_5M || buySellRatio < MIN_BUY_SELL_RATIO_5M) failures.push("buyRatio5m");
   if (!Number.isFinite(momentum5m) || momentum5m > MAX_MOMENTUM_5M) failures.push("momentum5m");
   if (ageValid && coin.momentumPattern?.ready !== true)
-    failures.push(coin.momentumPattern?.reason === "retrace_over_35_percent" ? "retraceOver35Percent" : "momentumPattern");
+    failures.push(coin.momentumPattern?.reason === "retrace_over_45_percent" ? "retraceOver45Percent" : "momentumPattern");
   if (!coin.tokenAddress) failures.push("tokenAddress");
   if (coin.chainId !== "solana") failures.push("chainId");
   if (!coin.pairAddress) failures.push("pairAddress");
@@ -130,4 +130,5 @@ module.exports = {
   getBuySizing,
   chooseExit
 };
+
 

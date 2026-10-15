@@ -92,8 +92,26 @@ test("cached scans require a 30% pump, 10-30% retrace and 5% rebound with buy fl
   const rebound = sample(120_000, 1.26, 140, 101, 4);
   assert.equal(rebound.ready, true);
   assert.equal(rebound.flowIsApproximation, true);
-  const exhausted = sample(150_000, 0.95, 136, 102, -5);
-  assert.equal(exhausted.reason, "retrace_over_35_percent");
+  const exhausted = sample(150_000, 0.75, 136, 102, -5);
+  assert.equal(exhausted.reason, "retrace_over_45_percent");
+});
+
+test("deep pullback route requires a strong sustained recovery", () => {
+  const { createMomentumTracker } = require("../profitSniperMomentum");
+  const tracker = createMomentumTracker();
+  const base = { tokenAddress: "mint-deep", pairAddress: "pool-deep", liquidityUsd: 20_000 };
+  const sample = (at, price, buys5m, sells5m, volume5m) =>
+    tracker.observe({ ...base, priceUsd: price, buys5m, sells5m, volume5m, priceChange5m: 5 }, at);
+  sample(0, 1, 100, 60, 10_000);
+  sample(30_000, 1.60, 115, 65, 11_000);
+  sample(60_000, 0.85, 125, 70, 12_000);
+  sample(90_000, 0.92, 140, 75, 13_000);
+  const recovered = sample(120_000, 1.00, 160, 80, 15_000);
+  assert.equal(recovered.ready, true);
+  assert.equal(recovered.entryRoute, "deep_pullback");
+  assert.equal(recovered.liquidityRetained, true);
+  assert.equal(recovered.volumeIncreasing, true);
+  assert.ok(recovered.reboundFromLowPercent >= 12);
 });
 
 test("a 10% pullback can qualify but a shallower pullback cannot", () => {
