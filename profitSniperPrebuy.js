@@ -44,11 +44,12 @@ function createEntryGuard({
   const get = httpGet || ((...args) => require("axios").get(...args));
   let lastCheck = null;
   const counters = { passed: 0, rejected: 0 };
-  const reject = (coin, reason) => {
+  const reject = (coin, reason, details = {}) => {
     counters.rejected++;
     lastCheck = { symbol: coin.symbol, tokenAddress: coin.tokenAddress, pairAddress: coin.pairAddress,
-      allowed: false, reason, checkedAt: new Date(clock()).toISOString() };
-    return { allowed: false, reason };
+      allowed: false, reason, ...details, checkedAt: new Date(clock()).toISOString() };
+    console.log("PROFIT SNIPER PREBUY REJECT | " + JSON.stringify(lastCheck));
+    return { allowed: false, reason, ...details };
   };
   async function request(url, signal) {
     if (signal?.aborted) throw new Error("ABORTED");
@@ -58,7 +59,7 @@ function createEntryGuard({
     if (signal?.aborted) throw new Error("ABORTED");
     const ageSeconds = Number(response.headers?.age || 0);
     if (!Number.isFinite(ageSeconds) || ageSeconds * 1000 > MAX_SAMPLE_AGE_MS ||
-        clock() - startedAt > MAX_SAMPLE_AGE_MS) throw new Error("STALE_RESPONSE");
+        clock() - startedAt > MAX_SAMPLE_AGE_MS) throw new Error("STALE_RESPONSE: cacheAgeSeconds=" + ageSeconds + "; requestMs=" + (clock()-startedAt));
     return { data: response.data, sampledAt: clock() };
   }
   async function readLock(coin, signal) {
@@ -77,9 +78,18 @@ function createEntryGuard({
     }
   }
   async function quote(coin, signal) {
-    const response = await request("https://api.dexscreener.com/latest/dex/pairs/solana/" +
-      encodeURIComponent(coin.pairAddress), signal);
-    const pairs = (response.data?.pairs || []).filter(p => p.chainId === "solana" &&
+    let response;
+    try {
+      response = await request("https://api.dexscreener.com/latest/dex/pairs/solana/" +
+        encodeURIComponent(coin.pairAddress), signal);
+    } catch (error) {
+      if (!error.message.startsWith("STALE_RESPONSE:")) throw error;
+      // The independent official token endpoint can have a fresher cache.
+      // Both responses must satisfy the same freshness and exact-pool checks.
+      response = await request("https://api.dexscreener.com/tokens/v1/solana/" +
+        encodeURIComponent(coin.tokenAddress), signal);
+    }
+    const pairs = (Array.isArray(response.data) ? response.data : response.data?.pairs || []).filter(p => p.chainId === "solana" &&
       p.pairAddress === coin.pairAddress && p.baseToken?.address === coin.tokenAddress);
     if (pairs.length !== 1) throw new Error("EXACT_POOL_QUOTE_UNAVAILABLE");
     const p = pairs[0];
@@ -105,7 +115,7 @@ function createEntryGuard({
       if (!lock.allowed) return reject(coin, lock.reason);
       const amountUsd = getBuySizing(portfolio || {cashBalance:100,positions:[],history:[]}).amountInvested;
       const execution = await verifyExecution(coin, {amountUsd,signal});
-      if (!execution.allowed) return reject(coin, execution.reason);
+      if (!execution.allowed) return reject(coin, execution.reason, {executionQuote:execution});
       // This is the last network operation before the synchronous paper buy.
       const final = await quote(coin, signal);
       if (signal?.aborted) return reject(coin, "ABORTED");

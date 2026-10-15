@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createMomentumTracker } = require("../profitSniperMomentum");
 
-test("historical candles supply the earlier pump and pullback while live scans confirm recovery", () => {
+test("historical pump telemetry does not change the live activity entry route", () => {
   const tracker = createMomentumTracker();
   const start = 1_800_000_000_000;
   const coin = { tokenAddress: "mint-A", pairAddress: "pool-A", priceUsd: 1.20,
@@ -23,7 +23,7 @@ test("historical candles supply the earlier pump and pullback while live scans c
   const third = tracker.observe({ ...coin, priceUsd: 1.22, buys5m: 126, sells5m: 55,
     volume5m: 12_000 }, start + 60_000);
   assert.equal(third.ready, true);
-  assert.equal(third.entryRoute, "confirmed_pullback_recovery");
+  assert.equal(third.entryRoute, "activity_continuation");
 });
 
 test("a pool first seen before minimum age can hydrate once it becomes eligible", () => {
@@ -41,3 +41,4 @@ test("a pool first seen before minimum age can hydrate once it becomes eligible"
   assert.equal(tracker.hydrate(coin, candles, start + 60_000), true);
   assert.equal(tracker.hasHistorical(coin), true);
 });
+

@@ -102,3 +102,25 @@ test("missing execution routes and final price falling both prevent entry", asyn
   assert.equal((await falling.guard.prepareEntry(coin)).reason,"PRICE_FALLING_BEFORE_PURCHASE");
 });
 
+
+
+test("stale pair cache retries official token endpoint and still requires exact fresh pool", async () => {
+  let time=now; const urls=[];
+  const guard=createEntryGuard({clock:()=>time,wait:async ms=>{time+=ms;},
+    verifyExecution:async()=>({allowed:true,lossPercent:1}),
+    httpGet:async url=>{
+      urls.push(url);
+      if(url.includes('rugcheck'))return {data:report(),headers:{}};
+      if(url.includes('/latest/dex/pairs/'))return {data:{pairs:[pair()]},headers:{age:'20'}};
+      return {data:[pair({price:1.02})],headers:{age:'1'}};
+    }});
+  assert.equal((await guard.prepareEntry(coin)).allowed,true);
+  assert.equal(urls.filter(url=>url.includes('/tokens/v1/solana/')).length,2);
+});
+test("cost rejection retains actual quote values for diagnosis",async()=>{
+  const execution={allowed:false,reason:'ROUND_TRIP_COST_TOO_HIGH',lossPercent:3.37,
+    amountUsd:20,quotedSellValueUsd:19.546,slippageBufferPercent:1,maximumLossPercent:3};
+  const {guard}=fixture({verifyExecution:async()=>execution});
+  assert.equal((await guard.prepareEntry(coin)).allowed,false);
+  assert.deepEqual(guard.getStatus().lastCheck.executionQuote,execution);
+});

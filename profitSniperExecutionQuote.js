@@ -31,13 +31,13 @@ function createExecutionVerifier({httpGet=(...args)=>axios.get(...args),clock=Da
       const estimatedNetworkFeesUsd=0.02;
       const lossPercent=(Number(amountUsd)-returned+estimatedNetworkFeesUsd)/Number(amountUsd)*100+
         CONFIG.ROUND_TRIP_SLIPPAGE_BUFFER_PERCENT;
-      if(lossPercent>CONFIG.MAX_ROUND_TRIP_LOSS_PERCENT)
-        return {allowed:false,reason:"ROUND_TRIP_COST_TOO_HIGH",lossPercent};
-      return {allowed:true,provider:"Jupiter quote only",amountUsd:Number(amountUsd),
+      const result = {allowed:lossPercent<=CONFIG.MAX_ROUND_TRIP_LOSS_PERCENT,provider:"Jupiter quote only",amountUsd:Number(amountUsd),
         quotedSellValueUsd:returned,estimatedNetworkFeesUsd,
         slippageBufferPercent:CONFIG.ROUND_TRIP_SLIPPAGE_BUFFER_PERCENT,
         lossPercent,checkedAt:new Date(clock()).toISOString(),
-        buyRouter:buy.data.router,sellRouter:sell.data.router};
+        buyRouter:buy.data.router,sellRouter:sell.data.router,
+        maximumLossPercent:CONFIG.MAX_ROUND_TRIP_LOSS_PERCENT};
+      return result.allowed ? result : {...result,reason:"ROUND_TRIP_COST_TOO_HIGH"};
     } catch(error) {
       return {allowed:false,reason:"EXECUTION_DATA_PENDING: "+(error.response?.status ?
         "HTTP "+error.response.status : error.message)};

@@ -2,14 +2,9 @@ const CONFIG = require("./profitSniperConfig");
 const MAX_PAIR_AGE_MS = CONFIG.MAX_PAIR_AGE_MS;
 const MIN_PAIR_AGE_MS = CONFIG.MIN_PAIR_AGE_MS;
 const MIN_LIQUIDITY_USD = CONFIG.MIN_LIQUIDITY_USD;
-const MIN_VOLUME_24H_USD = 0; // intentionally no 24h-volume floor
-const MAX_VOLUME_TO_LIQUIDITY = 100; // retained as an exported compatibility value; no longer gates entry
 const MIN_VOLUME_5M_USD = CONFIG.MIN_VOLUME_5M_USD;
 const MIN_TRANSACTIONS_5M = CONFIG.MIN_TRANSACTIONS_5M;
 const MIN_BUY_RATIO_5M = CONFIG.MIN_BUY_SHARE_5M;
-const MIN_BUY_SELL_RATIO_5M = CONFIG.MIN_BUY_SELL_RATIO_5M;
-const MIN_MOMENTUM_5M = 0;
-const MAX_MOMENTUM_5M = CONFIG.MAX_MOMENTUM_5M_PERCENT;
 const HARD_STOP_PERCENT = -8;
 const MIN_EXIT_LIQUIDITY_USD = 1000;
 const MAX_EXIT_LIQUIDITY_DRAWDOWN = 0.25;
@@ -30,7 +25,6 @@ function getMomentumFailureReasons(coin, now = Date.now()) {
   const createdAt = Number(coin.pairCreatedAt);
   const ageMs = now - createdAt;
   const liquidity = Number(coin.liquidityUsd);
-  const volume24h = Number(coin.volume24h);
   const volume5m = Number(coin.volume5m);
   const buys5m = Number(coin.buys5m);
   const sells5m = Number(coin.sells5m);
@@ -46,7 +40,7 @@ function getMomentumFailureReasons(coin, now = Date.now()) {
   if (buyRatio < MIN_BUY_RATIO_5M) failures.push("buyRatio5m");
   if (!Number.isFinite(momentum5m)) failures.push("momentum5m");
   if (ageValid && coin.momentumPattern?.ready !== true)
-    failures.push(coin.momentumPattern?.reason === "retrace_over_45_percent" ? "retraceOver45Percent" : "momentumPattern");
+    failures.push("momentumPattern");
   if (coin.momentumPattern?.observedAt !== undefined &&
       (!Number.isFinite(Number(coin.momentumPattern.observedAt)) || now-Number(coin.momentumPattern.observedAt)>75000))
     failures.push("staleMomentumConfirmation");
@@ -120,8 +114,8 @@ function chooseExit({ position, currentPrice, freshData, exitProgress }) {
 }
 
 module.exports = {
-  constants: { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MAX_VOLUME_TO_LIQUIDITY, MIN_VOLUME_5M_USD,
-    MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M, MIN_BUY_SELL_RATIO_5M, MIN_MOMENTUM_5M, MAX_MOMENTUM_5M,
+  constants: { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_5M_USD,
+    MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M,
     HARD_STOP_PERCENT, MIN_EXIT_LIQUIDITY_USD,
     MAX_EXIT_LIQUIDITY_DRAWDOWN,
     TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,

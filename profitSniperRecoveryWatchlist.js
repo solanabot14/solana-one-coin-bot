@@ -1,5 +1,4 @@
-function createRecoveryWatchlist({ maxAgeMs, maxSize, minimumLiquidityUsd, minimumVolume5mUsd,
-  maximumRetracePercent }) {
+function createRecoveryWatchlist({ maxAgeMs, maxSize, minimumLiquidityUsd, minimumVolume5mUsd }) {
   const items = new Map();
 
   function keyFor(coin) {

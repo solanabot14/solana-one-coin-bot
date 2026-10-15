@@ -47,7 +47,6 @@ function createMomentumTracker() {
   function observe(coin, now = Date.now()) {
     const key = keyFor(coin);
     const price = Number(coin?.priceUsd);
-    const change5m = Number(coin?.priceChange5m);
     const buys5m = Number(coin?.buys5m);
     const sells5m = Number(coin?.sells5m);
     const volume5m = Number(coin?.volume5m);
@@ -56,10 +55,9 @@ function createMomentumTracker() {
 
     let state = pools.get(key);
     if (!state) {
-      const inferredPump = Number.isFinite(CONFIG.MIN_PUMP_PERCENT) && Number.isFinite(change5m) && change5m >= CONFIG.MIN_PUMP_PERCENT;
-      const basePrice = inferredPump ? price / (1 + change5m / 100) : price;
+      const basePrice = price;
       state = { firstAt: now, basePrice, peakPrice: price, troughPrice: price, lastPrice: price,
-        samples: [], pumpSeen: inferredPump,
+        samples: [], pumpSeen: false,
         pullbackObserved: false,
         peakLiquidity: Number.isFinite(liquidity) && liquidity > 0 ? liquidity : null };
     }

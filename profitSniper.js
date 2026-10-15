@@ -13,9 +13,9 @@ const { createRecoveryWatchlist } = require("./profitSniperRecoveryWatchlist");
 const { createSniperEntryGuard } = require("./profitSniperEntryGuard");
 const { WINDOW_MS, buildProfitSniper48h } = require("./profitSniperAnalytics");
 const { constants } = strategy;
-const { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MAX_VOLUME_TO_LIQUIDITY, MIN_VOLUME_5M_USD,
-  MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M, MIN_MOMENTUM_5M, MAX_MOMENTUM_5M,
-  MAX_MOMENTUM_1H, MAX_MOMENTUM_24H, HARD_STOP_PERCENT,
+const { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_5M_USD,
+  MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M,
+  HARD_STOP_PERCENT,
   TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
   TAKE_PROFIT_2_SELL_PERCENT, TRAILING_STOP_PERCENT, PROFIT_FLOOR_AFTER_TP1_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD } = constants;
 const MAX_OPEN_POSITIONS = 3;
@@ -54,8 +54,7 @@ const recoveryWatchlist = createRecoveryWatchlist({
   maxAgeMs: CONFIG.RECOVERY_WATCHLIST_MAX_AGE_MS,
   maxSize: CONFIG.RECOVERY_WATCHLIST_MAX_SIZE,
   minimumLiquidityUsd: MIN_LIQUIDITY_USD,
-  minimumVolume5mUsd: MIN_VOLUME_5M_USD,
-  maximumRetracePercent: CONFIG.MAX_RETRACE_PERCENT
+  minimumVolume5mUsd: MIN_VOLUME_5M_USD
 });
 const cumulativeRejectionCounts = {};
 const TELEMETRY_PATH = statePath("profitSniperTelemetry48h.json");
@@ -429,17 +428,17 @@ module.exports = {
     minimumVolume5mUsd: MIN_VOLUME_5M_USD,
     minimumTransactions5m: MIN_TRANSACTIONS_5M,
     minimumBuyRatio5m: MIN_BUY_RATIO_5M,
-    minimumMomentum5mPercent: MIN_MOMENTUM_5M,
+    minimumMomentum5mPercent: null,
     maximumMomentum5mPercent: null,
-    maximumMomentum1hPercent: MAX_MOMENTUM_1H,
-    maximumMomentum24hPercent: MAX_MOMENTUM_24H,
-    minimumPumpPercent: CONFIG.MIN_PUMP_PERCENT,
+    maximumMomentum1hPercent: null,
+    maximumMomentum24hPercent: null,
+    minimumPumpPercent: null,
     pumpRequired: false,
     pullbackRequired: false,
     highVolume5mUsd: CONFIG.HIGH_VOLUME_5M_USD,
     highTransactions5m: CONFIG.HIGH_TRANSACTIONS_5M,
     maxRoundTripLossPercent: CONFIG.MAX_ROUND_TRIP_LOSS_PERCENT,
-    maximumRetracePercent: CONFIG.MAX_RETRACE_PERCENT,
+    maximumRetracePercent: null,
     recoveryMinimumBuyShare: CONFIG.RECOVERY_MIN_BUY_SHARE,
     recoveryConfirmationSpanMs: CONFIG.RECOVERY_CONFIRMATION_SPAN_MS,
     recoveryMinimumLiquidityRetentionPercent: null,
