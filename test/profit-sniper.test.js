@@ -113,7 +113,7 @@ test("a deep pullback uses the same adaptive recovery route", () => {
   assert.equal(recovered.volumeIncreasing, true);
 });
 
-test("a small pullback can qualify without a fixed rebound percentage", () => {
+test("one real rise after a small pullback can qualify before the separate stability guard", () => {
   const { createMomentumTracker } = require("../profitSniperMomentum");
   const build = suffix => {
     const tracker = createMomentumTracker();
@@ -126,8 +126,7 @@ test("a small pullback can qualify without a fixed rebound percentage", () => {
     return observe;
   };
   const observe = build("small");
-  assert.equal(observe(90_000, 1.48, 135, 86, 13_000, 1).ready, false);
-  const recovered = observe(120_000, 1.49, 150, 88, 14_000, 1);
+  const recovered = observe(90_000, 1.48, 135, 86, 13_000, 1);
   assert.equal(recovered.ready, true);
   assert.equal(recovered.entryRoute, "confirmed_pullback_recovery");
 });
