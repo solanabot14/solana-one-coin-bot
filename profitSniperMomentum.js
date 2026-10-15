@@ -87,7 +87,7 @@ function createMomentumTracker() {
       recovering && flowSpanMs >= CONFIG.MIN_RECOVERY_FLOW_SPAN_MS && flowBuys > flowSells;
     const reason = retracePercent > CONFIG.MAX_RETRACE_PERCENT ? "retrace_over_35_percent"
       : !state.pumpSeen ? "pump_not_observed"
-      : retracePercent < CONFIG.MIN_RETRACE_PERCENT ? "retrace_below_15_percent"
+      : retracePercent < CONFIG.MIN_RETRACE_PERCENT ? "retrace_below_10_percent"
       : retracePercent > CONFIG.MAX_ENTRY_RETRACE_PERCENT ? "retrace_outside_15_to_30_percent"
       : reboundFromLowPercent < CONFIG.MIN_REBOUND_FROM_LOW_PERCENT ? "rebound_below_5_percent"
       : !recovering ? "recovery_not_confirmed"
