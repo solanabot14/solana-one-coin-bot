@@ -82,7 +82,7 @@ function evaluatePoolReport(report, coin, liquidityUsd) {
   if (holders.top10Percent > CONFIG.MAX_TOP10_HOLDER_PERCENT)
     return "Top 10 holders exceed 35%";
   if (holders.largestPercent > CONFIG.MAX_SINGLE_HOLDER_PERCENT)
-    return "A holder exceeds 8%";
+    return "A holder exceeds " + CONFIG.MAX_SINGLE_HOLDER_PERCENT + "%";
   const lp = market.lp || {};
   const reserveUsd = Number(lp.baseUSD) + Number(lp.quoteUSD);
   const burned = isLiquidityBurned(report, market);

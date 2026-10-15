@@ -36,6 +36,9 @@ function createSniperDataClient({ httpGet = (...args) => axios.get(...args), clo
             throw new Error("STALE_SECURITY_RESPONSE");
           if (!response.data || response.data.mint !== address || !Array.isArray(response.data.markets))
             throw new Error("INVALID_SECURITY_REPORT");
+          const holders = response.data.topHolders ?? response.data.tokenHolders ?? response.data.holders;
+          if (!Array.isArray(holders) || !holders.length || !response.data.markets.length)
+            throw new Error("INCOMPLETE_SECURITY_REPORT");
           const value = { data: response.data, sampledAt: startedAt - age };
           if (clock() - value.sampledAt < 10000)
             reports.set(address, { until: value.sampledAt + 10000, value: structuredClone(value) });
@@ -43,7 +46,7 @@ function createSniperDataClient({ httpGet = (...args) => axios.get(...args), clo
         } catch (error) {
           aborted(signal);
           const status = error.response?.status;
-          const transient = status === 429 || status >= 500 ||
+          const transient = error.message === "INCOMPLETE_SECURITY_REPORT" || status === 429 || status >= 500 ||
             ["ECONNABORTED", "ETIMEDOUT", "ECONNRESET", "EAI_AGAIN"].includes(error.code);
           const retryAfter = Number(error.response?.headers?.["retry-after"]);
           const delay = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1000;
@@ -75,7 +78,10 @@ function createSniperDataClient({ httpGet = (...args) => axios.get(...args), clo
     } catch (error) {
       aborted(signal);
       history.set(key, { until: clock() + 60000, candles: [] });
-      if (error.response?.status === 429) historyCooldownUntil = clock() + 60000;
+      if (error.response?.status === 429) {
+        const retrySeconds = Number(error.response?.headers?.["retry-after"]);
+        historyCooldownUntil = clock() + Math.max(60000, Number.isFinite(retrySeconds) ? retrySeconds * 1000 : 0);
+      }
       console.warn("PROFIT SNIPER HISTORICAL PATTERN PENDING | " + coin.pairAddress + " | " + error.message);
       return [];
     }

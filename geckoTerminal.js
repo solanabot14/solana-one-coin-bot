@@ -5,7 +5,7 @@ const CANDLE_INTERVAL_SECONDS = 60;
 const CANDLE_CACHE_MS = 60 * 1000;
 const NEW_POOLS_CACHE_MS = 60 * 1000;
 // Keep a margin under the public API's approximate 10 requests/minute limit.
-const REQUEST_SPACING_MS = 3000;
+const REQUEST_SPACING_MS = 7500;
 const FAILURE_CACHE_MS = 30 * 1000;
 
 function wait(ms) {
@@ -44,14 +44,39 @@ function createGeckoTerminalClient({
 	let lastRequestAt = 0;
 	const feedCache = new Map();
 	const feedRequests = new Map();
+	const candleRequests = new Map();
+	let cooldownUntil = 0;
+	let rateLimitFailures = 0;
+
+	function unavailable() {
+		const error = new Error("GeckoTerminal cooldown after HTTP 429; retry later");
+		error.response = { status: 429, headers: { "retry-after": String(Math.max(1, Math.ceil((cooldownUntil - clock()) / 1000))) } };
+		return error;
+	}
 
 	function queueRequest(run) {
 		const request = requestQueue.then(async () => {
+			if (clock() < cooldownUntil) throw unavailable();
 			const delayMs = Math.max(0, requestSpacingMs - (clock() - lastRequestAt));
 			if (delayMs > 0) await sleep(delayMs);
 			if (run.signal?.aborted) throw new Error("GeckoTerminal request aborted.");
+			if (clock() < cooldownUntil) throw unavailable();
 			lastRequestAt = clock();
-			return run.execute();
+			try {
+				const result = await run.execute();
+				rateLimitFailures = 0;
+				return result;
+			} catch (error) {
+				if (error.response?.status === 429) {
+					rateLimitFailures++;
+					const raw = error.response?.headers?.["retry-after"];
+					const seconds = Number(raw);
+					const serverDelay = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : Date.parse(raw) - clock();
+					const backoff = Math.min(300000, 60000 * 2 ** Math.min(rateLimitFailures - 1, 3));
+					cooldownUntil = clock() + Math.max(backoff, Number.isFinite(serverDelay) ? serverDelay : 0);
+				}
+				throw error;
+			}
 		});
 		requestQueue = request.catch(() => {});
 		return request;
@@ -105,6 +130,7 @@ function createGeckoTerminalClient({
 		const cacheKey = `${poolAddress}:${tokenAddress}:${normalizedLimit}`;
 		const cached = cache.get(cacheKey);
 		if (cached && clock() - cached.at < cached.ttl) return structuredClone(cached.candles);
+		if (candleRequests.has(cacheKey)) return structuredClone(await candleRequests.get(cacheKey));
 
 		const request = queueRequest({ signal, execute: async () => {
 			const url = `${API_BASE}/networks/solana/pools/${encodeURIComponent(poolAddress)}/ohlcv/minute`;
@@ -119,14 +145,14 @@ function createGeckoTerminalClient({
 			return candles;
 		} });
 
-		try {
-			return structuredClone(await request);
-		} catch (error) {
+		const shared = request.catch(error => {
 			// Briefly cache failures too, so a provider/rate-limit error cannot
 			// trigger repeated requests or stop the separate paper experiment.
-			cache.set(cacheKey, { at: clock(), ttl: FAILURE_CACHE_MS, candles: [] });
+			cache.set(cacheKey, { at: clock(), ttl: Math.max(FAILURE_CACHE_MS, cooldownUntil - clock()), candles: [] });
 			throw error;
-		}
+		}).finally(() => candleRequests.delete(cacheKey));
+		candleRequests.set(cacheKey, shared);
+		return structuredClone(await shared);
 	}
 
 	return { getPoolCandles, getNewSolanaPools, getTrendingSolanaPools, getTopSolanaPools };

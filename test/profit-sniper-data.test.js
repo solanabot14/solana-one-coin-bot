@@ -2,7 +2,17 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createSniperDataClient } = require("../profitSniperData");
 const { holderConcentration, isLiquidityBurned } = require("../profitSniperEntryGuard");
-const report = { mint: "mint-A", markets: [] };
+const report = { mint: "mint-A", markets: [{ pubkey: "pool-A" }], topHolders: [{ pct: 2 }] };
+test("incomplete reports are retried and never cached as verified", async () => {
+  let now = 100000, calls = 0;
+  const client = createSniperDataClient({ clock: () => now, wait: async ms => {now += ms;},
+    httpGet: async () => ({data: ++calls === 1 ? {...report,topHolders:[]} : report}) });
+  assert.equal((await client.getReport("mint-A")).data.topHolders.length, 1);
+  assert.equal(calls, 2);
+  const incomplete = createSniperDataClient({ clock: () => now, wait: async ms => {now += ms;},
+    httpGet: async () => ({data: {...report,topHolders:[]}}) });
+  await assert.rejects(incomplete.getReport("mint-A"), /SECURITY_DATA_PENDING: INCOMPLETE/);
+});
 test("simultaneous security lookups share one request and expire within ten seconds", async () => {
   let now = 100000, calls = 0;
   const client = createSniperDataClient({ clock: () => now,

@@ -178,7 +178,8 @@ test("authority, top-holder concentration, liquidity lock and pool identity are 
   assert.match(evaluatePoolReport({ ...report, token: { mintAuthority: "authority", freezeAuthority: null } }, candidate, 25_000), /Mint authority/);
   assert.match(evaluatePoolReport({ ...report, token: { mintAuthority: null, freezeAuthority: "authority" } }, candidate, 25_000), /Freeze authority/);
   assert.match(evaluatePoolReport({ ...report, topHolders: Array.from({ length: 10 }, () => ({ pct: 4 })) }, candidate, 25_000), /Top 10/);
-  assert.match(evaluatePoolReport({ ...report, topHolders: [{ pct: 9 }] }, candidate, 25_000), /holder exceeds/);
+  assert.equal(evaluatePoolReport({ ...report, topHolders: [{ pct: 15 }] }, candidate, 25_000), null);
+  assert.match(evaluatePoolReport({ ...report, topHolders: [{ pct: 15.01 }] }, candidate, 25_000), /holder exceeds 15%/);
   assert.match(evaluatePoolReport({ ...report, markets: [{ ...report.markets[0], pubkey: "pool-B" }] }, candidate, 25_000), /exact pool/);
   assert.match(evaluatePoolReport({ ...report, markets: [{ pubkey: "pool-A", lp: { baseUSD: 0.25, quoteUSD: 0.25, lpLockedPct: 100, lpLockedUSD: 0.5 } }] }, candidate, 25_000), /reserve/);
 });

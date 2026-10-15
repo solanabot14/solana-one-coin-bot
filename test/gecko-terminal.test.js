@@ -2,6 +2,42 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createGeckoTerminalClient, normalizeCandles } = require("../geckoTerminal");
 
+test("HTTP 429 pauses all feeds and candles, respects Retry-After and increases repeated backoff", async () => {
+  let now = 1800000000000, calls = 0;
+  const client = createGeckoTerminalClient({ clock: () => now, requestSpacingMs: 0,
+    httpGet: async () => { calls++; throw Object.assign(new Error("limited"), {
+      response: { status: 429, headers: { "retry-after": "90" } } }); } });
+  await assert.rejects(client.getNewSolanaPools(), /limited/);
+  await assert.rejects(client.getTrendingSolanaPools(), /cooldown/);
+  await assert.rejects(client.getPoolCandles("a", "b"), /cooldown/);
+  assert.equal(calls, 1);
+  now += 90001;
+  await assert.rejects(client.getTopSolanaPools(), /limited/);
+  now += 90001;
+  await assert.rejects(client.getNewSolanaPools(), /cooldown/);
+  assert.equal(calls, 2);
+  now += 30000;
+  await assert.rejects(client.getNewSolanaPools(), /limited/);
+  assert.equal(calls, 3);
+});
+
+test("concurrent candles use a single request and independent cloned results", async () => {
+  let calls = 0;
+  const client = createGeckoTerminalClient({ requestSpacingMs: 0, httpGet: async () => {
+    calls++; return { data: { data: { attributes: { ohlcv_list: [[1, 1, 2, 1, 2, 10]] } } } };
+  } });
+  const [a,b] = await Promise.all([client.getPoolCandles("a","b"), client.getPoolCandles("a","b")]);
+  assert.equal(calls, 1); a[0].close = 100; assert.equal(b[0].close, 2);
+});
+
+test("default shared request spacing stays at 7.5 seconds", async () => {
+  let now = 1800000000000; const times = [];
+  const client = createGeckoTerminalClient({ clock: () => now, sleep: async ms => {now += ms;},
+    httpGet: async () => {times.push(now); return {data:{data:[]}};} });
+  await client.getNewSolanaPools(); await client.getTopSolanaPools();
+  assert.equal(times[1] - times[0], 7500);
+});
+
 test("normalizes pool OHLCV chronologically and excludes the still-open candle", () => {
 	const nowMs = 1_800_000_000_000;
 	const nowSeconds = Math.floor(nowMs / 1000);
@@ -47,7 +83,7 @@ test("fetches and caches the public Solana new-pools feed through the shared rat
 		httpGet: async (url, options) => {
 			calls += 1;
 			assert.match(url, /api\.geckoterminal\.com\/api\/v2\/networks\/solana\/new_pools$/);
-			assert.deepEqual(options.params, { include: "base_token,quote_token" });
+			assert.deepEqual(options.params, { include: "base_token,quote_token", page: 1 });
 			assert.equal(options.params.api_key, undefined);
 			return { data: { data: [pool] } };
 		}
