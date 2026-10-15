@@ -7,6 +7,7 @@ const { reconcileProfitSniperAccount } = require("./profitSniperReconcile");
 const { createBot } = require("./bot");
 const strategy = require("./profitSniperStrategy");
 const CONFIG = require("./profitSniperConfig");
+const {hourlyRank,compareHourly}=require("./profitSniperHourlyRank");
 const { createMomentumTracker } = require("./profitSniperMomentum");
 const { createRecoveryWatchlist } = require("./profitSniperRecoveryWatchlist");
 const { createSniperEntryGuard } = require("./profitSniperEntryGuard");
@@ -236,7 +237,7 @@ async function discoverCandidates(options = {}) {
   }
 
   const qualified = selectUniqueMintCandidates(entries
-    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0) || Number(b.volume5m || 0) - Number(a.volume5m || 0)));
+    .sort(compareHourly)).sort(compareHourly);
   recordRejections(now, rejectedGates);
   const scanState = poolDiscovery.getScanDiagnostics();
   lastScanDiagnostics = {
@@ -244,6 +245,8 @@ async function discoverCandidates(options = {}) {
     updatedAt: new Date(now).toISOString(),
     source: "DexScreener public feeds + fresh exact pairs + local momentum + RugCheck; pair age 5m-24h",
     exactTrending5mRanking: false,
+    exactTrending1hRanking: false,
+    ranking: "Custom 1h activity; 5m entry confirmation",
     poolsReceived: scanState?.poolsReceived ?? null,
     recentPools: scanned.length,
     activityQualified: scanned.length,
@@ -260,7 +263,8 @@ async function discoverCandidates(options = {}) {
     evaluations: logs,
     selectedByScore: qualified.slice(0, MAX_OPEN_POSITIONS).map(coin => ({
       symbol: coin.symbol || null, tokenAddress: coin.tokenAddress, pairAddress: coin.pairAddress,
-      score: Number(coin.score) || 0, fromAgeWatchlist: (coin.reasons || []).includes("AGE WATCHLIST REENTRY")
+      score: Number(coin.score) || 0, hourlyActivity:hourlyRank(coin),
+      fromAgeWatchlist: (coin.reasons || []).includes("AGE WATCHLIST REENTRY")
     })),
     error: scanState?.error || null
   };

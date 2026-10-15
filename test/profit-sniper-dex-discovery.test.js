@@ -21,6 +21,8 @@ test("Sniper uses only DexScreener endpoints, caches feeds and refreshes exact q
   assert.equal(urls.filter(url=>url.includes("/token-boosts/top/v1")).length,1);
   assert.equal(urls.filter(url=>url.includes("/latest/dex/pairs/")).length,2);
   assert.equal(discovery.getScanDiagnostics().exactTrending5mRanking,false);
+  assert.equal(discovery.getScanDiagnostics().exactTrending1hRanking,false);
+  assert.match(discovery.getScanDiagnostics().ranking,/1h/);
 });
 test("one discovery feed outage does not prevent other DexScreener feeds from supplying candidates",async()=>{
   const discovery=createDexDiscovery({clock:()=>now,httpGet:async url=>{

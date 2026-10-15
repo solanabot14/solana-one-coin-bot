@@ -1,6 +1,7 @@
 const axios = require("axios");
 const { analyzePoolCandidate } = require("./poolDiscoveryStrategy");
 const CONFIG = require("./profitSniperConfig");
+const {hourlyRank,compareHourly}=require("./profitSniperHourlyRank");
 const API = "https://api.dexscreener.com";
 const FEEDS = ["/token-boosts/top/v1", "/token-boosts/latest/v1",
   "/token-profiles/latest/v1", "/token-profiles/recent-updates/v1",
@@ -11,17 +12,18 @@ function mapLaunchPair(pair, descriptor) {
       pair.baseToken?.address!==descriptor.tokenAddress) return null;
   const data={chainId:pair.chainId,name:pair.baseToken.name,symbol:pair.baseToken.symbol,
     priceUsd:pair.priceUsd,liquidityUsd:pair.liquidity?.usd,volume5m:pair.volume?.m5,
-    volume24h:pair.volume?.h24,priceChange5m:pair.priceChange?.m5,
+    volume24h:pair.volume?.h24,volume1h:pair.volume?.h1,priceChange5m:pair.priceChange?.m5,
     priceChange1h:pair.priceChange?.h1,priceChange24h:pair.priceChange?.h24,
     buys5m:pair.txns?.m5?.buys,sells5m:pair.txns?.m5?.sells,
+    buys1h:pair.txns?.h1?.buys,sells1h:pair.txns?.h1?.sells,
     tokenAddress:descriptor.tokenAddress,pairAddress:descriptor.poolAddress,
     pairCreatedAt:descriptor.createdAt,discoverySource:descriptor.discoverySource};
   return {...data,...analyzePoolCandidate(data)};
 }
 
 function activity(pair) {
-  return (Number(pair?.volume?.m5) || 0) +
-    ((Number(pair?.txns?.m5?.buys) || 0) + (Number(pair?.txns?.m5?.sells) || 0)) * 10;
+  return hourlyRank({volume1h:pair?.volume?.h1,buys1h:pair?.txns?.h1?.buys,
+    sells1h:pair?.txns?.h1?.sells,priceChange1h:pair?.priceChange?.h1}).score;
 }
 
 function createDexDiscovery({ httpGet = (...args) => axios.get(...args), clock = Date.now } = {}) {
@@ -80,11 +82,18 @@ function createDexDiscovery({ httpGet = (...args) => axios.get(...args), clock =
         const descriptor=tracked.get(pair.pairAddress);
         if(!descriptor)continue;
         const mapped=mapLaunchPair(pair,descriptor);
-        if(mapped && clock()-mapped.pairCreatedAt <= CONFIG.MAX_PAIR_AGE_MS) candidates.push(mapped);
+        if(mapped && clock()-mapped.pairCreatedAt <= CONFIG.MAX_PAIR_AGE_MS) {
+          descriptor.activity=activity(pair); candidates.push(mapped);
+        }
       }
     }
     diagnostics={updatedAt:new Date(clock()).toISOString(),source:"DexScreener public feeds + fresh exact pairs",
-      exactTrending5mRanking:false, historicalSource:"Locally observed DexScreener price snapshots",
+      exactTrending5mRanking:false, exactTrending1hRanking:false,
+      ranking:"Custom 1h activity; 5m entry confirmation",
+      rankingWeights:{volume1h:40,transactions1h:30,buyShare1h:20,priceChange1h:10},
+      topHourly:candidates.sort(compareHourly).slice(0,10).map(coin=>({symbol:coin.symbol,
+        tokenAddress:coin.tokenAddress,pairAddress:coin.pairAddress,...hourlyRank(coin)})),
+      historicalSource:"Locally observed DexScreener price snapshots",
       poolsReceived:tracked.size,poolsTracked:descriptors.length,tokensConsidered:selected.length,
       sourceErrors:errors,error:candidates.length ? null : errors[0]?.error || null};
     console.log("PROFIT SNIPER DEXSCREENER DISCOVERY | "+JSON.stringify(diagnostics));
