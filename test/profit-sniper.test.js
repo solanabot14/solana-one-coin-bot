@@ -132,4 +132,19 @@ test("a small pullback can qualify without a fixed rebound percentage", () => {
   assert.equal(recovered.entryRoute, "confirmed_pullback_recovery");
 });
 
+test("promising pools stay tracked when the rotating discovery feed drops them", () => {
+  const { createRecoveryWatchlist } = require("../profitSniperRecoveryWatchlist");
+  const watchlist = createRecoveryWatchlist({ maxAgeMs: 600_000, maxSize: 20,
+    minimumLiquidityUsd: 8_000, minimumVolume5mUsd: 1_500, maximumRetracePercent: 45 });
+  const coin = { tokenAddress: "mint-track", pairAddress: "pool-track", liquidityUsd: 20_000,
+    volume5m: 75_000, momentumPattern: { pumpSeen: true, pullbackObserved: true, retracePercent: 5 } };
+  assert.equal(watchlist.remember(coin, 1_000), true);
+  const missing = watchlist.missing(new Set(), 31_000);
+  assert.equal(missing.length, 1);
+  assert.equal(missing[0].pairAddress, "pool-track");
+  watchlist.recordDirectRecheck(missing[0].key, coin, 31_000);
+  assert.equal(watchlist.values()[0].directRechecks, 1);
+  assert.equal(watchlist.missing(new Set(), 601_001).length, 0);
+});
+
 
