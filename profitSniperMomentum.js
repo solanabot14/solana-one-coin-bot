@@ -11,7 +11,9 @@ function createMomentumTracker() {
 
   function hydrate(coin, candles, now = Date.now()) {
     const key = keyFor(coin);
-    if (!key || key === ":" || pools.has(key) || !Array.isArray(candles) || candles.length < 2) return false;
+    const existing = pools.get(key);
+    if (!key || key === ":" || existing?.historicalHydrated ||
+        !Array.isArray(candles) || candles.length < 2) return false;
     const ordered = candles.filter(candle => Number(candle?.open) > 0 && Number(candle?.high) > 0 &&
       Number(candle?.low) > 0 && Number(candle?.close) > 0)
       .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
@@ -107,7 +109,9 @@ function createMomentumTracker() {
     pools.delete(keyFor(coin));
   }
 
-  return { observe, hydrate, has: coin => pools.has(keyFor(coin)), remove, size: () => pools.size };
+  return { observe, hydrate,
+    hasHistorical: coin => pools.get(keyFor(coin))?.historicalHydrated === true,
+    remove, size: () => pools.size };
 }
 
 module.exports = { createMomentumTracker };

@@ -81,7 +81,7 @@ async function discoverCandidates(options = {}) {
     const key = String(raw.tokenAddress || "") + ":" + String(raw.pairAddress || "");
     currentKeys.add(key);
     const basicFailures = getMomentumFailureReasons({ ...raw, momentumPattern: { ready: true } }, now);
-    if (!basicFailures.length && !momentumTracker.has(raw)) {
+    if (!basicFailures.length && !momentumTracker.hasHistorical(raw)) {
       try {
         const ageMinutes = Math.max(1, Math.ceil((now - Number(raw.pairCreatedAt)) / 60_000) + 2);
         const candles = await require("./geckoTerminal").getPoolCandles(raw.pairAddress,
