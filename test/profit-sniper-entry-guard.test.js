@@ -42,6 +42,69 @@ test("requires two observations across 30 seconds and resets after liquidity fal
   assert.equal(guard.observe({ ...candidate, liquidityUsd: 20_000 }).ready, false);
 });
 
+test("bot waits for the last entry recheck and uses its fresh quote", async () => {
+  const { createBot } = require("../bot");
+  const buys = [];
+  const trader = {
+    buy: coin => { buys.push(coin); return { success: true, trade: { type: "BUY" } }; },
+    sell: () => ({ success: false }), updateHigh: () => true,
+    positionKey: position => position.id,
+    getPortfolio: () => ({ cashBalance: 100, positions: [], history: [] })
+  };
+  const bot = createBot({ trader, discoverCandidates: async () => [candidate],
+    validateEntry: async () => ({ allowed: false, reason: "pool drained" }),
+    requireLiquidityLock: false, acceptedSignals: ["BUY"],
+    minimumLiquidityUsd: 15_000, minimumVolume24hUsd: 0,
+    timers: { setInterval: () => 1, clearInterval: () => {} },
+    notifier: { notifyTrade: async () => {}, notifyCritical: async () => {} },
+    reentryStateFile: null });
+  bot.startBot();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(buys.length, 0);
+  bot.stopBot();
+
+  const approved = createBot({ trader, discoverCandidates: async () => [candidate],
+    validateEntry: async coin => ({ allowed: true, coin: { ...coin, priceUsd: 1.01 } }),
+    requireLiquidityLock: false, acceptedSignals: ["BUY"],
+    minimumLiquidityUsd: 15_000, minimumVolume24hUsd: 0,
+    timers: { setInterval: () => 1, clearInterval: () => {} },
+    notifier: { notifyTrade: async () => {}, notifyCritical: async () => {} },
+    reentryStateFile: null });
+  approved.startBot();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(buys.length, 1);
+  assert.equal(buys[0].priceUsd, 1.01);
+  approved.stopBot();
+});
+
+test("full Profit Sniper slots keep discovery observations warm without buying", async () => {
+  const { createBot } = require("../bot");
+  let scans = 0;
+  let buys = 0;
+  const positions = Array.from({ length: 3 }, (_, index) =>
+    ({ id: index + 1, tokenAddress: "mint-" + index }));
+  const trader = {
+    buy: () => { buys++; return { success: true }; },
+    sell: () => ({ success: false }), updateHigh: () => true,
+    positionKey: position => position.id,
+    getPortfolio: () => ({ cashBalance: 100, positions, history: [] })
+  };
+  const bot = createBot({ trader, scanWhenFull: true,
+    maxOpenPositions: 3,
+    discoverCandidates: async () => { scans++; return [candidate]; },
+    getTokenData: async () => null,
+    requireLiquidityLock: false, acceptedSignals: ["BUY"],
+    notifier: { notifyTrade: async () => {}, notifyCritical: async () => {} },
+    timers: { setInterval: () => 1, clearInterval: () => {} },
+    reentryStateFile: null });
+  bot.startBot();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(scans, 1);
+  assert.equal(buys, 0);
+  bot.stopBot();
+});
+
+
 test("a pool must be at least 10 minutes old before stability checks can admit it", async () => {
   const tooYoung = { ...candidate, pairCreatedAt: start - 9 * 60_000 };
   assert.ok(getMomentumFailureReasons(tooYoung, start).includes("age"));
@@ -123,3 +186,4 @@ test("blocks repeat entries after a write-off or price collapse", () => {
   assert.equal(hasCatastrophicLoss([{ type: "SELL", tokenAddress: "mint-A", entryPrice: 1, exitPrice: 0.2 }], "mint-A"), true);
   assert.equal(hasCatastrophicLoss([{ type: "SELL", tokenAddress: "mint-B", entryPrice: 1, exitPrice: 0.2 }], "mint-A"), false);
 });
+

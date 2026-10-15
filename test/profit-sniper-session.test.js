@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createPaperTrader } = require('../paperTrader');
 const { chooseExit, getBuySizing } = require('../profitSniperStrategy');
+const { percentOfRemainingToReachOriginalTarget } = require('../bot');
 function account(t) {
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sniper-reset-'));
  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
@@ -26,13 +27,15 @@ test('reset preserves every old event and open snapshot, persists archive, and n
  assert.equal(reopened.cashBalance,180); assert.equal(reopened.history.length,1);
  assert.equal(reopened.archivedSessions.length,1);
 });
-test('actual paper fills sell 50 original tokens at +10% and the rest at +20%',t=>{
+test('actual paper fills sell 40 original tokens at +15% and another 40 at +25%',t=>{
  const trader=createPaperTrader(account(t),fs,{startingBalance:1000,getBuySizing:()=>({amountInvested:100})});
  trader.buy({tokenAddress:'mint',pairAddress:'pool',priceUsd:1});
- for (const [price,remaining] of [[1.1,50],[1.2,0]]) {
+ for (const [price,remaining] of [[1.15,60],[1.25,20]]) {
    let position=trader.getPortfolio().position;
    const action=chooseExit({position,currentPrice:price});
-   assert.ok(action); assert.equal(trader.sell(price,action.percent,{expectedPosition:position.id,...action}).success,true);
+   assert.ok(action);
+   const percent=percentOfRemainingToReachOriginalTarget(position,trader.getPortfolio().history,action.targetOriginalPositionPercent);
+   assert.equal(trader.sell(price,percent,{expectedPosition:position.id,...action}).success,true);
    assert.ok(Math.abs((trader.getPortfolio().position?.quantity||0)-remaining)<1e-9);
  }
  assert.equal(trader.getPortfolio().history.length,3);
@@ -45,3 +48,4 @@ test('failed reset save leaves original persisted account intact',t=>{
  assert.throws(()=>createPaperTrader(file,io,{startingBalance:200,sessionResetId:'reset'}),/disk failure/);
  assert.equal(fs.readFileSync(file,'utf8'),original);
 });
+

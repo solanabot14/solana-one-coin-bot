@@ -55,6 +55,11 @@ test("trade sizing compounds 10%, 12.5%, then 15%, repeating with a $10 minimum"
 });
 test("exit rules remain unchanged", () => {
   const position = { entryPrice: 100, highestPrice: 100 };
+  assert.deepEqual(chooseExit({ position: { entryPrice: 100, entryLiquidityUsd: 20000 },
+    currentPrice: 105, freshData: { liquidityUsd: 14999 } }), { percent: 100, reason: "EMERGENCY EXIT: POOL LIQUIDITY DOWN 25%" });
+  assert.deepEqual(chooseExit({ position: { entryPrice: 1, quantity: 100 }, currentPrice: 100,
+    freshData: { liquidityUsd: 15000 } }), { percent: 100, writeOff: true, reason: "UNEXECUTABLE QUOTE: POSITION EXCEEDS POOL CAPACITY" });
+  assert.equal(chooseExit({ position: { ...position, highestPrice: 160 }, currentPrice: 141, exitProgress: { soldPercent: 80 } }), null);
   assert.deepEqual(chooseExit({ position: { entryPrice: 100 }, currentPrice: 1, freshData: { liquidityUsd: 1 } }),
     { percent: 100, writeOff: true, reason: "EMERGENCY WRITE-OFF: NO EXECUTABLE LIQUIDITY" });
   assert.deepEqual(chooseExit({ position, currentPrice: 92, exitProgress: { soldPercent: 0 } }), { percent: 100, reason: "HARD STOP -8%" });
@@ -67,6 +72,7 @@ test("exit rules remain unchanged", () => {
     { percent: 100, reason: "TRAILING STOP -12% FROM HIGH" });
 });
 test("age rejection is distinguishable for watchlist tracking", () => {
+  assert.ok(getMomentumFailureReasons(candidate({ tokenAddress: "EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J" })).includes("blockedTokenAddress"));
   const tooYoung = getMomentumFailureReasons(candidate({ pairCreatedAt: Date.now() - 9 * 60 * 1000 }));
   assert.deepEqual(tooYoung, ["age"]);
   assert.ok(getMomentumFailureReasons(candidate({ priceChange5m: 36 })).includes("momentum5m"));
@@ -88,3 +94,4 @@ test("cached scans detect pump, 15-25% retrace and recovery with estimated buy f
   const exhausted = sample(150_000, 0.95, 136, 102, -5);
   assert.equal(exhausted.reason, "retrace_over_35_percent");
 });
+
