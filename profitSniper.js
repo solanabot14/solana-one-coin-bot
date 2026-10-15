@@ -183,6 +183,7 @@ async function discoverCandidates(options = {}) {
         risingSteps: pattern.risingSteps ?? null,
         liquidityRetained: pattern.liquidityRetained ?? null,
         volumeIncreasing: pattern.volumeIncreasing ?? null,
+        pullbackObserved: !!pattern.pullbackObserved,
         ready: !!pattern.ready,
         reason: pattern.reason || null
       },
@@ -193,7 +194,7 @@ async function discoverCandidates(options = {}) {
     if (!failures.length) {
       entries.push({ ...coin, signal: "ORDER FLOW BUY",
         reasons: [...(coin.reasons || []), "Direct Sniper entry gates passed",
-          ...(coin.momentumPattern?.entryRoute === "deep_pullback" ? ["DEEP PULLBACK RECOVERY"] : ["NORMAL PULLBACK RECOVERY"]),
+          "CONFIRMED PULLBACK RECOVERY",
           ...(wasWatchlisted ? ["AGE WATCHLIST REENTRY"] : []),
           "Exact identity: Solana mint " + coin.tokenAddress + "; pool " + coin.pairAddress] });
     }
@@ -392,16 +393,10 @@ module.exports = {
     maximumMomentum1hPercent: MAX_MOMENTUM_1H,
     maximumMomentum24hPercent: MAX_MOMENTUM_24H,
     minimumPumpPercent: CONFIG.MIN_PUMP_PERCENT,
-    minimumRetracePercent: CONFIG.MIN_RETRACE_PERCENT,
-    maximumEntryRetracePercent: CONFIG.MAX_ENTRY_RETRACE_PERCENT,
     maximumRetracePercent: CONFIG.MAX_RETRACE_PERCENT,
-    deepPullbackMinimumPercent: CONFIG.DEEP_PULLBACK_MIN_PERCENT,
-    deepPullbackMaximumPercent: CONFIG.DEEP_PULLBACK_MAX_PERCENT,
-    deepMinimumPumpPercent: CONFIG.DEEP_MIN_PUMP_PERCENT,
-    deepMinimumReboundPercent: CONFIG.DEEP_MIN_REBOUND_PERCENT,
-    deepMinimumBuyShare: CONFIG.DEEP_MIN_BUY_SHARE,
-    deepMinimumConfirmationSpanMs: CONFIG.DEEP_MIN_CONFIRMATION_SPAN_MS,
-    deepMinimumLiquidityRetentionPercent: CONFIG.DEEP_MIN_LIQUIDITY_RETENTION * 100,
+    recoveryMinimumBuyShare: CONFIG.RECOVERY_MIN_BUY_SHARE,
+    recoveryConfirmationSpanMs: CONFIG.RECOVERY_CONFIRMATION_SPAN_MS,
+    recoveryMinimumLiquidityRetentionPercent: CONFIG.RECOVERY_MIN_LIQUIDITY_RETENTION * 100,
     minimumBuyShare5m: CONFIG.MIN_BUY_SHARE_5M,
     minimumBuySellRatio5m: CONFIG.MIN_BUY_SELL_RATIO_5M,
     watchlistRecheckMs: CONFIG.WATCHLIST_RECHECK_MS,
