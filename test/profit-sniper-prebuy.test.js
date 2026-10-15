@@ -31,7 +31,7 @@ function fixture({ first = pair(), final = pair({ price: 1.02 }), lockReport = r
       urls.push(url);
       assert.equal(options.headers["Cache-Control"], "no-cache");
       if (fail) throw new Error("HTTP_429");
-      return { headers, data: url.includes("rugcheck") ? lockReport : { pairs: [quotes++ ? final : first] } };
+      return { headers:url.includes("rugcheck")?{}:headers, data: url.includes("rugcheck") ? lockReport : { pairs: [quotes++ ? final : first] } };
     }
   });
   return { guard, urls };
@@ -61,7 +61,7 @@ test("liquidity collapse, missing data, disagreement, and stale responses fail c
     { final: pair({ liquidity: null }) },
     { final: pair({ price: null }) },
     { lockReport: report({ liquidity: 40000 }) },
-    { headers: { age: "20" } },
+    { headers: { age: "40" } },
     { fail: true }
   ];
   for (const options of cases) assert.equal((await fixture(options).guard.prepareEntry(coin)).allowed, false);
@@ -111,7 +111,7 @@ test("stale pair cache retries official token endpoint and still requires exact 
     httpGet:async url=>{
       urls.push(url);
       if(url.includes('rugcheck'))return {data:report(),headers:{}};
-      if(url.includes('/latest/dex/pairs/'))return {data:{pairs:[pair()]},headers:{age:'20'}};
+      if(url.includes('/latest/dex/pairs/'))return {data:{pairs:[pair()]},headers:{age:'40'}};
       return {data:[pair({price:1.02})],headers:{age:'1'}};
     }});
   assert.equal((await guard.prepareEntry(coin)).allowed,true);
@@ -123,4 +123,23 @@ test("cost rejection retains actual quote values for diagnosis",async()=>{
   const {guard}=fixture({verifyExecution:async()=>execution});
   assert.equal((await guard.prepareEntry(coin)).allowed,false);
   assert.deepEqual(guard.getStatus().lastCheck.executionQuote,execution);
+});
+
+test("27-second market cache is accepted, labeled honestly, with fresh execution last",async()=>{
+  const order=[];
+  let time=now;
+  const guard=createEntryGuard({clock:()=>time,wait:async ms=>{time+=ms;},
+    httpGet:async url=>{order.push(url.includes('rugcheck')?'report':'market');return url.includes('rugcheck')
+      ?{data:report(),headers:{}}:{data:{pairs:[pair()]},headers:{age:'27','cache-control':'public, max-age=30'}};},
+    verifyExecution:async()=>{order.push('execution');return {allowed:true,lossPercent:3.6,quotedCostPercent:2.6};}});
+  assert.equal((await guard.prepareEntry(coin)).allowed,true);
+  assert.equal(order.at(-1),'execution');
+  assert.equal(guard.getStatus().lastCheck.marketDataAgeMs,27000);
+  assert.equal(guard.getStatus().maximumMarketDataAgeMs,35000);
+});
+test("market cache age plus latency cannot bypass the 35-second bound",async()=>{
+  let time=now;
+  const guard=createEntryGuard({clock:()=>time,wait:async()=>{},httpGet:async()=>{time+=9000;
+    return {data:{pairs:[pair()]},headers:{age:'27'}};}});
+  assert.equal((await guard.prepareEntry(coin)).allowed,false);
 });

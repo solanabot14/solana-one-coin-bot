@@ -36,3 +36,33 @@ test("aborted quote requests never authorize entry",async()=>{
   assert.equal((await verify(coin,{amountUsd:20,signal:controller.signal})).allowed,false);
   assert.equal(calls.length,0);
 });
+
+
+test("ordinary 2.6% quoted costs pass with a separate 1% reserve; excessive costs still fail",async()=>{
+  const result=await setup({sellAmount:'19500000'}).verify(coin,{amountUsd:20});
+  assert.equal(result.allowed,true);
+  assert.ok(Math.abs(result.quotedCostPercent-2.6)<1e-9);
+  assert.ok(Math.abs(result.lossPercent-3.6)<1e-9);
+  assert.equal(result.slippageBufferPercent,1);
+  assert.equal(result.maximumLossPercent,4);
+  assert.equal((await setup({sellAmount:'19300000'}).verify(coin,{amountUsd:20})).allowed,false);
+});
+test("route fees are disclosed without charging them a second time",async()=>{
+  const verify=createExecutionVerifier({httpGet:async(url,{params:p})=>({data:{inputMint:p.inputMint,outputMint:p.outputMint,
+    inAmount:p.amount,outAmount:p.inputMint===USDC?'500000000':'19500000',feeBps:10,
+    routePlan:[{swapInfo:{ammKey:'pool'}}]}})});
+  const result=await verify(coin,{amountUsd:20});
+  assert.equal(result.buyFeeBps,10);assert.equal(result.sellFeeBps,10);
+  assert.ok(Math.abs(result.quotedCostPercent-2.6)<1e-9);
+});
+
+test('execution quotes still fail after 15 seconds despite the wider market-cache window',async()=>{
+  let time=100000;
+  const verify=createExecutionVerifier({clock:()=>time,httpGet:async(url,{params:p})=>{
+    time+=15001;
+    return {data:{inputMint:p.inputMint,outputMint:p.outputMint,inAmount:p.amount,
+      outAmount:'100',routePlan:[{swapInfo:{ammKey:'pool'}}]}};
+  }});
+  const result=await verify(coin,{amountUsd:20});
+  assert.equal(result.allowed,false);assert.match(result.reason,/STALE_EXECUTION_QUOTE/);
+});

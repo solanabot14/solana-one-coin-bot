@@ -80,7 +80,7 @@ function evaluatePoolReport(report, coin, liquidityUsd) {
   const holders = holderConcentration(report);
   if (!holders.verified) return "Top-holder concentration is unavailable";
   if (holders.top10Percent > CONFIG.MAX_TOP10_HOLDER_PERCENT)
-    return "Top 10 holders exceed 35%";
+    return "Top 10 holders exceed " + CONFIG.MAX_TOP10_HOLDER_PERCENT + "%";
   if (holders.largestPercent > CONFIG.MAX_SINGLE_HOLDER_PERCENT)
     return "A holder exceeds " + CONFIG.MAX_SINGLE_HOLDER_PERCENT + "%";
   const lp = market.lp || {};
@@ -234,4 +234,5 @@ function createSniperEntryGuard({
 }
 
 module.exports = { createSniperEntryGuard, hasCatastrophicLoss, evaluatePoolReport, holderConcentration, tokenAuthoritiesRenounced, isLiquidityBurned };
+
 

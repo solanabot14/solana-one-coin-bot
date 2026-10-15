@@ -11,7 +11,7 @@ function createExecutionVerifier({httpGet=(...args)=>axios.get(...args),clock=Da
       params:{inputMint,outputMint,amount},headers,timeout:8000,signal});
     const data=response.data;
     if(signal?.aborted)throw new Error("ABORTED");
-    if(clock()-at>15000)throw new Error("STALE_EXECUTION_QUOTE");
+    if(clock()-at>CONFIG.MAX_EXECUTION_QUOTE_AGE_MS)throw new Error("STALE_EXECUTION_QUOTE");
     if(data?.errorCode || data?.error || data?.inputMint!==inputMint || data?.outputMint!==outputMint ||
         String(data.inAmount)!==amount || !/^\d+$/.test(String(data.outAmount)) ||
         BigInt(data.outAmount)<=0n || !Array.isArray(data.routePlan) || !data.routePlan.length)
@@ -25,17 +25,26 @@ function createExecutionVerifier({httpGet=(...args)=>axios.get(...args),clock=Da
     try {
       const buy=await quote(USDC,coin.tokenAddress,String(raw),signal);
       const sell=await quote(coin.tokenAddress,USDC,String(buy.data.outAmount),signal);
-      if(clock()-buy.at>15000)throw new Error("STALE_ROUND_TRIP_QUOTE");
+      if(clock()-buy.at>CONFIG.MAX_EXECUTION_QUOTE_AGE_MS)throw new Error("STALE_ROUND_TRIP_QUOTE");
       const returned=Number(sell.data.outAmount)/1e6;
       if(!Number.isFinite(returned))throw new Error("INVALID_SELL_QUOTE");
       const estimatedNetworkFeesUsd=0.02;
-      const lossPercent=(Number(amountUsd)-returned+estimatedNetworkFeesUsd)/Number(amountUsd)*100+
-        CONFIG.ROUND_TRIP_SLIPPAGE_BUFFER_PERCENT;
-      const result = {allowed:lossPercent<=CONFIG.MAX_ROUND_TRIP_LOSS_PERCENT,provider:"Jupiter quote only",amountUsd:Number(amountUsd),
+      // Route output already incorporates pool/platform fees and price impact.
+      // Add only the separately modeled network allowance, then disclose the
+      // uncertainty reserve separately from the expected quoted trading cost.
+      const quotedPriceLossPercent=(Number(amountUsd)-returned)/Number(amountUsd)*100;
+      const networkFeePercent=estimatedNetworkFeesUsd/Number(amountUsd)*100;
+      const quotedCostPercent=quotedPriceLossPercent+networkFeePercent;
+      const lossPercent=quotedCostPercent+CONFIG.ROUND_TRIP_SLIPPAGE_BUFFER_PERCENT;
+      const result = {allowed:quotedCostPercent<=CONFIG.MAX_QUOTED_ROUND_TRIP_COST_PERCENT && lossPercent<=CONFIG.MAX_ROUND_TRIP_LOSS_PERCENT,provider:"Jupiter quote only",amountUsd:Number(amountUsd),
         quotedSellValueUsd:returned,estimatedNetworkFeesUsd,
         slippageBufferPercent:CONFIG.ROUND_TRIP_SLIPPAGE_BUFFER_PERCENT,
+        quotedPriceLossPercent,networkFeePercent,quotedCostPercent,
+        networkFeesAreEstimate:true,
+        buyFeeBps:buy.data.feeBps??null,sellFeeBps:sell.data.feeBps??null,
         lossPercent,checkedAt:new Date(clock()).toISOString(),
         buyRouter:buy.data.router,sellRouter:sell.data.router,
+        maximumQuotedCostPercent:CONFIG.MAX_QUOTED_ROUND_TRIP_COST_PERCENT,
         maximumLossPercent:CONFIG.MAX_ROUND_TRIP_LOSS_PERCENT};
       return result.allowed ? result : {...result,reason:"ROUND_TRIP_COST_TOO_HIGH"};
     } catch(error) {

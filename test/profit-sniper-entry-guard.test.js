@@ -177,7 +177,7 @@ test("authority, top-holder concentration, liquidity lock and pool identity are 
   assert.match(evaluatePoolReport(lock29, candidate, 25_000), /lock/);
   assert.match(evaluatePoolReport({ ...report, token: { mintAuthority: "authority", freezeAuthority: null } }, candidate, 25_000), /Mint authority/);
   assert.match(evaluatePoolReport({ ...report, token: { mintAuthority: null, freezeAuthority: "authority" } }, candidate, 25_000), /Freeze authority/);
-  assert.match(evaluatePoolReport({ ...report, topHolders: Array.from({ length: 10 }, () => ({ pct: 4 })) }, candidate, 25_000), /Top 10/);
+  assert.match(evaluatePoolReport({ ...report, topHolders: Array.from({ length: 10 }, () => ({ pct: 4.1 })) }, candidate, 25_000), /Top 10/);
   assert.equal(evaluatePoolReport({ ...report, topHolders: [{ pct: 15 }] }, candidate, 25_000), null);
   assert.match(evaluatePoolReport({ ...report, topHolders: [{ pct: 15.01 }] }, candidate, 25_000), /holder exceeds 15%/);
   assert.match(evaluatePoolReport({ ...report, markets: [{ ...report.markets[0], pubkey: "pool-B" }] }, candidate, 25_000), /exact pool/);
@@ -197,3 +197,11 @@ test("blocks repeat entries after a write-off or price collapse", () => {
 });
 
 
+
+
+test("top-ten cap is 40%, while individual-holder protection remains 15%",()=>{
+  const holders=pct=>Array.from({length:10},(_,i)=>({address:'holder-'+i,pct}));
+  assert.equal(evaluatePoolReport({...report,topHolders:holders(4)},candidate,25000),null);
+  assert.match(evaluatePoolReport({...report,topHolders:holders(4.1)},candidate,25000),/40%/);
+  assert.match(evaluatePoolReport({...report,topHolders:[{address:'whale',pct:15.1}]},candidate,25000),/15%/);
+});

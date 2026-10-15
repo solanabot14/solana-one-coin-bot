@@ -3,7 +3,8 @@ const { constants, getMomentumFailureReasons, getBuySizing } = require("./profit
 const CONFIG = require("./profitSniperConfig");
 const { evaluatePoolReport, isLiquidityBurned } = require("./profitSniperEntryGuard");
 const CONFIRMATION_MS = 7500;
-const MAX_SAMPLE_AGE_MS = 15000;
+const MAX_SAMPLE_AGE_MS = CONFIG.MAX_EXECUTION_QUOTE_AGE_MS;
+const MAX_MARKET_DATA_AGE_MS = CONFIG.MAX_MARKET_DATA_AGE_MS;
 const MAX_LIQUIDITY_DROP = 0.20;
 const MIN_LOCK_PERCENT = CONFIG.MIN_LP_LOCK_PERCENT;
 
@@ -58,9 +59,12 @@ function createEntryGuard({
       headers: { "Cache-Control": "no-cache" } });
     if (signal?.aborted) throw new Error("ABORTED");
     const ageSeconds = Number(response.headers?.age || 0);
-    if (!Number.isFinite(ageSeconds) || ageSeconds * 1000 > MAX_SAMPLE_AGE_MS ||
+    if (!Number.isFinite(ageSeconds) || ageSeconds < 0 ||
+        ageSeconds * 1000 + clock()-startedAt > MAX_MARKET_DATA_AGE_MS ||
         clock() - startedAt > MAX_SAMPLE_AGE_MS) throw new Error("STALE_RESPONSE: cacheAgeSeconds=" + ageSeconds + "; requestMs=" + (clock()-startedAt));
-    return { data: response.data, sampledAt: clock() };
+    return { data: response.data, sampledAt: startedAt-ageSeconds*1000,
+      receivedAt:clock(),cacheAgeSeconds:ageSeconds,
+      ageBasis:"HTTP cache age; underlying indexer delay unavailable" };
   }
   async function readLock(coin, signal) {
     const response = await reportClient.getReport(coin.tokenAddress, signal);
@@ -100,7 +104,8 @@ function createEntryGuard({
       sells5m: number(p.txns?.m5?.sells), priceChange5m: number(p.priceChange?.m5),
       priceChange1h: number(p.priceChange?.h1), priceChange24h: number(p.priceChange?.h24),
       momentumPattern: coin.momentumPattern,
-      sampledAt: response.sampledAt };
+      sampledAt: response.sampledAt, receivedAt:response.receivedAt,
+      cacheAgeSeconds:response.cacheAgeSeconds,ageBasis:response.ageBasis };
     if (!(q.priceUsd > 0) || !Number.isFinite(q.priceUsd)) throw new Error("INVALID_PRICE");
     const failures = getMomentumFailureReasons(q, clock());
     if (failures.length) throw new Error("FRESH_QUOTE_FAILED: " + failures.join(","));
@@ -114,14 +119,15 @@ function createEntryGuard({
       const lock = await readLock(coin, signal);
       if (!lock.allowed) return reject(coin, lock.reason);
       const amountUsd = getBuySizing(portfolio || {cashBalance:100,positions:[],history:[]}).amountInvested;
+      const final = await quote(coin, signal);
+      // Cached market statistics are a screening source. The final network
+      // operations are fresh executable buy/sell quotes at the actual size.
       const execution = await verifyExecution(coin, {amountUsd,signal});
       if (!execution.allowed) return reject(coin, execution.reason, {executionQuote:execution});
-      // This is the last network operation before the synchronous paper buy.
-      const final = await quote(coin, signal);
       if (signal?.aborted) return reject(coin, "ABORTED");
-      if (clock() - lock.sampledAt > MAX_SAMPLE_AGE_MS || clock() - final.sampledAt > MAX_SAMPLE_AGE_MS)
+      if (clock() - lock.sampledAt > MAX_SAMPLE_AGE_MS || clock() - final.sampledAt > MAX_MARKET_DATA_AGE_MS)
         return reject(coin, "STALE_FINAL_CHECK");
-      if (final.sampledAt - first.sampledAt < CONFIRMATION_MS)
+      if (final.receivedAt - first.receivedAt < CONFIRMATION_MS)
         return reject(coin, "CONFIRMATION_TOO_SHORT");
       if (final.priceUsd < first.priceUsd) return reject(coin, "PRICE_FALLING_BEFORE_PURCHASE");
       if (final.liquidityUsd < first.liquidityUsd * (1 - MAX_LIQUIDITY_DROP))
@@ -134,6 +140,9 @@ function createEntryGuard({
         allowed: true, reason: "VERIFIED", firstLiquidityUsd: first.liquidityUsd,
         finalLiquidityUsd: final.liquidityUsd, reportLiquidityUsd: lock.liquidityUsd,
         lockedPercent: lock.lockedPercent, executionQuote:execution,
+        marketDataAgeMs:clock()-final.sampledAt,marketCacheAgeSeconds:final.cacheAgeSeconds,
+        marketAgeBasis:final.ageBasis,
+        marketCacheAdvanced:final.sampledAt>first.sampledAt,
         checkedAt: new Date(clock()).toISOString() };
       return { allowed: true, coin: { ...coin, ...final, reasons: [...(coin.reasons || []),
         "Exact pool lock " + lock.lockedPercent + "%; reserves $" + lock.liquidityUsd.toFixed(2),
@@ -144,6 +153,8 @@ function createEntryGuard({
   }
   return { checkLiquidityLock, prepareEntry, getStatus: () => ({
     confirmationMs: CONFIRMATION_MS, maximumSampleAgeMs: MAX_SAMPLE_AGE_MS,
+    maximumMarketDataAgeMs:MAX_MARKET_DATA_AGE_MS,
+    maximumQuotedRoundTripCostPercent:CONFIG.MAX_QUOTED_ROUND_TRIP_COST_PERCENT,
     maximumLiquidityDropPercent: MAX_LIQUIDITY_DROP * 100,
     exactPoolLockRequired: true, minimumLiquidityUsd: constants.MIN_LIQUIDITY_USD,
     executionQuotesRequired: true, maximumRoundTripLossPercent: CONFIG.MAX_ROUND_TRIP_LOSS_PERCENT,
