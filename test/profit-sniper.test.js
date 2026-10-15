@@ -70,3 +70,20 @@ test("age rejection is distinguishable for watchlist tracking", () => {
   assert.deepEqual(tooYoung, ["age"]);
   assert.ok(getMomentumFailureReasons(candidate({ priceChange5m: 36 })).includes("momentum5m"));
 });
+
+test("cached scans detect pump, 15-25% retrace and recovery with estimated buy flow", () => {
+  const { createMomentumTracker } = require("../profitSniperMomentum");
+  const tracker = createMomentumTracker();
+  const base = { tokenAddress: "mint-rebound", pairAddress: "pool-rebound" };
+  const sample = (at, price, buys5m, sells5m, priceChange5m = 5) =>
+    tracker.observe({ ...base, priceUsd: price, buys5m, sells5m, priceChange5m }, at);
+  assert.equal(sample(0, 1, 100, 100, 0).ready, false);
+  assert.equal(sample(30_000, 1.31, 110, 100, 31).pumpSeen, true);
+  sample(60_000, 1.50, 120, 100, 20);
+  assert.equal(sample(90_000, 1.22, 125, 100, 2).ready, false);
+  const rebound = sample(120_000, 1.24, 135, 101, 3);
+  assert.equal(rebound.ready, true);
+  assert.equal(rebound.flowIsApproximation, true);
+  const exhausted = sample(150_000, 0.95, 136, 102, -5);
+  assert.equal(exhausted.reason, "retrace_over_35_percent");
+});
