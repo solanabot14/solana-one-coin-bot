@@ -304,6 +304,7 @@ function getStatus() {
     scanDiagnostics: lastScanDiagnostics,
     entryDiagnostics: {
       rejectionCounts: { ...cumulativeRejectionCounts },
+      poolStability: entryGuard.getStatus(),
       ageWatchlistPending: ageWatchlist.size,
       ageWatchlistRechecks,
       entriesFromAgeWatchlist: (trader.getPortfolio().history || []).filter(row => row?.type === "BUY" &&
