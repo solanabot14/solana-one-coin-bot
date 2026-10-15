@@ -114,7 +114,14 @@ function createSniperEntryGuard({
   const observations = new Map();
   let lastSecurityDiagnostics = null;
 
+  function pruneStaleObservations(now = clock()) {
+    for (const [key, item] of observations) {
+      if (now - item.lastAt > 2 * MAX_OBSERVATION_GAP_MS) observations.delete(key);
+    }
+  }
+
   function observe(coin, now = clock()) {
+    pruneStaleObservations(now);
     if (!coin?.tokenAddress || !coin.pairAddress) return { ready: false, reason: "missing exact pool identity" };
     const key = coin.tokenAddress + ":" + coin.pairAddress;
     const liquidity = Number(coin.liquidityUsd);
@@ -134,15 +141,13 @@ function createSniperEntryGuard({
           count: previous.count + (now - previous.lastAt >= 20_000 ? 1 : 0),
           liquidity, peakLiquidity: Math.max(previous.peakLiquidity, liquidity), price };
     observations.set(key, next);
-    for (const [address, item] of observations) {
-      if (now - item.lastAt > 2 * MAX_OBSERVATION_GAP_MS) observations.delete(address);
-    }
     const ready = next.count >= CONFIG.MIN_STABLE_POOL_OBSERVATIONS && now - next.firstAt >= CONFIG.MIN_STABLE_POOL_SPAN_MS;
     return { ready, reason: reset && previous ? "liquidity or price fell during observation" :
       ready ? null : "waiting for stable pool observations", observations: next.count };
   }
 
   function getStatus(now = clock()) {
+    pruneStaleObservations(now);
     const waiting = [];
     for (const [key, item] of observations) {
       const waitedMs = Math.max(0, now - item.firstAt);
@@ -211,3 +216,4 @@ function createSniperEntryGuard({
 }
 
 module.exports = { createSniperEntryGuard, hasCatastrophicLoss, evaluatePoolReport, holderConcentration, tokenAuthoritiesRenounced, isLiquidityBurned };
+
