@@ -9,12 +9,13 @@ function candidate(overrides = {}) {
 }
 test("Sniper uses 10m-3h age, activity, liquidity and rebound gates", () => {
   assert.equal(qualifiesMomentumCandidate(candidate()), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 9 * 60 * 1000 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 10 * 60 * 1000 })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 29 * 60 * 1000 })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 5 * 60 * 60 * 1000 })), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 3 * 60 * 60 * 1000 })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: Date.now() - 3 * 60 * 60 * 1000 - 1 })), false);
+  const now = Date.now();
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 9 * 60 * 1000 }), now), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 10 * 60 * 1000 }), now), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 29 * 60 * 1000 }), now), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 5 * 60 * 60 * 1000 }), now), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 3 * 60 * 60 * 1000 }), now), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 3 * 60 * 60 * 1000 - 1 }), now), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 0 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: undefined })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume5m: 1499 })), false);
