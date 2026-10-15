@@ -94,7 +94,8 @@ function createMomentumTracker() {
       ? confirmationSamples.at(-1).at - confirmationSamples[0].at : 0;
     const risingSteps = confirmationSamples.slice(1).filter((sample, index) =>
       sample.price > confirmationSamples[index].price).length;
-    const twoRisingObservations = confirmationSamples.length >= 3 && risingSteps >= 2 &&
+    const recoveryObserved = confirmationSamples.length >= 3 && risingSteps >= 1 &&
+      price >= state.lastPrice &&
       confirmationSpanMs >= CONFIG.RECOVERY_CONFIRMATION_SPAN_MS;
     const currentBuyShare = buys5m + sells5m > 0 ? buys5m / (buys5m + sells5m) : 0;
     const liquidityRetained = Number.isFinite(liquidity) && liquidity > 0 &&
@@ -105,14 +106,14 @@ function createMomentumTracker() {
       confirmationSamples.at(-1).volume5m > confirmationSamples[0].volume5m;
     const pumpPercent = state.basePrice > 0 ? (state.peakPrice / state.basePrice - 1) * 100 : 0;
     const ready = state.pumpSeen && state.pullbackObserved &&
-      retracePercent <= CONFIG.MAX_RETRACE_PERCENT && twoRisingObservations &&
+      retracePercent <= CONFIG.MAX_RETRACE_PERCENT && recoveryObserved &&
       currentBuyShare >= CONFIG.RECOVERY_MIN_BUY_SHARE && liquidityRetained &&
       volumeIncreasing && flowBuys > flowSells;
     const entryRoute = ready ? "confirmed_pullback_recovery" : null;
     const reason = retracePercent > CONFIG.MAX_RETRACE_PERCENT ? "retrace_over_45_percent"
       : !state.pumpSeen ? "pump_not_observed"
       : !state.pullbackObserved ? "pullback_not_observed"
-      : !twoRisingObservations ? "recovery_not_confirmed_60s"
+      : !recoveryObserved ? "recovery_not_confirmed_60s"
       : currentBuyShare < CONFIG.RECOVERY_MIN_BUY_SHARE ? "recovery_buy_ratio_below_55_percent"
       : !liquidityRetained ? "recovery_liquidity_not_retained_90_percent"
       : !volumeIncreasing ? "recovery_volume_not_increasing"
