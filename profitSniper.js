@@ -316,7 +316,7 @@ const bot = createBot({
   maxOpenPositions: MAX_OPEN_POSITIONS,
   maxCandidateAgeMinutes: MAX_PAIR_AGE_MINUTES,
   minimumLiquidityUsd: MIN_LIQUIDITY_USD,
-  minimumVolume24hUsd: MIN_VOLUME_24H_USD,
+  minimumVolume24hUsd: 0,
   minimumLiquidityLockPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT,
   reentryMinimumLpLockPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT,
   acceptedSignals: ["ORDER FLOW BUY"],
