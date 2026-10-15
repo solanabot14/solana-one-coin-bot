@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { mapLaunchPair, qualifiesLaunchCandidate, qualifiesPoolObservation, selectTrackedPools,
-  selectTrackedPoolsAcrossAgeWindow, thresholds } = require("../poolDiscovery");
+  selectTrackedPoolsAcrossAgeWindow, selectBoostedPumpSwapPairs, thresholds } = require("../poolDiscovery");
 
 const now = 1_800_000_000_000;
 function candidate(overrides = {}) {
@@ -83,17 +83,30 @@ test("reserves discovery capacity for pools mature enough to enter", () => {
   assert.equal(selected.filter(item => item.poolAddress.startsWith("young-")).length, 7);
 });
 
-test("reserves discovery capacity across the full five-minute to six-hour window", () => {
-  const agesMinutes = [2, 10, 40, 120, 240];
+test("reserves discovery capacity across the full five-minute to twenty-four-hour window", () => {
+  const agesMinutes = [2, 10, 40, 120, 240, 480, 1080];
   const pools = agesMinutes.flatMap((age, bucket) => Array.from({ length: 30 }, (_, index) => ({
     poolAddress: `bucket-${bucket}-${index}`,
     createdAt: now - (age * 60_000 + index)
   })));
-  const selected = selectTrackedPoolsAcrossAgeWindow(pools, now, 50);
-  assert.equal(selected.length, 50);
+  const selected = selectTrackedPoolsAcrossAgeWindow(pools, now, 70);
+  assert.equal(selected.length, 70);
   for (let bucket = 0; bucket < agesMinutes.length; bucket++) {
     assert.equal(selected.filter(item => item.poolAddress.startsWith(`bucket-${bucket}-`)).length, 10);
   }
+});
+
+test("DexScreener discovery keeps only the strongest exact PumpSwap pair per boosted Solana token", () => {
+  const pair = (token, pool, dexId, buys, volume = 2000) => ({
+    chainId: "solana", dexId, pairAddress: pool, pairCreatedAt: now - 60_000,
+    baseToken: { address: token }, txns: { m5: { buys, sells: 2 } },
+    volume: { m5: volume }, liquidity: { usd: 30000 }
+  });
+  const selected = selectBoostedPumpSwapPairs([
+    pair("mint-A", "weak", "pumpswap", 3), pair("mint-A", "strong", "pumpswap", 20),
+    pair("mint-B", "wrong-dex", "raydium", 100), pair("mint-C", "not-boosted", "pumpswap", 100)
+  ], ["mint-A", "mint-B"]);
+  assert.deepEqual(selected.map(item => item.pairAddress), ["strong"]);
 });
 
 
