@@ -1,6 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const poolDiscovery = require("./poolDiscovery");
+const poolDiscovery = require("./profitSniperDexDiscovery");
 const market = require("./dexscreener");
 const { createPaperTrader } = require("./paperTrader");
 const { reconcileProfitSniperAccount } = require("./profitSniperReconcile");
@@ -45,12 +45,9 @@ function estimateExecutionCosts({ amountUsd, liquidityUsd }) {
 
 const { qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit, selectUniqueMintCandidates } = strategy;
 
-let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, source: "GeckoTerminal new + trending/top pools (24h) + exact DexScreener pairs + RugCheck; pair age 5m-6h" };
+let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, source: "DexScreener public feeds + live observations + RugCheck" };
 const entryGuard = createSniperEntryGuard();
 const momentumTracker = createMomentumTracker();
-const historicalHydrator = require("./profitSniperHydration").createHistoricalHydrator({
-  tracker: momentumTracker, data: require("./profitSniperData").sniperData
-});
 const ageWatchlist = new Map();
 const recoveryWatchlist = createRecoveryWatchlist({
   maxAgeMs: CONFIG.RECOVERY_WATCHLIST_MAX_AGE_MS,
@@ -81,20 +78,13 @@ function recordRejections(now, counts) {
 }
 
 async function discoverCandidates(options = {}) {
-  const scanned = await poolDiscovery.discoverLaunchCandidates({ ...options, minimumLiquidityUsd: MIN_LIQUIDITY_USD,
-    minimumVolume24hUsd: MIN_VOLUME_24H_USD, includeObservationCandidates: true,
-    includeMaturePools: true, includeTrendingPools: true, maximumPairAgeMs: MAX_PAIR_AGE_MINUTES * 60 * 1000,
-    minimumMaturePairAgeMs: MIN_PAIR_AGE_MS, maturePoolReserve: CONFIG.MATURE_POOL_RESERVE });
+  const scanned = await poolDiscovery.discoverCandidates(options);
   const now = Date.now();
   const currentKeys = new Set();
   const candidates = [];
   for (const raw of scanned) {
     const key = String(raw.tokenAddress || "") + ":" + String(raw.pairAddress || "");
     currentKeys.add(key);
-    const basicFailures = getMomentumFailureReasons({ ...raw, momentumPattern: { ready: true } }, now);
-    if (!basicFailures.length) {
-      historicalHydrator.schedule(raw, { signal: options.signal, limit: 360 });
-    }
     const momentumPattern = momentumTracker.observe(raw, now);
     const coin = { ...raw, momentumPattern };
     recoveryWatchlist.remember(coin, now);
@@ -252,7 +242,8 @@ async function discoverCandidates(options = {}) {
   lastScanDiagnostics = {
     state: "scan_complete",
     updatedAt: new Date(now).toISOString(),
-    source: "GeckoTerminal new + trending/top pools (24h) + exact DexScreener pairs + RugCheck; pair age 5m-6h",
+    source: "DexScreener public feeds + fresh exact pairs + local momentum + RugCheck; pair age 5m-24h",
+    exactTrending5mRanking: false,
     poolsReceived: scanState?.poolsReceived ?? null,
     recentPools: scanned.length,
     activityQualified: scanned.length,
@@ -398,8 +389,9 @@ function getStatus() {
       entriesFromAgeWatchlist: (trader.getPortfolio().history || []).filter(row => row?.type === "BUY" &&
         (row.entryReasons || []).includes("AGE WATCHLIST REENTRY")).length,
       lastVerifiedHolderSecurity: entryGuard.getSecurityDiagnostics(),
-      historicalLookupPending: historicalHydrator.isPending(),
-      historicalProvider: require("./geckoTerminal").getRequestStatus(),
+      historicalLookupPending: false,
+      historicalProvider: {provider:"Local DexScreener observations", geckoTerminalEnabled:false},
+      discoveryProvider: poolDiscovery.getScanDiagnostics(),
       watchlistRecheckIntervalMs: CONFIG.WATCHLIST_RECHECK_MS
     }
   };
