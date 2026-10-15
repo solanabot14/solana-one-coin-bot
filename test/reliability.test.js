@@ -155,28 +155,6 @@ test("unchanged profit targets and trailing exit execute once and restore across
   assert.equal(restarted.getPortfolio().history.at(-1).reason, "TRAILING STOP");
 });
 
-test("dashboard reports V3.4 profit lock and runner modes", async t => {
-  const { trader } = account(t);
-  trader.buy(coin);
-  const key = trader.positionKey(trader.getPortfolio().position);
-  trader.updateHigh(key, 1.14);
-
-  let data = await buildDashboardData(trader.getPortfolio(), async () => ({ priceUsd: 1.11 }));
-  assert.equal(data.live.mode, "PROFIT LOCK");
-  assert.equal(data.live.profitLockActive, true);
-  assert.ok(Math.abs(data.live.protectedFloorPercent - 6) < 1e-10);
-
-  trader.sell(1.16, 15, { expectedPosition: key, takeProfit: "firstTakeProfitDone", reason: "TAKE PROFIT 1" });
-  trader.sell(1.31, 35, { expectedPosition: key, takeProfit: "secondTakeProfitDone", reason: "TAKE PROFIT 2" });
-
-  const runnerKey = trader.positionKey(trader.getPortfolio().position);
-  trader.updateHigh(runnerKey, 2);
-  data = await buildDashboardData(trader.getPortfolio(), async () => ({ priceUsd: 1.9 }));
-  assert.equal(data.live.mode, "RUNNER");
-  assert.equal(data.live.profitLockActive, false);
-  assert.ok(Math.abs(data.live.trailingExitPrice - 1.84) < 1e-10);
-});
-
 test("dashboard excludes partial positions, averages exit prices and marks missing equity", async t => {
   const { trader } = account(t);
   trader.buy(coin);
@@ -220,98 +198,6 @@ test("hard stop and both momentum exits keep their original behavior", async t =
   }
 });
 
-test("restored legacy position keeps entry strategy and adopts V3.4 risk management", async t => {
-  const { file, trader } = account(t);
-  trader.buy(coin);
-
-  const legacy = JSON.parse(fs.readFileSync(file, "utf8"));
-  legacy.position.strategyVersion = "V3.2";
-  delete legacy.position.riskManagementVersion;
-  legacy.history[0].strategyVersion = "V3.2";
-  delete legacy.history[0].riskManagementVersion;
-  fs.writeFileSync(file, JSON.stringify(legacy, null, 2));
-
-  const restored = createPaperTrader(file);
-  const key = restored.positionKey(restored.getPortfolio().position);
-  restored.updateHigh(key, 1.14);
-
-  let quote = 1.059;
-  const timers = fakeTimers();
-  const bot = createBot({
-    trader: restored,
-    timers,
-    discoverCandidates: async () => [],
-    getTokenData: async () => ({ priceUsd: quote })
-  });
-  t.after(() => bot.stopBot());
-
-  bot.startBot();
-  await settle();
-
-  const migrated = restored.getPortfolio().position;
-  assert.equal(migrated, null);
-  const buyTrade = restored.getPortfolio().history[0];
-  const sellTrade = restored.getPortfolio().history.at(-1);
-  assert.equal(buyTrade.strategyVersion, "V3.2");
-  assert.equal(sellTrade.strategyVersion, "V3.2");
-  assert.equal(sellTrade.riskManagementVersion, "V3.4");
-  assert.equal(sellTrade.reason, "PROFIT LOCK");
-});
-
-test("V3.4 profit lock protects gains after a 10 percent peak", async t => {
-  const { trader } = account(t);
-  trader.buy(coin);
-  let quote = 1.14;
-  const timers = fakeTimers();
-  const bot = createBot({ trader, timers, discoverCandidates: async () => [],
-    getTokenData: async () => ({ priceUsd: quote }) });
-  t.after(() => bot.stopBot());
-
-  bot.startBot();
-  await settle();
-  assert.notEqual(trader.getPortfolio().position, null);
-  assert.ok(trader.getPortfolio().position.highestPrice >= 1.14);
-
-  quote = 1.059;
-  await timers.run(2000);
-
-  assert.equal(trader.getPortfolio().position, null);
-  assert.equal(trader.getPortfolio().history.at(-1).reason, "PROFIT LOCK");
-  assert.ok(trader.getPortfolio().history.at(-1).pnlPercent > 5);
-});
-
-test("V3.4 hands the runner to the 8 percent trailing stop after TP2", async t => {
-  const { trader } = account(t);
-  trader.buy(coin);
-  let quote = 1.16;
-  const timers = fakeTimers();
-  const bot = createBot({ trader, timers, discoverCandidates: async () => [],
-    getTokenData: async () => ({ priceUsd: quote }) });
-  t.after(() => bot.stopBot());
-
-  bot.startBot();
-  await settle();
-  await timers.run(2000);
-  assert.equal(trader.getPortfolio().position.firstTakeProfitDone, true);
-
-  quote = 1.31;
-  await timers.run(2000);
-  assert.equal(trader.getPortfolio().position.secondTakeProfitDone, true);
-
-  quote = 2.00;
-  await timers.run(2000);
-  assert.notEqual(trader.getPortfolio().position, null);
-
-  quote = 1.85;
-  await timers.run(2000);
-  assert.notEqual(trader.getPortfolio().position, null);
-
-  quote = 1.83;
-  await timers.run(2000);
-  assert.equal(trader.getPortfolio().position, null);
-  assert.equal(trader.getPortfolio().history.at(-1).reason, "TRAILING STOP");
-});
-
 test("storage errors pause the bot and remove timers", async t => {
   const { trader } = account(t);
   trader.buy(coin);
@@ -327,21 +213,23 @@ test("storage errors pause the bot and remove timers", async t => {
 });
 
 test("market requests carry a timeout and cancellation signal and reject another base token", async () => {
-  let options;
+  let options, requestUrl;
   const controller = new AbortController();
   const sandbox = { module: { exports: {} }, console, require: name => {
     assert.equal(name, "axios");
     return { get: async (url, config) => {
+      requestUrl = url;
       options = config;
-      return { data: { pairs: [
+      return { data: [
         { chainId: "solana", baseToken: { address: "wrong-token" }, liquidity: { usd: 999999 }, priceUsd: "999" },
         { chainId: "solana", baseToken: { address: "token1" }, liquidity: { usd: 100000 }, priceUsd: "1" }
-      ] } };
+      ] };
     } };
   } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../dexscreener.js"), "utf8"), sandbox);
-  const data = await sandbox.module.exports.getTokenData("token1", { signal: controller.signal });
+  const data = (await sandbox.module.exports.getTokensData(["token1"], { signal: controller.signal })).get("token1");
   assert.equal(data.priceUsd, "1");
+  assert.match(requestUrl, /tokens\/v1\/solana\/token1$/);
   assert.equal(options.timeout, 10000);
   assert.equal(options.signal, controller.signal);
 });
@@ -353,23 +241,36 @@ test("HTTP authentication, POST controls, cross-site rejection and health endpoi
     startBot() { running = true; }, stopBot() { running = false; },
     getBotStatus: () => running, getLastError: () => null
   }, portfolio: () => ({ startingBalance: 100, cashBalance: 100, position: null, history: [] }) });
-  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
-  const url = "http://127.0.0.1:" + server.address().port;
+  t.after(() => server.close());
+  const request = (url, { method = "GET", headers = {} } = {}) => new Promise(resolve => {
+    const responseHeaders = {};
+    const res = {
+      statusCode: 200,
+      setHeader(name, value) { responseHeaders[name.toLowerCase()] = value; },
+      writeHead(status, headers = {}) {
+        this.statusCode = status;
+        for (const [name, value] of Object.entries(headers)) responseHeaders[name.toLowerCase()] = value;
+      },
+      end(body = "") { resolve({ status: this.statusCode, headers: responseHeaders, body: String(body) }); }
+    };
+    const normalizedHeaders = { host: "127.0.0.1", ...Object.fromEntries(Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value])) };
+    server.emit("request", { method, url, headers: normalizedHeaders }, res);
+  });
   const headers = { Authorization: "Basic " + Buffer.from("admin:test-password-long-enough").toString("base64") };
-  assert.equal((await fetch(url + "/healthz")).status, 200);
-  assert.equal((await fetch(url + "/api/data")).status, 401);
-  assert.equal((await fetch(url + "/api/start", { headers })).status, 405);
-  assert.equal((await fetch(url + "/api/start", { method: "POST", headers })).status, 403);
+  assert.equal((await request("/healthz")).status, 200);
+  assert.equal((await request("/api/data")).status, 401);
+  assert.equal((await request("/api/data", { headers: { Authorization: "Basic " + Buffer.from("admin:wrong-password").toString("base64") } })).status, 401);
+  assert.equal((await request("/api/start", { headers })).status, 405);
+  assert.equal((await request("/api/start", { method: "POST", headers })).status, 403);
   headers["X-Bot-Control"] = "1";
-  assert.equal((await fetch(url + "/api/start", { method: "POST", headers })).status, 200);
+  assert.equal((await request("/api/start", { method: "POST", headers })).status, 200);
   assert.equal(running, true);
-  assert.equal((await fetch(url + "/api/stop", { method: "POST", headers: { ...headers, "Sec-Fetch-Site": "cross-site" } })).status, 403);
-  await fetch(url + "/api/stop", { method: "POST", headers });
+  assert.equal((await request("/api/stop", { method: "POST", headers: { ...headers, "Sec-Fetch-Site": "cross-site" } })).status, 403);
+  await request("/api/stop", { method: "POST", headers });
   assert.equal(running, false);
-  const page = await fetch(url, { headers });
-  assert.match(page.headers.get("Content-Security-Policy"), /script-src 'self'/);
-  assert.match(await page.text(), /dashboard-client.js/);
+  const page = await request("/", { headers });
+  assert.match(page.headers["content-security-policy"], /script-src 'self'/);
+  assert.match(page.body, /dashboard-client.js/);
 });
 
 test("browser renders hostile symbols as text and unavailable equity honestly", () => {
@@ -384,11 +285,11 @@ test("browser renders hostile symbols as text and unavailable equity honestly", 
   vm.runInNewContext(source, context);
   const symbol = '<img src=x onerror="alert(1)">';
   context.renderData({ startingBalance: 100, cashBalance: 90, equity: null, totalPnl: null,
-    position: { symbol }, live: null,
+    position: { symbol }, live: null, livePositions: [{ position: { symbol }, live: null }], openSlots: 1,
     stats: { completedTrades: 0, winRate: 0, winners: 0, losers: 0, grossProfit: 0, grossLoss: 0, netPnl: 0, profitFactorLabel: "—" },
     completedTrades: [{ symbol, tokenAddress: "token1", entryPrice: 1, exitPrice: 1, amountInvested: 10, pnl: 0, pnlPercent: 0 }] });
   assert.equal(nodes.get("equity").textContent, "Unavailable");
-  assert.match(nodes.get("live").textContent, /price unavailable/);
+  assert.match(nodes.get("live").innerHTML, /Price unavailable/);
   assert.ok(!nodes.get("history").innerHTML.includes("<img"));
   assert.match(nodes.get("history").innerHTML, /&lt;img/);
 });

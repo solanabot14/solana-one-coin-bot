@@ -43,16 +43,7 @@ function groupCompletedTrades(history = [], position = null) {
 				entryPriceChange1h: trade.entryPriceChange1h ?? null,
 				entryPriceChange24h: trade.entryPriceChange24h ?? null,
 				entryLiquidityUsd: trade.entryLiquidityUsd ?? null,
-				entryVolume5m: trade.entryVolume5m ?? null,
-				entryVolume1h: trade.entryVolume1h ?? null,
 				entryVolume24h: trade.entryVolume24h ?? null,
-				entryDiscoverySources: Array.isArray(trade.entryDiscoverySources) ? [...trade.entryDiscoverySources] : [],
-				entryCurrentActivity: trade.entryCurrentActivity ? structuredClone(trade.entryCurrentActivity) : null,
-				entryPostPump: trade.entryPostPump ? structuredClone(trade.entryPostPump) : null,
-				entryPreDiscoveryPump: trade.entryPreDiscoveryPump ? structuredClone(trade.entryPreDiscoveryPump) : null,
-				entryMarketDataIntegrity: trade.entryMarketDataIntegrity ? structuredClone(trade.entryMarketDataIntegrity) : null,
-				entrySmartMoney: trade.entrySmartMoney ? structuredClone(trade.entrySmartMoney) : null,
-				entryBirdeyeRank: trade.entryBirdeyeRank ?? null,
 				entryBuys5m: trade.entryBuys5m ?? null,
 				entrySells5m: trade.entrySells5m ?? null,
 				entryTransactions5m: trade.entryTransactions5m ?? null,
@@ -112,320 +103,21 @@ function groupCompletedTrades(history = [], position = null) {
 			const holdTimeMs = group.exitTime
 				? Math.max(0, new Date(group.exitTime).getTime() - new Date(group.entryTime).getTime()) : null;
 			const exitReasons = [...new Set(group.sells.map(sell => sell.reason).filter(Boolean))];
-			return { ...group, exitPrice, pnlPercent, maxGainPercent, holdTimeMs, exitReasons };
+			const costsKnown = group.sells.every(s => s.estimatedFeesUsd != null && s.estimatedSlippageUsd != null);
+            const costs = costsKnown ? {
+              estimatedFeesUsd: group.sells.reduce((sum,s) => sum + Number(s.estimatedFeesUsd),0),
+              estimatedSlippageUsd: group.sells.reduce((sum,s) => sum + Number(s.estimatedSlippageUsd),0),
+              grossPnl: group.sells.reduce((sum,s) => sum + Number(s.grossPnl ?? s.pnl),0),
+              netPnl: group.pnl, costEstimateAvailable: true
+            } : {};
+            return { ...group, ...costs, exitPrice, pnlPercent, maxGainPercent, holdTimeMs, exitReasons };
 		})
 		.sort((a, b) => new Date(b.exitTime) - new Date(a.exitTime));
-}
-
-
-const SLOT_TARGETS = [10, 50, 100, 150];
-
-function buildSlotSimulation(completedTrades, slotCount = 5, startingSlotValue = 2) {
-	const slots = Array.from({ length: slotCount }, (_, index) => ({
-		id: index + 1,
-		startingValue: startingSlotValue,
-		balance: startingSlotValue,
-		trades: 0,
-		winners: 0,
-		losers: 0,
-		lastSymbol: null,
-		lastReturnPercent: null
-	}));
-
-	const chronological = [...completedTrades]
-		.filter(trade => Number.isFinite(Number(trade.pnlPercent)))
-		.sort((a, b) => new Date(a.exitTime || a.entryTime) - new Date(b.exitTime || b.entryTime));
-
-	let replayed = 0;
-	for (const trade of chronological) {
-		const slot = slots[replayed % slotCount];
-		const returnPercent = Number(trade.pnlPercent);
-		const factor = Math.max(0, 1 + returnPercent / 100);
-		slot.balance *= factor;
-		slot.trades++;
-		if (returnPercent > 0) slot.winners++;
-		else if (returnPercent < 0) slot.losers++;
-		slot.lastSymbol = trade.symbol || "-";
-		slot.lastReturnPercent = returnPercent;
-		replayed++;
-	}
-
-	const completedTargets = SLOT_TARGETS.filter(target =>
-		slots.every(slot => slot.balance >= target)
-	);
-	const currentTarget = SLOT_TARGETS.find(target =>
-		!slots.every(slot => slot.balance >= target)
-	) || SLOT_TARGETS.at(-1);
-	const totalCapital = slots.reduce((sum, slot) => sum + slot.balance, 0);
-	const startingCapital = slotCount * startingSlotValue;
-
-	return {
-		mode: "SIMULATION_ONLY",
-		slotCount,
-		startingSlotValue,
-		startingCapital,
-		totalCapital,
-		totalPnl: totalCapital - startingCapital,
-		totalReturnPercent: startingCapital > 0
-			? (totalCapital - startingCapital) / startingCapital * 100
-			: 0,
-		targets: [...SLOT_TARGETS],
-		completedTargets,
-		currentTarget,
-		allTargetsComplete: slots.every(slot => slot.balance >= SLOT_TARGETS.at(-1)),
-		tradesReplayed: replayed,
-		slots: slots.map(slot => ({
-			...slot,
-			progressPercent: currentTarget > 0
-				? Math.min(100, slot.balance / currentTarget * 100)
-				: 0
-		}))
-	};
-}
-
-
-const DIVERSITY_WINDOW_MS = 24 * 60 * 60 * 1000;
-const DIVERSITY_RUNNER_GAIN_PERCENT = 30;
-const DIVERSITY_MAX_LOSS_ENTRIES = 2;
-
-function buildTokenDiversityView(completedTrades = [], openPosition = null, now = Date.now()) {
-	const cutoff = now - DIVERSITY_WINDOW_MS;
-	const rows = new Map();
-
-	for (const trade of completedTrades) {
-		const entryMs = Date.parse(trade.entryTime);
-		const exitMs = Date.parse(trade.exitTime);
-		const recent = (Number.isFinite(entryMs) && entryMs >= cutoff) ||
-			(Number.isFinite(exitMs) && exitMs >= cutoff);
-		if (!recent || !trade.tokenAddress) continue;
-
-		if (!rows.has(trade.tokenAddress)) {
-			rows.set(trade.tokenAddress, {
-				tokenAddress: trade.tokenAddress,
-				symbol: trade.symbol || "-",
-				entries24h: 0,
-				wins24h: 0,
-				losses24h: 0,
-				maxGainPercent: null,
-				lastExitAt: null,
-				lastPnl: null
-			});
-		}
-
-		const row = rows.get(trade.tokenAddress);
-		if (Number.isFinite(entryMs) && entryMs >= cutoff) row.entries24h++;
-		if (Number.isFinite(exitMs) && exitMs >= cutoff) {
-			row.lastExitAt = Math.max(row.lastExitAt || 0, exitMs);
-			row.lastPnl = Number(trade.pnl);
-			if (Number(trade.pnl) > 0) row.wins24h++;
-			else if (Number(trade.pnl) < 0) row.losses24h++;
-		}
-		if (Number.isFinite(Number(trade.maxGainPercent))) {
-			row.maxGainPercent = row.maxGainPercent == null
-				? Number(trade.maxGainPercent)
-				: Math.max(row.maxGainPercent, Number(trade.maxGainPercent));
-		}
-	}
-
-	if (openPosition?.tokenAddress) {
-		const existed = rows.has(openPosition.tokenAddress);
-		if (!existed) {
-			rows.set(openPosition.tokenAddress, {
-				tokenAddress: openPosition.tokenAddress,
-				symbol: openPosition.symbol || "-",
-				entries24h: 0,
-				wins24h: 0,
-				losses24h: 0,
-				maxGainPercent: null,
-				lastExitAt: null,
-				lastPnl: null
-			});
-		}
-		const row = rows.get(openPosition.tokenAddress);
-		const openEntryMs = Date.parse(openPosition.entryTime);
-		if (Number.isFinite(openEntryMs) && openEntryMs >= cutoff) row.entries24h++;
-		row.openNow = true;
-		row.symbol = openPosition.symbol || row.symbol;
-	}
-
-	const result = [...rows.values()].map(row => {
-		let status;
-		let detail;
-		let availableAt = null;
-
-		if (row.openNow) {
-			status = "OPEN NOW";
-			detail = "Currently held by OG bot";
-		} else if (Number(row.maxGainPercent) >= DIVERSITY_RUNNER_GAIN_PERCENT) {
-			status = "RUNNER WATCH";
-			detail = "Reentry only on exceptional confirmation";
-		} else if (row.wins24h > 0) {
-			status = "RESTING 24H";
-			availableAt = row.lastExitAt ? row.lastExitAt + DIVERSITY_WINDOW_MS : null;
-			detail = "Normal winner; new tokens get priority";
-		} else if (row.entries24h >= DIVERSITY_MAX_LOSS_ENTRIES) {
-			status = "REENTRY LIMIT";
-			detail = "Already used two entries in the 24h window";
-		} else if (row.losses24h > 0 || row.entries24h > 0) {
-			status = "SECOND CHANCE";
-			detail = "Can reenter if it becomes STRONG BUY again";
-		} else {
-			status = "AVAILABLE";
-			detail = "No active diversity restriction";
-		}
-
-		return { ...row, status, detail, availableAt };
-	}).sort((a, b) =>
-		Number(Boolean(b.openNow)) - Number(Boolean(a.openNow)) ||
-		Number(b.lastExitAt || 0) - Number(a.lastExitAt || 0)
-	);
-
-	return {
-		windowHours: 24,
-		runnerThresholdPercent: DIVERSITY_RUNNER_GAIN_PERCENT,
-		rows: result
-	};
 }
 
 function average(values) {
 	const valid = values.filter(Number.isFinite);
 	return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
-}
-
-function maxLossStreak(trades = []) {
-	let current = 0;
-	let maximum = 0;
-	for (const trade of [...trades].sort((a, b) => new Date(a.exitTime || 0) - new Date(b.exitTime || 0))) {
-		if (Number(trade.pnl) < 0) {
-			current++;
-			maximum = Math.max(maximum, current);
-		} else {
-			current = 0;
-		}
-	}
-	return maximum;
-}
-
-function realizedDrawdown(trades = [], startingBalance = null) {
-	const start = Number(startingBalance);
-	if (!(start > 0)) return { maxDrawdownPercent: null, maxDrawdownUsd: null };
-	let equity = start;
-	let peak = start;
-	let maxDrawdownPercent = 0;
-	let maxDrawdownUsd = 0;
-
-	for (const trade of [...trades].sort((a, b) => new Date(a.exitTime || 0) - new Date(b.exitTime || 0))) {
-		equity += Number(trade.pnl) || 0;
-		peak = Math.max(peak, equity);
-		const drawdownUsd = Math.max(0, peak - equity);
-		const drawdownPercent = peak > 0 ? drawdownUsd / peak * 100 : 0;
-		maxDrawdownUsd = Math.max(maxDrawdownUsd, drawdownUsd);
-		maxDrawdownPercent = Math.max(maxDrawdownPercent, drawdownPercent);
-	}
-
-	return { maxDrawdownPercent, maxDrawdownUsd };
-}
-
-function summarizeTrades(trades = [], startingBalance = null) {
-	const winners = trades.filter(trade => Number(trade.pnl) > 0);
-	const losers = trades.filter(trade => Number(trade.pnl) < 0);
-	const grossProfit = winners.reduce((sum, trade) => sum + Number(trade.pnl || 0), 0);
-	const grossLoss = losers.reduce((sum, trade) => sum + Math.abs(Number(trade.pnl || 0)), 0);
-	const netPnl = grossProfit - grossLoss;
-	const winnerReturns = winners.map(trade => Number(trade.pnlPercent)).filter(Number.isFinite);
-	const loserReturns = losers.map(trade => Number(trade.pnlPercent)).filter(Number.isFinite);
-	const allReturns = trades.map(trade => Number(trade.pnlPercent)).filter(Number.isFinite);
-	const averageWinnerPercent = average(winnerReturns);
-	const averageLoserPercent = average(loserReturns);
-	const payoffRatio = averageWinnerPercent != null && averageLoserPercent != null && averageLoserPercent !== 0
-		? averageWinnerPercent / Math.abs(averageLoserPercent)
-		: null;
-	const drawdown = realizedDrawdown(trades, startingBalance);
-
-	return {
-		completedTrades: trades.length,
-		winners: winners.length,
-		losers: losers.length,
-		winRate: trades.length ? winners.length / trades.length * 100 : 0,
-		grossProfit,
-		grossLoss,
-		netPnl,
-		profitFactor: grossLoss > 0 ? grossProfit / grossLoss : null,
-		profitFactorLabel: grossLoss > 0 ? (grossProfit / grossLoss).toFixed(2) : grossProfit > 0 ? "∞" : "—",
-		expectancyPercent: average(allReturns),
-		averageWinnerPercent,
-		averageLoserPercent,
-		payoffRatio,
-		maxConsecutiveLosses: maxLossStreak(trades),
-		maxDrawdownPercent: drawdown.maxDrawdownPercent,
-		maxDrawdownUsd: drawdown.maxDrawdownUsd,
-		averageHoldTimeMs: average(trades.map(trade => Number(trade.holdTimeMs)).filter(Number.isFinite)),
-		averageMaxGainPercent: average(trades.map(trade => Number(trade.maxGainPercent)).filter(Number.isFinite))
-	};
-}
-
-function compactPerformance(trades = []) {
-	const summary = summarizeTrades(trades);
-	return {
-		trades: summary.completedTrades,
-		winners: summary.winners,
-		losers: summary.losers,
-		winRate: summary.winRate,
-		netPnl: summary.netPnl,
-		expectancyPercent: summary.expectancyPercent,
-		profitFactorLabel: summary.profitFactorLabel
-	};
-}
-
-function buildStrategyVersionStats(trades = []) {
-	const groups = new Map();
-	for (const trade of trades) {
-		const label = trade.strategyVersion || "Legacy / Unlabeled";
-		if (!groups.has(label)) groups.set(label, []);
-		groups.get(label).push(trade);
-	}
-	return [...groups.entries()]
-		.map(([version, rows]) => ({ version, ...compactPerformance(rows) }))
-		.sort((a, b) => String(a.version).localeCompare(String(b.version)));
-}
-
-function buildSourceStats(trades = []) {
-	const groups = new Map();
-	for (const trade of trades) {
-		const sources = Array.isArray(trade.entryDiscoverySources) && trade.entryDiscoverySources.length
-			? trade.entryDiscoverySources
-			: ["Unknown"];
-		for (const source of new Set(sources)) {
-			if (!groups.has(source)) groups.set(source, []);
-			groups.get(source).push(trade);
-		}
-	}
-	return [...groups.entries()]
-		.map(([source, rows]) => ({ source, ...compactPerformance(rows) }))
-		.sort((a, b) => b.trades - a.trades || a.source.localeCompare(b.source));
-}
-
-function buildBirdeyeRankStats(trades = []) {
-	const bucket = rank => {
-		const value = Number(rank);
-		if (!Number.isFinite(value)) return null;
-		if (value === 1) return "#1";
-		if (value <= 5) return "#2–5";
-		if (value <= 10) return "#6–10";
-		if (value <= 20) return "#11–20";
-		return "#21+";
-	};
-	const order = new Map([["#1", 1], ["#2–5", 2], ["#6–10", 3], ["#11–20", 4], ["#21+", 5]]);
-	const groups = new Map();
-	for (const trade of trades) {
-		const label = bucket(trade.entryBirdeyeRank);
-		if (!label) continue;
-		if (!groups.has(label)) groups.set(label, []);
-		groups.get(label).push(trade);
-	}
-	return [...groups.entries()]
-		.map(([rank, rows]) => ({ rank, ...compactPerformance(rows) }))
-		.sort((a, b) => (order.get(a.rank) || 99) - (order.get(b.rank) || 99));
 }
 
 function buildScoreStats(completedTrades) {
@@ -450,91 +142,64 @@ function buildScoreStats(completedTrades) {
 	}).sort((a, b) => (a.score === "10+" ? 10 : Number(a.score)) - (b.score === "10+" ? 10 : Number(b.score)));
 }
 
-async function buildDashboardData(data, getTokenData) {
-	const completedTrades = groupCompletedTrades(data.history, data.position);
-	let live = null;
-	if (data.position) {
-		const fresh = await getTokenData(data.position.tokenAddress, { pairAddress: data.position.pairAddress || undefined });
-		const currentPrice = Number(fresh?.priceUsd);
-		if (Number.isFinite(currentPrice) && currentPrice > 0) {
-			const p = data.position;
-			const currentValue = p.quantity * currentPrice;
-			const pnl = currentValue - p.amountInvested;
-			const highestPrice = Number(p.highestPrice || p.entryPrice);
-			const entryPrice = Number(p.entryPrice);
-			const maxGainPercent = entryPrice > 0 ? (highestPrice - entryPrice) / entryPrice * 100 : null;
-			const profitLockEligible = p.riskManagementVersion === "V3.4" || p.strategyVersion === "V3.3" || p.strategyVersion === "V3.4";
-			const profitLockActive = profitLockEligible && !p.secondTakeProfitDone && maxGainPercent >= 10;
-			const protectedFloorPercent = profitLockActive ? maxGainPercent - 8 : null;
-			const runnerMode = !!p.secondTakeProfitDone;
-			const trailingExitPrice = runnerMode ? highestPrice * 0.92 : null;
-			const trailingExitPercent = runnerMode && entryPrice > 0
-				? (trailingExitPrice - entryPrice) / entryPrice * 100 : null;
-			const mode = runnerMode ? "RUNNER" : profitLockActive ? "PROFIT LOCK" : "NORMAL";
-			const holdTimeMs = Math.max(0, Date.now() - new Date(p.entryTime).getTime());
-			const buys5m = Number(fresh.buys5m) || 0;
-			const sells5m = Number(fresh.sells5m) || 0;
-			const transactions5m = buys5m + sells5m;
-			live = {
-				currentPrice, currentValue, pnl, pnlPercent: p.amountInvested > 0 ? pnl / p.amountInvested * 100 : 0,
-				highestPrice, maxGainPercent, holdTimeMs,
-				mode, profitLockActive, protectedFloorPercent, trailingExitPrice, trailingExitPercent,
-				priceChange5m: fresh.priceChange5m, priceChange1h: fresh.priceChange1h, priceChange24h: fresh.priceChange24h,
-				liquidityUsd: fresh.liquidityUsd, volume5m: fresh.volume5m, volume1h: fresh.volume1h, volume24h: fresh.volume24h, buys5m, sells5m, transactions5m,
-				buyRatio5m: transactions5m > 0 ? buys5m / transactions5m : 0,
-				pairAddress: p.pairAddress || fresh.pairAddress || null
-			};
-		}
+async function buildDashboardData(data, getTokenData, { allowAlternatePairQuote = false } = {}) {
+	const positions = Array.isArray(data.positions) ? data.positions : (data.position ? [data.position] : []);
+	const completedTrades = groupCompletedTrades(data.history, null).filter(t => !positions.some(p => p.id && p.id === t.positionId));
+	const livePositions = [];
+	for (const p of positions) {
+		let live = null;
+		try {
+			const fresh = await getTokenData(p.tokenAddress, { pairAddress: p.pairAddress || undefined, allowAlternatePairQuote });
+			const currentPrice = Number(fresh?.priceUsd);
+			if (Number.isFinite(currentPrice) && currentPrice > 0) {
+				const currentValue = p.quantity * currentPrice, pnl = currentValue - p.amountInvested;
+				const highestPrice = Number(p.highestPrice || p.entryPrice);
+				const buys5m=Number(fresh.buys5m)||0, sells5m=Number(fresh.sells5m)||0, transactions5m=buys5m+sells5m;
+				live={currentPrice,currentValue,pnl,pnlPercent:p.amountInvested>0?pnl/p.amountInvested*100:0,highestPrice,
+					maxGainPercent:Number(p.entryPrice)>0?(highestPrice-Number(p.entryPrice))/Number(p.entryPrice)*100:null,
+					holdTimeMs:Math.max(0,Date.now()-new Date(p.entryTime).getTime()),priceChange5m:fresh.priceChange5m,
+					priceChange1h:fresh.priceChange1h,priceChange24h:fresh.priceChange24h,liquidityUsd:fresh.liquidityUsd,
+					volume24h:fresh.volume24h,buys5m,sells5m,transactions5m,buyRatio5m:transactions5m?buys5m/transactions5m:0,
+					pairAddress:p.pairAddress||fresh.pairAddress||null,quoteWarning:fresh.quoteWarning||null};
+			}
+		} catch (_) {}
+		livePositions.push({position:p,live});
 	}
-
-	const equity = data.position && !live ? null : data.cashBalance + (live?.currentValue || 0);
-	const exitReasonCounts = {};
-	for (const trade of completedTrades) for (const reason of trade.exitReasons) exitReasonCounts[reason] = (exitReasonCounts[reason] || 0) + 1;
-
-	const stats = summarizeTrades(completedTrades, data.startingBalance);
-	const cleanV35Trades = completedTrades.filter(trade => trade.strategyVersion === "V3.5");
-	const v35Baseline = data.strategyDatasets?.["V3.5"] || null;
-	const v35Research = {
-		strategyVersion: "V3.5",
-		name: "Clean Research",
-		startedAt: v35Baseline?.startedAt || null,
-		startingBalance: Number.isFinite(Number(v35Baseline?.startingBalance)) ? Number(v35Baseline.startingBalance) : null,
-		stats: summarizeTrades(cleanV35Trades, v35Baseline?.startingBalance),
-		sourceStats: buildSourceStats(cleanV35Trades),
-		birdeyeRankStats: buildBirdeyeRankStats(cleanV35Trades)
+	const grossProfit=completedTrades.reduce((s,t)=>s+Math.max(t.pnl,0),0), grossLoss=completedTrades.reduce((s,t)=>s+Math.max(-t.pnl,0),0);
+	const winners=completedTrades.filter(t=>t.pnl>0).length, losers=completedTrades.filter(t=>t.pnl<0).length;
+	const pricesAvailable=livePositions.every(x=>x.live), openValue=livePositions.reduce((s,x)=>s+(x.live?.currentValue||0),0);
+	const equity=pricesAvailable ? data.cashBalance+openValue : null;
+	const winnerReturns=completedTrades.filter(t=>t.pnl>0).map(t=>Number(t.pnlPercent)), loserReturns=completedTrades.filter(t=>t.pnl<0).map(t=>Number(t.pnlPercent));
+	const holdTimes=completedTrades.map(t=>Number(t.holdTimeMs)).filter(Number.isFinite), maxGains=completedTrades.map(t=>Number(t.maxGainPercent)).filter(Number.isFinite);
+	const exitReasonCounts={}; for(const trade of completedTrades) for(const reason of trade.exitReasons) exitReasonCounts[reason]=(exitReasonCounts[reason]||0)+1;
+	const netPnl=grossProfit-grossLoss;
+	const realizedSellEvents=(data.history||[]).filter(row=>row.type==="SELL").slice().sort((a,b)=>new Date(a.exitTime||a.timestamp||0)-new Date(b.exitTime||b.timestamp||0));
+	let realizedEquity=Number(data.startingBalance)||0,realizedPeak=realizedEquity,maxDrawdownUsd=0;
+	for(const row of realizedSellEvents){realizedEquity+=Number(row.pnl)||0;realizedPeak=Math.max(realizedPeak,realizedEquity);maxDrawdownUsd=Math.max(maxDrawdownUsd,realizedPeak-realizedEquity);}
+	const entryAnalytics={
+		averageScore:average(completedTrades.map(t=>Number(t.entryScore))),
+		average5m:average(completedTrades.map(t=>Number(t.entryPriceChange5m))),
+		average1h:average(completedTrades.map(t=>Number(t.entryPriceChange1h))),
+		averageBuyRatio:average(completedTrades.map(t=>Number(t.entryBuyRatio??t.entryBuyRatio5m))),
+		averageTransactions:average(completedTrades.map(t=>Number(t.entryTransactions5m))),
+		averageLiquidity:average(completedTrades.map(t=>Number(t.entryLiquidityUsd))),
+		averageVolume24h:average(completedTrades.map(t=>Number(t.entryVolume24h))),
+		bestReturn:completedTrades.length?Math.max(...completedTrades.map(t=>Number(t.pnlPercent)||0)):null,
+		worstReturn:completedTrades.length?Math.min(...completedTrades.map(t=>Number(t.pnlPercent)||0)):null
 	};
-
-	const cleanV36Trades = completedTrades.filter(trade => trade.strategyVersion === "V3.6");
-	const v36Baseline = data.strategyDatasets?.["V3.6"] || null;
-	const v36Research = {
-		strategyVersion: "V3.6",
-		name: "Pump Structure Protection",
-		startedAt: v36Baseline?.startedAt || null,
-		startingBalance: Number.isFinite(Number(v36Baseline?.startingBalance)) ? Number(v36Baseline.startingBalance) : null,
-		stats: summarizeTrades(cleanV36Trades, v36Baseline?.startingBalance),
-		sourceStats: buildSourceStats(cleanV36Trades),
-		birdeyeRankStats: buildBirdeyeRankStats(cleanV36Trades)
-	};
-
-	return {
-		...data, live, equity, totalPnl: equity === null ? null : equity - data.startingBalance,
-		priceUnavailable: !!data.position && !live, completedTrades, scoreStats: buildScoreStats(completedTrades), exitReasonCounts,
-		strategyVersionStats: buildStrategyVersionStats(completedTrades),
-		v35Research,
-		v36Research,
-		slotSimulation: buildSlotSimulation(completedTrades),
-		tokenDiversity: buildTokenDiversityView(completedTrades, data.position),
-		stats
-	};
+	return {...data, position:positions[0]||null, positions, live:livePositions[0]?.live||null, livePositions,
+		openSlots:positions.length,maxSlots:Number(data.maxOpenPositions)||3,equity,totalPnl:equity===null?null:equity-data.startingBalance,
+		totalPnlPercent:equity===null||!(Number(data.startingBalance)>0)?null:(equity-data.startingBalance)/data.startingBalance*100,
+		priceUnavailable:positions.length>0&&!pricesAvailable,completedTrades,scoreStats:buildScoreStats(completedTrades),exitReasonCounts,entryAnalytics,
+		stats:{completedTrades:completedTrades.length,winners,losers,winRate:completedTrades.length?winners/completedTrades.length*100:0,
+			netPnl,grossProfit,grossLoss,expectancyPerTrade:completedTrades.length?netPnl/completedTrades.length:null,
+			averageWinPnl:average(completedTrades.filter(t=>t.pnl>0).map(t=>Number(t.pnl))),
+			averageLossPnl:average(completedTrades.filter(t=>t.pnl<0).map(t=>Number(t.pnl))),
+			profitFactor:grossLoss>0?grossProfit/grossLoss:null,profitFactorLabel:grossLoss>0?(grossProfit/grossLoss).toFixed(2):grossProfit>0?"∞":"—",
+			averageWinnerPercent:average(winnerReturns),averageLoserPercent:average(loserReturns),averageHoldTimeMs:average(holdTimes),averageMaxGainPercent:average(maxGains),
+			totalFeesUsd:(data.history||[]).filter(row=>row.type==="SELL").reduce((sum,row)=>sum+(Number(row.estimatedFeesUsd)||0),0),
+			maxDrawdownUsd,maxDrawdownPercent:(Number(data.startingBalance)>0?maxDrawdownUsd/Number(data.startingBalance)*100:null)}};
 }
 
-module.exports = {
-	groupCompletedTrades,
-	buildDashboardData,
-	buildSlotSimulation,
-	buildTokenDiversityView,
-	summarizeTrades,
-	buildStrategyVersionStats,
-	buildSourceStats,
-	buildBirdeyeRankStats
-};
+module.exports = { groupCompletedTrades, buildDashboardData };
+

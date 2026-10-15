@@ -28,7 +28,7 @@ function analyzeToken(data) {
 	// ==========================================
 
 	// HARD ANTI-CHASE
-	if (change5m >= 4) {
+	if (change5m > 8) {
 		return {
 			score: 0,
 			signal: "AVOID",
@@ -111,7 +111,7 @@ function analyzeToken(data) {
 	} else if (buyRatio >= 0.60 && buyRatio <= 0.75) {
 		score += 4;
 		reasons.push("Strong sustainable buy pressure");
-	} else if (buyRatio >= 0.55) {
+	} else if (buyRatio >= 0.52) {
 		score += 3;
 		reasons.push("Healthy buy pressure");
 	} else if (buyRatio >= 0.50) {

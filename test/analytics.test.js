@@ -93,7 +93,7 @@ test("position IDs separate identical token/times and bridge unambiguous older p
   assert.equal(groupCompletedTrades(history("open").slice(0, 2)).length, 0);
 });
 
-test("completed table renders percentages, recorded dollars, missing metrics and all 19 columns", () => {
+test("completed table renders percentages, recorded dollars, missing metrics and all 25 columns", () => {
   const nodes = new Map();
   const context = { document: { getElementById(id) {
     if (!nodes.has(id)) nodes.set(id, { addEventListener() {} });
@@ -105,7 +105,7 @@ test("completed table renders percentages, recorded dollars, missing metrics and
   const trade = groupCompletedTrades(history())[0];
   context.renderHistory({ completedTrades: [trade] });
   let html = nodes.get("history").innerHTML;
-  assert.equal((html.match(/<td[ >]/g) || []).length, 19);
+	assert.equal((html.match(/<td[ >]/g) || []).length, 25);
   assert.match(html, /<td>—<\/td><td>—<\/td><td>—<\/td>/);
   assert.match(html, /\$7\.25/);
   assert.match(html, /\$15\.75/);
@@ -116,5 +116,5 @@ test("completed table renders percentages, recorded dollars, missing metrics and
   assert.match(html, /14\.00%/);
   assert.match(html, /60\.00%/);
   context.renderHistory({ completedTrades: [] });
-  assert.match(nodes.get("history").innerHTML, /colspan="19"/);
+	assert.match(nodes.get("history").innerHTML, /colspan="25"/);
 });

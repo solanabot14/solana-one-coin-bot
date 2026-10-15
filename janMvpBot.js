@@ -2,22 +2,25 @@ const market = require("./dexscreener");
 const telegram = require("./telegram");
 const scanner = require("./scanner");
 const { createJanMvpTrader } = require("./janMvpTrader");
+const { createTokenLossGuard } = require("./tokenLossGuard");
 const paperTrader = require("./paperTrader");
+const { getLockStatus } = require("./lpLockChecker");
 
 const POSITION_MONITOR_MS = 5000;
 const OG_FOLLOW_INTERVAL_MS = 2000;
-const SWARM_CACHE_FILL_INTERVAL_MS = 1000;
+const SWARM_CACHE_FILL_INTERVAL_MS = 5000;
+const SWARM_DISCOVERY_INTERVAL_MS = 120000;
 const SWARM_CACHE_MAX_AGE_MS = 3 * 60 * 1000;
 const TOKEN_COOLDOWN_MS = 60 * 60 * 1000;
 
 const HARD_STOP_PERCENT = -10;
 const TAKE_PROFIT_1_PERCENT = 15;
-const TAKE_PROFIT_1_SELL_PERCENT = 15;
+const TAKE_PROFIT_1_SELL_PERCENT = 25;
+const PROFIT_LOCK_TRIGGER_PERCENT = 10;
+const PROFIT_LOCK_FLOOR_PERCENT = 4;
 const TAKE_PROFIT_2_PERCENT = 30;
 const TAKE_PROFIT_2_SELL_PERCENT = 35;
 const TRAILING_STOP_PERCENT = 8;
-const PROFIT_LOCK_TRIGGER_PERCENT = 10;
-const PROFIT_LOCK_TRAIL_POINTS = 8;
 const MOMENTUM_EXIT_MIN_LOSS = -2;
 const MOMENTUM_EXIT_5M = -3;
 const MOMENTUM_EXIT_STRONG_LOSS = -5;
@@ -29,7 +32,8 @@ function createJanMvpBot({
   trader = createJanMvpTrader(),
   getTokenData = market.getTokenData,
   getOgPortfolio = paperTrader.getPortfolio,
-  getCachedCandidates = scanner.getCachedCandidates,
+  discoverCandidates = scanner.discoverCandidates,
+  checkLiquidityLock = getLockStatus,
   timers = globalThis,
   notifier = telegram
 } = {}) {
@@ -41,6 +45,14 @@ function createJanMvpBot({
   let fillBusy = false;
   let monitorBusy = false;
   let lastError = null;
+  const tokenLossGuard = createTokenLossGuard({
+    getHistory: () => trader.getState().executions,
+    scannerIntervalMs: SWARM_DISCOVERY_INTERVAL_MS
+  });
+  const blockedMirrorNotices = new Set();
+  let candidateCache = [];
+  let candidateCacheAt = 0;
+  const livePositionSnapshots = new Map();
   const isActive = session => activeSession === session && !session.signal.aborted;
 
   async function notifyMilestones(closedTrade, milestones) {
@@ -51,13 +63,23 @@ function createJanMvpBot({
       await notifier.sendTelegramMessage([
         "SWARM | SLOT MILESTONE",
         `Slot: ${closedTrade.slotId}`,
-        `Reached: $${Number(milestone).toFixed(2)}`,
-        `Balance: $${Number(closedTrade.endingBalance).toFixed(2)}`,
-        nextTarget == null ? "Next target: COMPLETE" : `Next target: $${Number(nextTarget).toFixed(2)}`,
+        `Reached: ${Number(milestone).toFixed(2)}`,
+        `Balance: ${Number(closedTrade.endingBalance).toFixed(2)}`,
+        nextTarget == null ? "Next target: COMPLETE" : `Next target: ${Number(nextTarget).toFixed(2)}`,
         `Coin: ${closedTrade.symbol}`,
         `Trade return: ${Number(closedTrade.returnPercent).toFixed(2)}%`
       ].join("\n"));
     }
+  }
+
+  function notifySwarmSell(execution, position) {
+    if (!execution) return;
+    void notifier.notifyTrade(execution.reason || "SELL", {
+      ...execution,
+      entryPrice: position.entryPrice,
+      exitPrice: execution.price,
+      amountInvested: Number(position.amountInvested) * Number(execution.percentSold) / 100
+    });
   }
 
   function ogPositionId(position) {
@@ -85,6 +107,14 @@ function createJanMvpBot({
     const og = getOgPortfolio();
     const position = og?.position;
     if (!position || !isActive(session)) return;
+    if (tokenLossGuard.lossStreak(position.tokenAddress) >= 2) {
+      if (!blockedMirrorNotices.has(position.tokenAddress)) {
+        blockedMirrorNotices.add(position.tokenAddress);
+        console.log(`SWARM TOKEN LOSS LOCK | ${position.symbol} | refusing mirror after two consecutive losses`);
+      }
+      return;
+    }
+    blockedMirrorNotices.delete(position.tokenAddress);
 
     const sourceOgPositionId = ogPositionId(position);
     if (alreadyMirrored(sourceOgPositionId)) return;
@@ -124,8 +154,9 @@ function createJanMvpBot({
 
     if (result.success) {
       console.log(
-        `JAN MVP MIRROR BUY | Slot ${slot.id} | ${coin.symbol} | OG entry $${Number(position.entryPrice).toFixed(10)} | Slot $${Number(result.trade.amountInvested).toFixed(2)}`
+        `JAN MVP MIRROR BUY | Slot ${slot.id} | ${coin.symbol} | OG entry ${Number(position.entryPrice).toFixed(10)} | Slot ${Number(result.trade.amountInvested).toFixed(2)}`
       );
+      void notifier.notifyTrade("BUY", result.trade);
     }
   }
 
@@ -150,13 +181,15 @@ function createJanMvpBot({
     const slots = freeSlots();
     if (!slots.length || !isActive(session)) return;
 
-    const cache = getCachedCandidates();
-    const updatedAtMs = Date.parse(cache?.updatedAt || "");
-    const ageMs = Number.isFinite(updatedAtMs) ? Date.now() - updatedAtMs : Infinity;
-    if (ageMs > SWARM_CACHE_MAX_AGE_MS) return;
-
+    const now = Date.now();
+    if (!candidateCacheAt || now - candidateCacheAt >= SWARM_DISCOVERY_INTERVAL_MS) {
+      candidateCache = await discoverCandidates(session.signal) || [];
+      candidateCacheAt = Date.now();
+    }
+    const discovered = candidateCache;
+    if (!isActive(session)) return;
     const occupied = occupiedTokenAddresses();
-    const usable = (cache?.candidates || []).filter(coin =>
+    const usable = (discovered || []).filter(coin =>
       coin.signal === "STRONG BUY" &&
       coin.tokenAddress &&
       !occupied.has(coin.tokenAddress)
@@ -165,23 +198,25 @@ function createJanMvpBot({
     let candidateIndex = 0;
     for (const slot of slots) {
       if (!isActive(session)) return;
-
       let coin = null;
       while (candidateIndex < usable.length) {
         const candidate = usable[candidateIndex++];
-        if (!occupied.has(candidate.tokenAddress)) {
-          coin = candidate;
-          break;
+        if (occupied.has(candidate.tokenAddress)) continue;
+        if (!tokenLossGuard.allows(candidate)) continue;
+        const lock = await checkLiquidityLock(candidate.tokenAddress);
+        if (!lock?.allowed || Number(lock.lockedPercent) < 85) {
+          console.log("SWARM LP LOCK GATE | " + candidate.symbol + " | skipped | " + (lock?.reason || "LOCK_STATUS_UNAVAILABLE"));
+          continue;
         }
+        coin = candidate;
+        break;
       }
       if (!coin) break;
-
-      const result = trader.buy(slot.id, coin, { source: "SWARM_CACHE" });
+      const result = trader.buy(slot.id, coin, { source: "SWARM_V31_DISCOVERY" });
       if (result.success) {
         occupied.add(coin.tokenAddress);
-        console.log(
-          `SWARM CACHE BUY | Slot ${slot.id} | ${coin.symbol} | ${Number(result.trade.amountInvested).toFixed(2)} | Cache age ${Math.round(ageMs / 1000)}s`
-        );
+        console.log(`SWARM BUY | Slot ${slot.id} | ${coin.symbol} | ${Number(result.trade.amountInvested).toFixed(2)}`);
+        void notifier.notifyTrade("BUY", result.trade);
       }
     }
   }
@@ -209,9 +244,18 @@ function createJanMvpBot({
     if (!p || trader.positionKey(p) !== expectedPosition) return;
 
     const entryPrice = Number(p.entryPrice);
+    const livePnl = Number(p.quantity || 0) * currentPrice - Number(p.amountInvested || 0);
+    livePositionSnapshots.set(slotSnapshot.id, {
+      currentPrice,
+      currentValue: Number(p.quantity || 0) * currentPrice,
+      pnl: livePnl,
+      pnlPercent: Number(p.amountInvested) > 0 ? livePnl / Number(p.amountInvested) * 100 : null,
+      maxGainPercent: entryPrice > 0 ? (Number(p.highestPrice || entryPrice) - entryPrice) / entryPrice * 100 : null,
+      holdTimeMs: Math.max(0, Date.now() - new Date(p.entryTime).getTime()),
+      pairAddress: p.pairAddress || fresh.pairAddress || null
+    });
     const profitPercent = (currentPrice - entryPrice) / entryPrice * 100;
     const highestProfitPercent = (Number(p.highestPrice) - entryPrice) / entryPrice * 100;
-    const profitLockFloor = highestProfitPercent - PROFIT_LOCK_TRAIL_POINTS;
     const dropFromHigh = (Number(p.highestPrice) - currentPrice) / Number(p.highestPrice) * 100;
     const momentum5m = Number(fresh.priceChange5m) || 0;
     const buys5m = Number(fresh.buys5m) || 0;
@@ -221,6 +265,7 @@ function createJanMvpBot({
 
     const exit = async (reason, percent = 100) => {
       const result = trader.sell(slot.id, currentPrice, percent, { expectedPosition, reason });
+      if (result.success) notifySwarmSell(result.execution, p);
       if (result.success && result.closedTrade) {
         await notifyMilestones(result.closedTrade, result.newlyReached);
         void tick("fill", session);
@@ -236,19 +281,26 @@ function createJanMvpBot({
     const momentumExitB = profitPercent <= MOMENTUM_EXIT_STRONG_LOSS && momentum5m <= MOMENTUM_EXIT_STRONG_5M;
     if (momentumExitA || momentumExitB) { await exit("MOMENTUM EXIT"); return; }
 
-    const profitLockActive = !p.secondTakeProfitDone && highestProfitPercent >= PROFIT_LOCK_TRIGGER_PERCENT;
-    if (profitLockActive && profitPercent <= profitLockFloor) { await exit("PROFIT LOCK"); return; }
+    const profitLockActive = highestProfitPercent >= PROFIT_LOCK_TRIGGER_PERCENT &&
+      !p.secondTakeProfitDone;
+    if (profitLockActive && profitPercent <= PROFIT_LOCK_FLOOR_PERCENT) {
+      await exit("PROFIT LOCK"); return;
+    }
 
     if (profitPercent >= TAKE_PROFIT_1_PERCENT && !p.firstTakeProfitDone) {
-      return void trader.sell(slot.id, currentPrice, TAKE_PROFIT_1_SELL_PERCENT, {
+      const result = trader.sell(slot.id, currentPrice, TAKE_PROFIT_1_SELL_PERCENT, {
         expectedPosition, takeProfit:"firstTakeProfitDone", reason:"TAKE PROFIT 1"
       });
+      if (result.success) notifySwarmSell(result.execution, p);
+      return;
     }
 
     if (profitPercent >= TAKE_PROFIT_2_PERCENT && p.firstTakeProfitDone && !p.secondTakeProfitDone) {
-      return void trader.sell(slot.id, currentPrice, TAKE_PROFIT_2_SELL_PERCENT, {
+      const result = trader.sell(slot.id, currentPrice, TAKE_PROFIT_2_SELL_PERCENT, {
         expectedPosition, takeProfit:"secondTakeProfitDone", reason:"TAKE PROFIT 2"
       });
+      if (result.success) notifySwarmSell(result.execution, p);
+      return;
     }
 
     if (p.secondTakeProfitDone && dropFromHigh >= TRAILING_STOP_PERCENT) {
@@ -294,12 +346,36 @@ function createJanMvpBot({
     }
   }
 
+  async function closeAllPositions(reason = "MANUAL PAPER CLOSE") {
+    const slots = trader.getDashboardState().slots || [];
+    const results = [];
+    for (const slot of slots) {
+      const position = slot && slot.position;
+      if (!position) continue;
+      try {
+        const quote = await getTokenData(position.tokenAddress, { pairAddress: position.pairAddress });
+        const currentPrice = Number(quote && quote.priceUsd) || Number(slot.live && slot.live.currentPrice) || 0;
+        if (!(currentPrice > 0)) {
+          results.push({ success: false, slotId: slot.id, symbol: position.symbol, message: "No current price; position left open." });
+          continue;
+        }
+        const expectedPosition = trader.positionKey(position);
+        const result = trader.sell(slot.id, currentPrice, 100, { expectedPosition, reason });
+        results.push({ ...result, slotId: slot.id, symbol: position.symbol });
+      } catch (error) {
+        results.push({ success: false, slotId: slot.id, symbol: position.symbol, message: error.message });
+      }
+    }
+    const closedCount = results.filter(result => result.success).length;
+    return { success: results.every(result => result.success), closedCount, results };
+  }
+
   function start() {
     if (activeSession) return;
     lastError = null;
     const session = new AbortController();
     activeSession = session;
-    console.log("SWARM STARTED | Concurrent slots using OG candidate cache only");
+    console.log("SWARM STARTED | 5 concurrent slots | V3.1 discovery cached 120s");
     monitorInterval = timers.setInterval(() => tick("monitor", session), POSITION_MONITOR_MS);
     followInterval = timers.setInterval(() => tick("follow", session), OG_FOLLOW_INTERVAL_MS);
     fillInterval = timers.setInterval(() => tick("fill", session), SWARM_CACHE_FILL_INTERVAL_MS);
@@ -323,8 +399,21 @@ function createJanMvpBot({
     start, stop,
     getStatus: () => activeSession !== null,
     getLastError: () => lastError,
-    getDashboardState: () => trader.getDashboardState(),
-    getState: () => trader.getState()
+    getDashboardState: () => {
+      const dashboard = trader.getDashboardState();
+      return {
+        ...dashboard,
+        slots: dashboard.slots.map(slot => {
+          if (!slot.position) {
+            livePositionSnapshots.delete(slot.id);
+            return slot;
+          }
+          return { ...slot, live: livePositionSnapshots.get(slot.id) || null };
+        })
+      };
+    },
+    getState: () => trader.getState(),
+    closeAllPositions
   };
 }
 

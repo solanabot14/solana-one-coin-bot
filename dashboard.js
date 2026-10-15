@@ -2,14 +2,20 @@ require("dotenv").config();
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const bot = require("./bot");
-const { getPortfolio, sell, positionKey } = require("./paperTrader");
-const { getTokenData } = require("./dexscreener");
+const { getPortfolio, positionKey } = require("./paperTrader");
+const { getTokenData, getTokensData } = require("./dexscreener");
 const { buildDashboardData } = require("./dashboardData");
-const scanner = require("./scanner");
-const janSlotEngine = require("./janSlotEngine");
-const janMvpBot = require("./janMvpBot");
-const { createRuntimeState } = require("./runtimeState");
+const swarm = require("./janMvpBot");
+const profitSniper = require("./profitSniper");
+const geminiBot = require("./geminiBot");
+const geminiTrader = require("./geminiTrader");
+const { buildGeminiAnalytics } = require("./geminiAnalytics");
+const outcomeBot = require("./outcomeBot");
+const stockBot = require("./stockBot");
+require("./retiredBotCleanup").purgeLocalData();
+const equityHistory = require("./equityHistory").createEquityHistory();
 
 function getConfig(env = process.env) {
   const railway = !!env.RAILWAY_ENVIRONMENT_ID;
@@ -17,834 +23,149 @@ function getConfig(env = process.env) {
   const port = Number(env.PORT || 3000);
   const localOnly = ["127.0.0.1", "::1", "localhost"].includes(host);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid PORT.");
-  return { host, port, localOnly };
+  const dashboardUser = env.DASHBOARD_USER || "";
+  const dashboardPassword = env.DASHBOARD_PASSWORD || "";
+  if ((dashboardUser && !dashboardPassword) || (!dashboardUser && dashboardPassword)) {
+    throw new Error("Set both DASHBOARD_USER and DASHBOARD_PASSWORD.");
+  }
+  return { host, port, localOnly, dashboardUser, dashboardPassword,
+    readOnly: !dashboardUser && !dashboardPassword };
 }
 
-const page = `<!doctype html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Solana One Coin Bot</title>
-
-<style>
-*{box-sizing:border-box}
-
-body{
-  margin:0;
-  padding:22px;
-  background:#080b12;
-  color:#fff;
-  font:14px Arial
+function authorized(req, config) {
+  if (!config.dashboardUser && !config.dashboardPassword) return true;
+  const match = /^Basic\s+([A-Za-z0-9+/]+=*)$/i.exec(req.headers.authorization || "");
+  if (!match) return false;
+  let supplied;
+  try { supplied = Buffer.from(match[1], "base64").toString("utf8"); } catch (_) { return false; }
+  const expected = config.dashboardUser + ":" + config.dashboardPassword;
+  const suppliedBytes = Buffer.from(supplied);
+  const expectedBytes = Buffer.from(expected);
+  return suppliedBytes.length === expectedBytes.length && crypto.timingSafeEqual(suppliedBytes, expectedBytes);
 }
 
-.container{
-  max-width:1400px;
-  margin:auto
+const page = fs.readFileSync(path.join(__dirname, "terminal.html"), "utf8");
+
+const CANDLE_BREAKOUT_DASHBOARD_API = "https://pubx-fast-momentum-production.up.railway.app/api/data";
+const PROFITABILITY_LAB_API = "https://b31-profitability-lab-production.up.railway.app/api/lab-summary";
+
+async function fetchCandleBreakoutDashboard() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(CANDLE_BREAKOUT_DASHBOARD_API, {
+      signal: controller.signal
+    });
+    if (!response.ok) return { data: null, status: null, error: "Pullback + Reclaim Momentum feed unavailable (" + response.status + ")." };
+    const body = await response.json();
+    if (!body || !body.pullback) return { data: null, status: null, error: "Pullback + Reclaim Momentum account data was not returned." };
+    return { data: body.pullback, status: body.pullbackStatus || null, error: null };
+  } catch (error) {
+    console.error("Pullback + Reclaim Momentum dashboard feed unavailable:", error.message);
+    return { data: null, status: null, error: "Pullback + Reclaim Momentum data is temporarily unavailable." };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
-.header,.controls{
-  display:flex;
-  gap:12px;
-  align-items:center;
-  flex-wrap:wrap
+async function fetchProfitabilityLabDashboard() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(PROFITABILITY_LAB_API, { signal: controller.signal });
+    if (!response.ok) return { data: null, error: "Profitability Lab feed unavailable (" + response.status + ")." };
+    const body = await response.json();
+    if (!body || body.paperOnly !== true) return { data: null, error: "Profitability Lab did not return paper account data." };
+    return { data: body, error: null };
+  } catch (error) {
+    console.error("Profitability Lab dashboard feed unavailable:", error.message);
+    return { data: null, error: "Profitability Lab data is temporarily unavailable." };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
-.tabs{
-  display:flex;
-  gap:8px;
-  margin:18px 0;
-  flex-wrap:wrap
+function applyBuyPriorityCostEstimates(data) {
+  if (!data) return data;
+  const costsByPosition = new Map();
+  for (const row of data.history || []) {
+    if (row.type !== "SELL") continue;
+    const prior = costsByPosition.get(row.positionId) || {
+      estimatedCostUsd: 0, estimatedFeesUsd: 0, estimatedSlippageUsd: 0, grossPnl: 0
+    };
+    costsByPosition.set(row.positionId, {
+      estimatedCostUsd: prior.estimatedCostUsd + Number(row.estimatedCostUsd || 0),
+      estimatedFeesUsd: prior.estimatedFeesUsd + Number(row.estimatedFeesUsd || 0),
+      estimatedSlippageUsd: prior.estimatedSlippageUsd + Number(row.estimatedSlippageUsd || 0),
+      grossPnl: prior.grossPnl + Number(row.grossPnl ?? row.pnl ?? 0)
+    });
+  }
+  data.completedTrades = (data.completedTrades || []).map(trade => {
+    const cost = costsByPosition.get(trade.positionId) || {
+      estimatedCostUsd: 0, estimatedFeesUsd: 0, estimatedSlippageUsd: 0, grossPnl: trade.pnl
+    };
+    return {
+      ...trade,
+      grossPnl: cost.grossPnl,
+      netPnl: Number(trade.pnl || 0),
+      estimatedCostUsd: cost.estimatedCostUsd,
+      estimatedFeesUsd: cost.estimatedFeesUsd,
+      estimatedSlippageUsd: cost.estimatedSlippageUsd,
+      costEstimateAvailable: true,
+      pnlPercent: Number(trade.amountInvested) > 0
+        ? Number(trade.pnl || 0) / Number(trade.amountInvested) * 100
+        : trade.pnlPercent
+    };
+  });
+  const realizedEstimatedCosts = [...costsByPosition.values()]
+    .reduce((sum, item) => sum + item.estimatedCostUsd, 0);
+  let openEstimatedCosts = 0;
+  let openEstimatedFees = 0;
+  for (const item of data.livePositions || []) {
+    const position = item.position || {};
+    const live = item.live || {};
+    const value = Number(live.currentValue) || 0;
+    const assumptions = position.experimentEntry?.estimatedCostModel || {};
+    const liquidity = Number(live.liquidityUsd || assumptions.entryLiquidityUsd) || 0;
+    const impact = value > 0 && liquidity > 0 ? value / (liquidity / 2 + value) * 100 : null;
+    const poolFeeRate = Number(assumptions.assumedPoolFeePercentPerSwap || 0) / 100;
+    const networkFee = Number(assumptions.estimatedSolanaNetworkFeeUsdPerSwap || 0);
+    const priorityFee = Number(assumptions.estimatedPriorityFeeUsdPerSwap || 0);
+    const entryCosts = position.remainingEntryCosts || {};
+    const remainingEntryCosts = (Number(entryCosts.feesUsd) || 0) + (Number(entryCosts.slippageUsd) || 0);
+    const remainingEntryFees = Number(entryCosts.feesUsd) || 0;
+    const futureExitFees = value > 0 ? value * poolFeeRate + networkFee + priorityFee : 0;
+    const futureExitSlippage = value > 0 && impact !== null ? value * impact / 100 : 0;
+    openEstimatedFees += remainingEntryFees + futureExitFees;
+    openEstimatedCosts += remainingEntryCosts + futureExitFees + futureExitSlippage;
+  }
+  const accountEquity = Number(data.equity);
+  if (Number.isFinite(accountEquity)) {
+    data.grossEquity = accountEquity + realizedEstimatedCosts + openEstimatedCosts;
+    data.totalEstimatedCosts = realizedEstimatedCosts + openEstimatedCosts;
+    data.totalFeesUsd = [...costsByPosition.values()].reduce((sum, item) => sum + item.estimatedFeesUsd, 0) + openEstimatedFees;
+    data.equity = accountEquity - openEstimatedCosts;
+    data.totalPnl = data.equity - Number(data.startingBalance || 0);
+    data.totalPnlPercent = Number(data.startingBalance) > 0
+      ? data.totalPnl / Number(data.startingBalance) * 100
+      : null;
+  }
+  data.costModel = {
+    label: "Estimated paper execution costs",
+    poolFeePercentPerSwap: 0.30,
+    estimatedNetworkFeeUsdPerSwap: 0.01,
+    estimatedPriorityFeeUsdPerSwap: 0.01,
+    slippageMethod: "Approximate constant-product price impact using DexScreener liquidity",
+    warning: "Estimates only; live routes and fills can differ."
+  };
+  return data;
 }
-
-.tab-button{
-  background:#111722;
-  color:#8792a5;
-  border:1px solid #222b3a;
-}
-
-.tab-button.active{
-  background:#172033;
-  color:#fff;
-  border-color:#3a4964
-}
-
-.tab-panel{display:none}
-.tab-panel.active{display:block}
-
-.progress{
-  height:9px;
-  background:#0b1018;
-  border-radius:8px;
-  overflow:hidden;
-  margin-top:8px
-}
-
-.progress-fill{
-  height:100%;
-  background:#4cff9a
-}
-
-.header{
-  justify-content:space-between;
-  margin-bottom:20px
-}
-
-h1{margin:0 0 5px}
-h2{margin-top:0}
-
-.subtitle,.label,th,.empty,.muted{
-  color:#8792a5
-}
-
-.status{
-  padding:9px 15px;
-  border-radius:20px;
-  background:#29151b;
-  color:#ff5c72;
-  font-weight:bold
-}
-
-.online{
-  background:#123d2b;
-  color:#4cff9a
-}
-
-button{
-  border:0;
-  border-radius:8px;
-  padding:11px 18px;
-  font-weight:bold;
-  cursor:pointer
-}
-
-.start{background:#4cff9a}
-
-.stop{
-  background:#ff5c72;
-  color:#fff
-}
-
-.grid{
-  display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
-  gap:12px
-}
-
-.card{
-  background:#111722;
-  border:1px solid #222b3a;
-  border-radius:12px;
-  padding:18px
-}
-
-.section{margin-top:18px}
-
-.label{
-  text-transform:uppercase;
-  font-size:12px;
-  margin-bottom:7px
-}
-
-.value{
-  font-size:25px;
-  font-weight:bold
-}
-
-.green{color:#4cff9a}
-.red{color:#ff5c72}
-
-.metric{
-  background:#0b1018;
-  border-radius:9px;
-  padding:13px
-}
-
-.metric-label{
-  color:#8792a5;
-  font-size:11px;
-  text-transform:uppercase;
-  margin-bottom:6px
-}
-
-.metric-value{
-  font-size:18px;
-  font-weight:bold
-}
-
-.live-title{
-  display:flex;
-  align-items:center;
-  gap:12px;
-  flex-wrap:wrap;
-  margin-bottom:15px
-}
-
-.coin-name{
-  font-size:22px;
-  font-weight:bold
-}
-
-.badge{
-  display:inline-block;
-  padding:5px 9px;
-  border-radius:15px;
-  background:#172033;
-  color:#a9baff;
-  font-size:12px;
-  font-weight:bold
-}
-
-.small-link{
-  color:#8fa7ff;
-  text-decoration:none
-}
-
-.small-link:hover{
-  text-decoration:underline
-}
-
-.reasons{
-  margin-top:14px;
-  padding:13px;
-  background:#0b1018;
-  border-radius:9px;
-  line-height:1.6
-}
-
-table{
-  width:100%;
-  border-collapse:collapse
-}
-
-th,td{
-  text-align:left;
-  padding:11px;
-  border-bottom:1px solid #283141;
-  white-space:nowrap
-}
-
-.analytics-table th,
-.analytics-table td{
-  text-align:center
-}
-
-.analytics-table th:first-child,
-.analytics-table td:first-child{
-  text-align:left
-}
-
-@media(max-width:600px){
-  body{padding:14px}
-  .value{font-size:21px}
-}
-</style>
-</head>
-
-<body>
-
-<div class="container">
-
-<div class="header">
-  <div>
-    <h1>Solana One Coin Bot</h1>
-    <div class="subtitle">
-      Entry V3.1R2 • Original V3.1 Exits • 10% Compounding • Paper Trading
-    </div>
-  </div>
-
-  <div id="status" class="status">
-    BOT OFFLINE
-  </div>
-</div>
-
-<div class="controls">
-  <button class="start" id="startButton">
-    START BOT
-  </button>
-
-  <button class="stop" id="stopButton">
-    STOP BOT
-  </button>
-</div>
-
-<p id="notice" role="status">
-  Stopping pauses automatic exits and keeps your open position.
-</p>
-
-<div class="tabs" role="tablist" aria-label="Dashboard views">
-  <button class="tab-button active" id="botTab" type="button">Current Bot</button>
-  <button class="tab-button" id="slotTab" type="button">Swarm</button>
-</div>
-
-<div id="botPanel" class="tab-panel active">
-
-<div class="grid">
-
-  <div class="card">
-    <div class="label">Starting Balance</div>
-    <div class="value" id="starting">$0.00</div>
-  </div>
-
-  <div class="card">
-    <div class="label">Cash</div>
-    <div class="value" id="cash">$0.00</div>
-  </div>
-
-  <div class="card">
-    <div class="label">Equity</div>
-    <div class="value" id="equity">$0.00</div>
-  </div>
-
-  <div class="card">
-    <div class="label">Total P/L</div>
-    <div class="value" id="pnl">$0.00</div>
-  </div>
-
-  <div class="card">
-    <div class="label">Completed Positions</div>
-    <div class="value" id="count">0</div>
-  </div>
-
-  <div class="card">
-    <div class="label">Win Rate</div>
-    <div class="value" id="winrate">0%</div>
-  </div>
-
-</div>
-
-<div class="card section">
-
-  <h2>Live Trade</h2>
-
-  <div id="live" class="empty">
-    Waiting for a trade...
-  </div>
-
-</div>
-
-<div class="card section">
-
-<h2>Overall Performance</h2>
-
-<div class="grid">
-
-  <div class="metric">
-    <div class="metric-label">Winners</div>
-    <div class="metric-value green" id="winners">0</div>
-  </div>
-
-  <div class="metric">
-    <div class="metric-label">Losers</div>
-    <div class="metric-value red" id="losers">0</div>
-  </div>
-
-  <div class="metric">
-    <div class="metric-label">Gross Profit</div>
-    <div class="metric-value green" id="profit">$0.00</div>
-  </div>
-
-  <div class="metric">
-    <div class="metric-label">Gross Loss</div>
-    <div class="metric-value red" id="loss">$0.00</div>
-  </div>
-
-  <div class="metric">
-    <div class="metric-label">Net P/L</div>
-    <div class="metric-value" id="net">$0.00</div>
-  </div>
-
-  <div class="metric">
-    <div class="metric-label">Profit Factor</div>
-    <div class="metric-value" id="factor">—</div>
-  </div>
-
-  <div class="metric">
-    <div class="metric-label">Avg Winner</div>
-    <div class="metric-value green" id="avgWinner">—</div>
-  </div>
-
-  <div class="metric">
-    <div class="metric-label">Avg Loser</div>
-    <div class="metric-value red" id="avgLoser">—</div>
-  </div>
-
-  <div class="metric">
-    <div class="metric-label">Avg Hold Time</div>
-    <div class="metric-value" id="avgHold">—</div>
-  </div>
-
-  <div class="metric">
-    <div class="metric-label">Avg Max Gain</div>
-    <div class="metric-value" id="avgMaxGain">—</div>
-  </div>
-
-</div>
-</div>
-
-<div class="card section">
-
-<h2>V3.6 Pump Structure Protection</h2>
-
-<p class="muted">
-  New OG entries are tagged V3.6. This section tracks the current entry strategy separately so V3.5 remains frozen as historical research.
-</p>
-
-<div class="grid">
-  <div class="metric"><div class="metric-label">V3.6 Completed</div><div class="metric-value" id="v36Trades">0</div></div>
-  <div class="metric"><div class="metric-label">V3.6 Win Rate</div><div class="metric-value" id="v36WinRate">0%</div></div>
-  <div class="metric"><div class="metric-label">V3.6 Net P/L</div><div class="metric-value" id="v36Net">$0.00</div></div>
-  <div class="metric"><div class="metric-label">V3.6 Profit Factor</div><div class="metric-value" id="v36Factor">—</div></div>
-  <div class="metric"><div class="metric-label">Expectancy / Trade</div><div class="metric-value" id="v36Expectancy">—</div></div>
-  <div class="metric"><div class="metric-label">Payoff Ratio</div><div class="metric-value" id="v36Payoff">—</div></div>
-  <div class="metric"><div class="metric-label">Realized Max Drawdown</div><div class="metric-value" id="v36Drawdown">—</div></div>
-  <div class="metric"><div class="metric-label">Max Loss Streak</div><div class="metric-value" id="v36LossStreak">0</div></div>
-  <div class="metric"><div class="metric-label">Dataset Started</div><div class="metric-value" id="v36Started">Waiting for first V3.6 trade</div></div>
-  <div class="metric"><div class="metric-label">Dataset Start Balance</div><div class="metric-value" id="v36StartBalance">—</div></div>
-</div>
-
-<div style="overflow-x:auto; margin-top:16px">
-<table>
-<thead><tr><th>Strategy Version</th><th>Trades</th><th>Win Rate</th><th>Expectancy</th><th>Profit Factor</th><th>Net P/L</th></tr></thead>
-<tbody id="strategyVersionStats"><tr><td colspan="6">No completed strategy data yet.</td></tr></tbody>
-</table>
-</div>
-
-<div style="overflow-x:auto; margin-top:16px">
-<table>
-<thead><tr><th>V3.6 Discovery Source</th><th>Trades</th><th>Win Rate</th><th>Expectancy</th><th>Profit Factor</th><th>Net P/L</th></tr></thead>
-<tbody id="v36SourceStats"><tr><td colspan="6">Waiting for V3.6 trades.</td></tr></tbody>
-</table>
-</div>
-
-<div style="overflow-x:auto; margin-top:16px">
-<table>
-<thead><tr><th>V3.6 Birdeye Rank</th><th>Trades</th><th>Win Rate</th><th>Expectancy</th><th>Profit Factor</th><th>Net P/L</th></tr></thead>
-<tbody id="v36RankStats"><tr><td colspan="6">Waiting for Birdeye-ranked V3.6 trades.</td></tr></tbody>
-</table>
-</div>
-
-<div style="overflow-x:auto; margin-top:16px">
-<table>
-<thead><tr><th>Frozen Baseline</th><th>Trades</th><th>Win Rate</th><th>Expectancy</th><th>Profit Factor</th><th>Net P/L</th></tr></thead>
-<tbody id="v35ArchiveStats"><tr><td colspan="6">Waiting for archived V3.5 data.</td></tr></tbody>
-</table>
-</div>
-
-</div>
-
-<div class="card section">
-
-<h2>Discovery Mix</h2>
-
-<p class="muted">
-  Latest discovery scan across DexScreener and Birdeye sources. All tokens are deduplicated before validation.
-</p>
-
-<div class="grid">
-  <div class="metric">
-    <div class="metric-label">Unique Solana Tokens</div>
-    <div class="metric-value" id="discoveryUnique">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Passed Safety Filters</div>
-    <div class="metric-value" id="discoveryPassed">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Strong Buys</div>
-    <div class="metric-value" id="discoveryStrong">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Last Scan</div>
-    <div class="metric-value" id="discoveryUpdated">—</div>
-  </div>
-</div>
-
-<div style="overflow-x:auto; margin-top:16px">
-<table>
-<thead>
-<tr>
-  <th>Source</th>
-  <th>Type</th>
-  <th>Tokens Received</th>
-</tr>
-</thead>
-<tbody id="discoverySources">
-<tr><td colspan="3">Waiting for scan data...</td></tr>
-</tbody>
-</table>
-</div>
-
-<div style="overflow-x:auto; margin-top:16px">
-<table>
-<thead>
-<tr>
-  <th>Top Candidate</th>
-  <th>Score</th>
-  <th>Signal</th>
-  <th>Discovery Source</th>
-</tr>
-</thead>
-<tbody id="discoveryCandidates">
-<tr><td colspan="4">Waiting for scan data...</td></tr>
-</tbody>
-</table>
-</div>
-
-</div>
-
-<div class="card section">
-
-<h2>Rejection Telemetry</h2>
-
-<p class="muted">
-  Latest OG scan only. Counts can overlap because one token may fail more than one STRONG BUY confirmation.
-  Volume and Smart Money fields are shown for context. Post-Pump, Current Activity, Late Momentum, Market Data Integrity and Birdeye Pre-Discovery Pump are active entry protections.
-</p>
-
-<div class="grid">
-  <div class="metric">
-    <div class="metric-label">Not Strong Buy</div>
-    <div class="metric-value" id="rejectNotStrong">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Score Below 8</div>
-    <div class="metric-value" id="rejectScore">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">5m Confirmation</div>
-    <div class="metric-value" id="reject5m">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">1h Confirmation</div>
-    <div class="metric-value" id="reject1h">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Buy Ratio &lt; 55%</div>
-    <div class="metric-value" id="rejectRatio">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Transactions &lt; 20</div>
-    <div class="metric-value" id="rejectTx">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Anti-Chase 5m</div>
-    <div class="metric-value" id="rejectAnti5m">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Anti-Chase 1h</div>
-    <div class="metric-value" id="rejectAnti1h">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Anti-Chase 24h</div>
-    <div class="metric-value" id="rejectAnti24h">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Post-Pump Guard</div>
-    <div class="metric-value" id="rejectPostPump">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Current Activity Gate</div>
-    <div class="metric-value" id="rejectCurrentActivity">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Late Momentum Guard</div>
-    <div class="metric-value" id="rejectLateMomentum">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Market Data Integrity</div>
-    <div class="metric-value" id="rejectMarketIntegrity">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Pre-Discovery Pump</div>
-    <div class="metric-value" id="rejectPreDiscoveryPump">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Post-Pump Rebound</div>
-    <div class="metric-value" id="rejectPostPumpRebound">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Birdeye OHLCV Status</div>
-    <div class="metric-value" id="birdeyeOhlcvStatus">—</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Birdeye OHLCV Requests</div>
-    <div class="metric-value" id="birdeyeOhlcvRequests">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">OHLCV Cache Hits</div>
-    <div class="metric-value" id="birdeyeOhlcvCacheHits">0</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Dex Discovery Health</div>
-    <div class="metric-value" id="dexDiscoveryHealth">—</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Smart Money Status</div>
-    <div class="metric-value" id="smartMoneyStatus">—</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Smart Money Matches</div>
-    <div class="metric-value" id="smartMoneyMatches">0</div>
-  </div>
-</div>
-
-<div style="overflow-x:auto; margin-top:16px">
-<table>
-<thead>
-<tr>
-  <th>Near Entry</th>
-  <th>Score</th>
-  <th>Signal</th>
-  <th>5m</th>
-  <th>1h</th>
-  <th>Buy Ratio</th>
-  <th>5m Tx</th>
-  <th>5m Volume</th>
-  <th>5m Vol/Liq</th>
-  <th>15m Extension</th>
-  <th>Historical 15m</th>
-  <th>Historical 30m</th>
-  <th>Smart Money</th>
-  <th>Blocked By</th>
-  <th>Source</th>
-</tr>
-</thead>
-<tbody id="rejectionNearEntries">
-<tr><td colspan="15">Waiting for scan data...</td></tr>
-</tbody>
-</table>
-</div>
-
-</div>
-
-<div class="card section">
-
-<h2>Token Diversity</h2>
-
-<p class="muted">
-  Read-only view of the OG token reentry rules. This section does not change trading behavior.
-</p>
-
-<div style="overflow-x:auto">
-
-<table>
-<thead>
-<tr>
-  <th>Coin</th>
-  <th>Status</th>
-  <th>Entries 24h</th>
-  <th>Wins</th>
-  <th>Losses</th>
-  <th>Max Gain</th>
-  <th>Available Again</th>
-  <th>Reason</th>
-</tr>
-</thead>
-
-<tbody id="diversityRows">
-<tr><td colspan="8">No recent token activity.</td></tr>
-</tbody>
-</table>
-
-</div>
-</div>
-
-<div class="card section">
-
-<h2>Performance by Entry Score</h2>
-
-<div style="overflow-x:auto">
-
-<table class="analytics-table">
-
-<thead>
-<tr>
-  <th>Score</th>
-  <th>Trades</th>
-  <th>Wins</th>
-  <th>Losses</th>
-  <th>Win Rate</th>
-  <th>Avg Return</th>
-  <th>Avg Max Gain</th>
-  <th>Net P/L</th>
-</tr>
-</thead>
-
-<tbody id="scoreStats">
-<tr>
-<td colspan="8">
-  No completed trades yet.
-</td>
-</tr>
-</tbody>
-
-</table>
-
-</div>
-</div>
-
-<div class="card section">
-
-<h2>Exit Reasons</h2>
-
-<div id="exitReasons" class="grid">
-  <div class="metric">
-    No completed positions yet.
-  </div>
-</div>
-
-</div>
-
-<div class="card section">
-
-<h2>Completed Positions</h2>
-
-<div style="overflow-x:auto">
-
-<table>
-
-<thead>
-<tr>
-  <th>Coin</th>
-  <th>Version</th>
-  <th>Birdeye Rank</th>
-  <th>Score</th>
-  <th>Entry 5m</th>
-  <th>Entry 1h</th>
-  <th>Entry Buy Ratio</th>
-  <th>Entry 5m Vol</th>
-  <th>15m Extension</th>
-  <th>Smart Money</th>
-  <th>Source</th>
-  <th>Entry</th>
-  <th>Average Exit</th>
-  <th>Invested</th>
-  <th>TP1 $</th>
-  <th>TP2 $</th>
-  <th>Trailing $</th>
-  <th>Other Exit $</th>
-  <th>Total Sold $</th>
-  <th>P/L</th>
-  <th>Return</th>
-  <th>Max Gain</th>
-  <th>Hold Time</th>
-  <th>Exit Reason</th>
-  <th>Chart</th>
-</tr>
-</thead>
-
-<tbody id="history"></tbody>
-
-</table>
-
-</div>
-</div>
-
-</div>
-
-<div id="slotPanel" class="tab-panel">
-
-<div class="card section">
-  <h2>Swarm</h2>
-  <p class="muted">
-    Independent concurrent paper simulation. Swarm uses the OG scanner candidate cache only for new entries,
-    refills free slots immediately, and can mirror the OG opportunity while other slots trade different qualifying coins.
-  </p>
-
-  <div class="controls" style="margin-bottom:16px">
-    <div id="janStatus" class="status">SWARM OFFLINE</div>
-  </div>
-  <p id="janNotice" class="muted">Swarm follows the main bot automatically. START BOT starts both; STOP BOT pauses both.</p>
-
-  <div class="grid">
-    <div class="metric">
-      <div class="metric-label">Swarm Starting Capital</div>
-      <div class="metric-value" id="slotStarting">$10.00</div>
-    </div>
-    <div class="metric">
-      <div class="metric-label">Swarm Capital</div>
-      <div class="metric-value" id="slotTotal">$10.00</div>
-    </div>
-    <div class="metric">
-      <div class="metric-label">Simulated P/L</div>
-      <div class="metric-value" id="slotPnl">$0.00</div>
-    </div>
-    <div class="metric">
-      <div class="metric-label">Milestones</div>
-      <div class="metric-value" id="slotTarget">$10 SPLIT → $100</div>
-    </div>
-    <div class="metric">
-      <div class="metric-label">Completed Swarm Trades</div>
-      <div class="metric-value" id="slotTrades">0</div>
-    </div>
-  </div>
-</div>
-
-<div class="card section">
-  <h2>Independent Slots</h2>
-  <div style="overflow-x:auto">
-    <table>
-      <thead>
-        <tr>
-          <th>Slot</th>
-          <th>Cash</th>
-          <th>Open Position</th>
-          <th>Invested</th>
-          <th>Next Target</th>
-          <th>Progress</th>
-          <th>Completed</th>
-          <th>Wins</th>
-          <th>Losses</th>
-        </tr>
-      </thead>
-      <tbody id="slotRows">
-        <tr><td colspan="9">Waiting for Swarm activity...</td></tr>
-      </tbody>
-    </table>
-  </div>
-</div>
-
-<div class="card section">
-  <h2>Target Ladder</h2>
-  <div id="slotTargets" class="grid"></div>
-</div>
-
-<div class="card section">
-  <h2>Slot Executions</h2>
-  <div style="overflow-x:auto">
-    <table>
-      <thead>
-        <tr>
-          <th>Time</th>
-          <th>Type</th>
-          <th>Slot</th>
-          <th>Coin</th>
-          <th>Price</th>
-          <th>Amount</th>
-          <th>Reason / P&L</th>
-        </tr>
-      </thead>
-      <tbody id="slotExecutions">
-        <tr><td colspan="7">Waiting for slot executions...</td></tr>
-      </tbody>
-    </table>
-  </div>
-</div>
-
-</div>
-
-</div>
-
-<script src="/dashboard-client.js" defer></script>
-
-</body>
-</html>`;
-
 function createDashboardServer({ config = getConfig(), controls = bot,
-  portfolio = getPortfolio, marketData = getTokenData, slotEngine = null,
-  janControls = janMvpBot, runtimeState = createRuntimeState() } = {}) {
+  portfolio = getPortfolio, marketData = getTokenData,
+  batchMarketData = marketData === getTokenData ? getTokensData : null } = {}) {
   const client = fs.readFileSync(path.join(__dirname, "dashboard-client.js"));
+  const terminalCss = fs.readFileSync(path.join(__dirname, "terminal.css"));
+  const analyticsCore = fs.readFileSync(path.join(__dirname, "analytics-core.js"));
   return http.createServer(async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -852,97 +173,219 @@ function createDashboardServer({ config = getConfig(), controls = bot,
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     try {
-      const requestUrl = new URL(req.url, "http://localhost");
-      const route = requestUrl.pathname;
+      const route = new URL(req.url, "http://localhost").pathname;
       if (req.method === "GET" && route === "/healthz") return json(res, { ok: true });
+      if (route === "/api/close-all-paper-positions") {
+        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        const results = [];
+        async function closeAccount(label, account, controller) {
+          const positions = account.positions || (account.position ? [account.position] : []);
+          for (const position of positions) {
+            const key = positionKey(position);
+            try {
+              let quote = null;
+              try { quote = await getTokenData(position.tokenAddress, { pairAddress: position.pairAddress }); } catch (_) {}
+              const price = Number(quote && quote.priceUsd) || 0;
+              const liquidity = Number(quote && quote.liquidityUsd) || 0;
+              const result = price > 0 && liquidity > 0
+                ? controller.closePosition(key, price, liquidity, "MANUAL PAPER CLOSE")
+                : controller.writeOffPosition(key, "MANUAL PAPER CLOSE · ZERO-RECOVERY WRITE-OFF");
+              results.push({ ...result, bot: label, symbol: position.symbol, writeOff: !(price > 0 && liquidity > 0) });
+            } catch (error) {
+              results.push({ success: false, bot: label, symbol: position.symbol, message: error.message });
+            }
+          }
+        }
+        await closeAccount("New V3.1 Version", getPortfolio(), bot);
+        const sniperPositions = profitSniper.getPortfolio().positions || [];
+        for (const position of sniperPositions) {
+          try {
+            const result = await profitSniper.closePosition(position.id);
+            results.push({ ...result, bot: "Profit Sniper", symbol: position.symbol });
+          } catch (error) {
+            results.push({ success: false, bot: "Profit Sniper", symbol: position.symbol, message: error.message });
+          }
+        }
+        const outcomeResult = await outcomeBot.closeAll();
+        results.push(...outcomeResult.results.map(result => ({ ...result, bot: "Coinbase Bot" })));
+        const stockResult = await stockBot.closeAll();
+        results.push(...stockResult.results.map(result => ({ ...result, bot: "Stock Bot" })));
+        const swarmResult = await swarm.closeAllPositions();
+        results.push(...swarmResult.results.map(result => ({ ...result, bot: "Swarm" })));
+        try {
+          const remoteResponse = await fetch("https://pubx-fast-momentum-production.up.railway.app/api/close-all-paper-positions", {
+            method: "POST", headers: { "x-bot-control": "1" }
+          });
+          const remoteResult = await remoteResponse.json();
+          for (const result of remoteResult.results || []) results.push(result);
+          if (!remoteResponse.ok && !(remoteResult.results || []).length) {
+            results.push({ success: false, bot: "Bit V 3.1 40% TP1", message: remoteResult.error || "Remote paper close failed." });
+          }
+        } catch (error) {
+          results.push({ success: false, bot: "Bit V 3.1 40% TP1", message: error.message });
+        }
+        const closedCount = results.filter(result => result.success).length;
+        return json(res, { success: results.every(result => result.success), closedCount, results });
+      }
+      if (!authorized(req, config)) {
+        res.setHeader("WWW-Authenticate", 'Basic realm="Trading dashboard", charset="UTF-8"');
+        return json(res, { error: "Authentication required" }, 401);
+      }
       if (config.localOnly) {
         const hostname = new URL("http://" + req.headers.host).hostname;
         if (!["127.0.0.1", "localhost", "[::1]"].includes(hostname)) return json(res, { error: "Invalid host" }, 403);
       }
-      if (route === "/api/start" || route === "/api/stop" || route === "/api/manual-exit") {
+      if (route === "/api/stock/start" || route === "/api/stock/stop") {
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
         if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
-
-        if (route === "/api/manual-exit") {
-          const currentPortfolio = portfolio();
-          const position = currentPortfolio.position;
-          if (!position) return json(res, { success: false, error: "No OG position is open." }, 409);
-
-          const expectedPosition = positionKey(position);
-          const freshData = await marketData(position.tokenAddress, {
-            pairAddress: position.pairAddress || undefined
-          });
-          const currentPrice = Number(freshData?.priceUsd);
-          if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
-            return json(res, { success: false, error: "Fresh exit price unavailable." }, 503);
-          }
-
-          const result = sell(currentPrice, 100, {
-            expectedPosition,
-            reason: "MANUAL EXIT"
-          });
-          if (!result.success) return json(res, result, 409);
-
-          console.log(
-            "MANUAL EXIT | " + position.symbol +
-            " | Price: " + currentPrice +
-            " | Position: " + expectedPosition
-          );
-
-          return json(res, {
-            success: true,
-            symbol: position.symbol,
-            exitPrice: currentPrice,
-            reason: "MANUAL EXIT",
-            trade: result.trade
-          });
-        }
-
-        if (route === "/api/start") {
-          controls.startBot();
-          janControls.start();
-          runtimeState.setRunning();
-        } else {
-          runtimeState.setStopped();
-          janControls.stop();
-          controls.stopBot();
-        }
-        return json(res, {
-          running: controls.getBotStatus(),
-          swarmRunning: janControls.getStatus()
-        });
+        if (route.endsWith("/start")) stockBot.start(); else stockBot.stop();
+        return json(res, stockBot.getStatus());
+      }
+      if (route === "/api/outcome/start" || route === "/api/outcome/stop") {
+        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
+        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        if (route.endsWith("/start")) outcomeBot.start(); else outcomeBot.stop();
+        return json(res, outcomeBot.getStatus());
+      }
+      if (route === "/api/gemini/start" || route === "/api/gemini/stop") {
+        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
+        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        if (route.endsWith("/start")) geminiBot.start(); else geminiBot.stop();
+        return json(res, { running: geminiBot.getStatus(), error: geminiBot.getLastError() });
+      }
+      if (route === "/api/start" || route === "/api/stop") {
+        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
+        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        if (route === "/api/start") controls.startBot(); else controls.stopBot();
+        return json(res, { running: controls.getBotStatus() });
+      }
+      if (route === "/api/profit-sniper/close-position") {
+        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        // This is the sole public control allowed without dashboard credentials:
+        // it only closes a paper position. All bot start/stop controls remain read-only.
+        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        const positionId = new URL(req.url, "http://localhost").searchParams.get("positionId");
+        const result = await profitSniper.closePosition(positionId);
+        return json(res, result, result.success ? 200 : 409);
+      }
+      if (route === "/api/profit-sniper/start" || route === "/api/profit-sniper/stop") {
+        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
+        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        if (route === "/api/profit-sniper/start") profitSniper.startBot(); else profitSniper.stopBot();
+        return json(res, profitSniper.getStatus());
+      }
+      if (route === "/api/profit-sniper/status") return json(res, profitSniper.getStatus());
+      if (route === "/api/profit-sniper/data") {
+        const account = await buildDashboardData(profitSniper.getPortfolio(), marketData, { allowAlternatePairQuote: true });
+        return json(res, { label: "Profit Sniper", paperOnly: true, account, status: profitSniper.getStatus(), thresholds: profitSniper.thresholds });
       }
       if (req.method !== "GET") return json(res, { error: "Method not allowed" }, 405);
       if (route === "/api/status") return json(res, { running: controls.getBotStatus(), error: controls.getLastError() });
-      if (route === "/api/jan/status") return json(res, { running: janControls.getStatus(), error: janControls.getLastError() });
+      if (route === "/api/outcome/status") return json(res, outcomeBot.getStatus());
+      if (route === "/api/stock/status") return json(res, stockBot.getStatus());
+      if (route === "/api/stock/data") return json(res, stockBot.getDashboardData());
+      if (route === "/api/swarm") return json(res, { running: swarm.getStatus(), error: swarm.getLastError(), ...swarm.getDashboardState() });
       if (route === "/api/data") {
-        const data = await buildDashboardData(portfolio(), marketData);
-        if (janControls?.getDashboardState) data.slotSimulation = janControls.getDashboardState();
-        else if (slotEngine?.getDashboardState) data.slotSimulation = slotEngine.getDashboardState();
-        data.discoveryTelemetry = scanner.getDiscoveryTelemetry();
-        return json(res, data);
-      }
-      if (route === "/api/audit/recent") {
-        const requestedLimit = Number.parseInt(requestUrl.searchParams.get("limit") || "25", 10);
-        const limit = Math.max(1, Math.min(100, Number.isFinite(requestedLimit) ? requestedLimit : 25));
-        const data = await buildDashboardData(portfolio(), marketData);
-        const completedTrades = Array.isArray(data.completedTrades) ? data.completedTrades.slice(0, limit) : [];
-        const swarmState = janControls?.getDashboardState ? janControls.getDashboardState() : null;
-        const swarmExecutions = Array.isArray(swarmState?.executions)
-          ? swarmState.executions.filter(item => item?.closedTrade).slice(0, limit)
-          : [];
+        const baseAccount = portfolio();
+        const profitSniperAccount = profitSniper.getPortfolio();
+        const geminiState = geminiTrader.getState();
+        const addresses = [...new Set([
+          ...(baseAccount.positions || (baseAccount.position ? [baseAccount.position] : [])).map(p => p.tokenAddress),
+          ...(profitSniperAccount.positions || []).map(p => p.tokenAddress),
+          ...(geminiState.position ? [geminiState.position.tokenAddress] : [])
+        ].filter(Boolean))];
+        const sharedQuotes = batchMarketData && addresses.length
+          ? await batchMarketData(addresses)
+          : null;
+        const pairQuoteCache = new Map();
+        const sharedMarketData = sharedQuotes
+          ? async (address, options = {}) => {
+              const pairAddress = options.pairAddress;
+              if (!pairAddress) return sharedQuotes.get(address) || null;
+              const key = address + "|" + pairAddress + "|" + (options.allowAlternatePairQuote ? "alternate" : "exact");
+              if (!pairQuoteCache.has(key)) {
+                pairQuoteCache.set(key, marketData(address, { pairAddress, allowAlternatePairQuote: options.allowAlternatePairQuote }));
+              }
+              return pairQuoteCache.get(key);
+            }
+          : marketData;
+        const geminiData = await (async () => {
+          let live = null;
+          const position = geminiState.position;
+          if (position) {
+            const quote = await sharedMarketData(position.tokenAddress, { pairAddress: position.pairAddress || undefined });
+            const priceUsd = Number(quote?.priceUsd);
+            if (priceUsd > 0 && Number.isFinite(priceUsd)) {
+              const currentValueUsd = position.quantity * priceUsd;
+              live = { priceUsd, currentValueUsd, pnl: currentValueUsd - position.amountInvestedUsd,
+                pnlPercent: position.amountInvestedUsd > 0 ? (currentValueUsd - position.amountInvestedUsd) / position.amountInvestedUsd * 100 : 0,
+                holdTimeMs: Math.max(0, Date.now() - Date.parse(position.entryTime)), pairAddress: position.pairAddress };
+            }
+          }
+          const geminiAnalytics = buildGeminiAnalytics(geminiState, live);
+          const completedTrades = geminiAnalytics.completedTrades.map(t => ({
+            ...t, pnl: t.pnlUsd, amountInvested: t.investedUsd, pnlPercent: t.returnPercent,
+            exitPrice: t.averageExitPrice, holdTimeMs: t.holdTimeMs,
+            exitReason: t.exitReasons.join(", ")
+          }));
+          const history = geminiState.history.map(row => ({
+            ...row, pnl: row.pnlUsd, amountInvested: row.costBasisUsd || row.amountUsd,
+            pnlPercent: row.pnlPercent, entryTime: row.entryTime || (row.type === "BUY" ? row.time : null),
+            exitTime: row.type === "SELL" ? row.time : null
+          }));
+          return {
+            strategy: "TP +20%: sell 100%; stop -8%; sizing 10% / 12.5% of available cash",
+            takeProfitPercent: 20, stopLossPercent: -8, nextSizingPercent: geminiTrader.getSizing().percent,
+            nextTradeSizeUsd: geminiTrader.getSizing().amountUsd,
+            startingBalance: geminiState.startingBalanceUsd, cashBalance: geminiState.cashUsd,
+            equity: geminiAnalytics.equityUsd, totalPnl: geminiAnalytics.totalPnlUsd,
+            totalPnlPercent: geminiState.startingBalanceUsd > 0 ? geminiAnalytics.totalPnlUsd / geminiState.startingBalanceUsd * 100 : 0,
+            completedTrades, history,
+            livePositions: position ? [{ position, live, pnl: live?.pnl ?? null }] : [],
+            running: geminiBot.getStatus(), lastScanAt: geminiState.lastScanAt
+          };
+        })();
+        const [v31, candleBreakout, profitabilityLab, profitSniperData] = await Promise.all([
+          buildDashboardData(baseAccount, sharedMarketData),
+          fetchCandleBreakoutDashboard(),
+          fetchProfitabilityLabDashboard(),
+          buildDashboardData(profitSniperAccount, sharedMarketData, { allowAlternatePairQuote: true }),
+        ]);
+        const outcomeData = outcomeBot.getDashboardData(), stockData = stockBot.getDashboardData();
+        const equities = {v31:v31.equity,candle:candleBreakout.data?.equity,lab:profitabilityLab.data?.equity,'profit-sniper':profitSniperData.equity,gemini:geminiData.equity,outcome:outcomeData.equity,stock:stockData.equity,swarm:swarm.getDashboardState().totalCapital};
+        if (Object.values(equities).every(v => typeof v === 'number' && Number.isFinite(v))) equities.total = Object.values(equities).reduce((s,v) => s+v,0);
+        let equityRows = equityHistory.getRows();
+        try { equityRows = equityHistory.record(equities); } catch (error) { console.error('Equity history persistence:', error.message); }
         return json(res, {
-          generatedAt: new Date().toISOString(),
-          currentStrategy: "V3.1R2 Safe Revival | Original V3.1 Entry + Security Warnings + Quote Sanity + 10% Compounding",
-          riskEngine: "Original V3.1: Hard Stop + TP1 + TP2 + Trailing + Momentum Exit",
-          livePosition: data.live || null,
-          completedTrades,
-          swarmClosedTrades: swarmExecutions,
-          discoveryTelemetry: scanner.getDiscoveryTelemetry()
+          equityHistory: equityRows,
+          v31,
+          candleBreakout: candleBreakout.data,
+          candleBreakoutStatus: candleBreakout.status,
+          candleBreakoutError: candleBreakout.error,
+          profitabilityLab: profitabilityLab.data,
+          profitabilityLabError: profitabilityLab.error,
+          profitSniper: profitSniperData,
+          profitSniperStatus: profitSniper.getStatus(),
+          gemini: geminiData,
+          geminiStatus: { running: geminiBot.getStatus(), error: geminiBot.getLastError(), ...geminiBot.getDiagnostics() },
+          outcomeBot: outcomeData,
+          outcomeBotStatus: outcomeBot.getStatus(),
+          stockBot: stockData,
+          stockBotStatus: stockBot.getStatus()
         });
       }
       if (route === "/dashboard-client.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(client); }
-      if (route !== "/") return json(res, { error: "Not found" }, 404);
+      if (route === "/analytics-core.js") { res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); return res.end(analyticsCore); }
+      if (route === "/terminal.css") { res.writeHead(200, { "Content-Type": "text/css; charset=utf-8" }); return res.end(terminalCss); }
+      if (["/trading/launch-sniper", "/trading/buy-priority-lock85", "/trading/wallet-copy"].includes(route)) return json(res, { error: "Bot removed" }, 410);
+      if (route.startsWith("/api/")) return json(res, { error: "Not found" }, 404);
+      if (path.extname(route)) return json(res, { error: "Not found" }, 404);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); res.end(page);
     } catch (error) {
       console.error("Dashboard request failed:", error.message);
@@ -954,47 +397,46 @@ function json(res, value, status = 200) {
   res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(value));
 }
 if (require.main === module) {
+  void require("./retiredBotCleanup").removeWalletWebhook();
   const config = getConfig();
-  const runtimeState = createRuntimeState();
   getPortfolio();
-
-  const desired = runtimeState.read();
-  if (desired.desiredRunning) {
-    console.log("RUNTIME RESTORE | Previous state was RUNNING | Restoring OG + Swarm");
-    bot.startBot();
-    janMvpBot.start();
-  } else {
-    console.log("RUNTIME RESTORE | Previous state was STOPPED");
-  }
-
-  const server = createDashboardServer({
-    config,
-    janControls: janMvpBot,
-    runtimeState
-  });
-
-  server.listen(config.port, config.host, () => console.log("Dashboard listening on " + config.host + ":" + config.port));
-
-  // Keep Swarm coupled to OG in the server process, independent of whether a browser is open.
-  const couplingInterval = setInterval(() => {
-    if (!bot.getBotStatus() && janMvpBot.getStatus()) {
-      console.log("SWARM COUPLING | OG offline, pausing Swarm");
-      janMvpBot.stop();
-    } else if (bot.getBotStatus() && !janMvpBot.getStatus() && runtimeState.read().desiredRunning) {
-      console.log("SWARM COUPLING | OG online, restoring Swarm");
-      janMvpBot.start();
+  const server = createDashboardServer({ config });
+  bot.startBot();
+  swarm.start();
+  if (profitSniper.reconciliationReady) profitSniper.startBot();
+  server.listen(config.port, config.host, () => {
+    geminiBot.start();
+    outcomeBot.start();
+    stockBot.start();
+    console.log("Dashboard listening on " + config.host + ":" + config.port);
+    let sampling = false;
+    async function sampleEquity() {
+      if (sampling) return;
+      sampling = true;
+      try {
+        const headers = config.dashboardUser ? {authorization:'Basic '+Buffer.from(config.dashboardUser+':'+config.dashboardPassword).toString('base64')} : {};
+        const response = await fetch('http://127.0.0.1:'+config.port+'/api/data', {headers, signal:AbortSignal.timeout(45000)});
+        if (!response.ok) console.error('Equity sampler HTTP', response.status);
+        else await response.arrayBuffer();
+      } catch (error) { console.error('Equity sampler:', error.message); }
+      finally { sampling = false; }
     }
-  }, 2000);
-
+    setInterval(() => void sampleEquity(), 300000).unref();
+    void sampleEquity();
+  });
   const shutdown = () => {
-    clearInterval(couplingInterval);
-    // Do not overwrite desiredRunning here. Railway/process restarts must restore the prior user choice.
-    janMvpBot.stop();
+    swarm.stop();
     bot.stopBot();
+    profitSniper.stopBot();
+    geminiBot.stop();
+    outcomeBot.stop();
+    stockBot.stop();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 12000).unref();
   };
   process.once("SIGTERM", shutdown);
   process.once("SIGINT", shutdown);
 }
-module.exports = { createDashboardServer, getConfig };
+module.exports = { createDashboardServer, getConfig, fetchCandleBreakoutDashboard };
+
+
