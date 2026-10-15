@@ -193,4 +193,4 @@ function createSniperEntryGuard({
   return { observe, validate, getSecurityDiagnostics: () => lastSecurityDiagnostics };
 }
 
-module.exports = { createSniperEntryGuard, hasCatastrophicLoss, evaluatePoolReport };
+module.exports = { createSniperEntryGuard, hasCatastrophicLoss, evaluatePoolReport, holderConcentration, tokenAuthoritiesRenounced, isLiquidityBurned };
