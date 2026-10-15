@@ -42,6 +42,14 @@ test("requires two observations across 30 seconds and resets after liquidity fal
   assert.equal(guard.observe({ ...candidate, liquidityUsd: 20_000 }).ready, false);
 });
 
+test("removes a waiting candidate when it stops appearing in scans", () => {
+  const { guard, advance } = rig();
+  guard.observe(candidate);
+  assert.equal(guard.getStatus().waitingCandidates, 1);
+  advance(151_000);
+  assert.equal(guard.getStatus().waitingCandidates, 0);
+});
+
 test("bot waits for the last entry recheck and uses its fresh quote", async () => {
   const { createBot } = require("../bot");
   const buys = [];
