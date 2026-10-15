@@ -105,10 +105,10 @@ test("full Profit Sniper slots keep discovery observations warm without buying",
 });
 
 
-test("a pool must be at least 10 minutes old before stability checks can admit it", async () => {
-  const tooYoung = { ...candidate, pairCreatedAt: start - 9 * 60_000 };
+test("a pool must be at least 5 minutes old before stability checks can admit it", async () => {
+  const tooYoung = { ...candidate, pairCreatedAt: start - 4 * 60_000 };
   assert.ok(getMomentumFailureReasons(tooYoung, start).includes("age"));
-  const young = { ...candidate, pairCreatedAt: start - 10 * 60_000 };
+  const young = { ...candidate, pairCreatedAt: start - 5 * 60_000 };
   const { guard, advance, portfolio } = rig({ freshPair: { ...pair, pairCreatedAt: young.pairCreatedAt } });
   assert.deepEqual(getMomentumFailureReasons(young, start), []);
   guard.observe(young);
@@ -186,4 +186,5 @@ test("blocks repeat entries after a write-off or price collapse", () => {
   assert.equal(hasCatastrophicLoss([{ type: "SELL", tokenAddress: "mint-A", entryPrice: 1, exitPrice: 0.2 }], "mint-A"), true);
   assert.equal(hasCatastrophicLoss([{ type: "SELL", tokenAddress: "mint-B", entryPrice: 1, exitPrice: 0.2 }], "mint-A"), false);
 });
+
 

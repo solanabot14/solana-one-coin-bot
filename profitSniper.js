@@ -44,7 +44,7 @@ function estimateExecutionCosts({ amountUsd, liquidityUsd }) {
 
 const { qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit, selectUniqueMintCandidates } = strategy;
 
-let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, source: "GeckoTerminal new + trending/top pools (24h) + exact DexScreener pairs + RugCheck; pair age 10m-3h" };
+let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, source: "GeckoTerminal new + trending/top pools (24h) + exact DexScreener pairs + RugCheck; pair age 5m-6h" };
 const entryGuard = createSniperEntryGuard();
 const momentumTracker = createMomentumTracker();
 const ageWatchlist = new Map();
@@ -197,7 +197,7 @@ async function discoverCandidates(options = {}) {
   lastScanDiagnostics = {
     state: "scan_complete",
     updatedAt: new Date(now).toISOString(),
-    source: "GeckoTerminal new + trending/top pools (24h) + exact DexScreener pairs + RugCheck; pair age 10m-3h",
+    source: "GeckoTerminal new + trending/top pools (24h) + exact DexScreener pairs + RugCheck; pair age 5m-6h",
     poolsReceived: scanState?.poolsReceived ?? null,
     recentPools: scanned.length,
     activityQualified: scanned.length,

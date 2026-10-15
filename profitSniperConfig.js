@@ -1,6 +1,6 @@
 // All new Profit Sniper entry controls live here; exits remain in profitSniperStrategy.js.
 module.exports = Object.freeze({
-  MIN_PAIR_AGE_MS: 10 * 60 * 1000,
+  MIN_PAIR_AGE_MS: 5 * 60 * 1000,
   MAX_PAIR_AGE_MS: 6 * 60 * 60 * 1000,
   WATCHLIST_RECHECK_MS: 30 * 1000,
   MIN_STABLE_POOL_OBSERVATIONS: 2,
