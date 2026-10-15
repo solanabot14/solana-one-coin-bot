@@ -1,7 +1,7 @@
 // All new Profit Sniper entry controls live here; exits remain in profitSniperStrategy.js.
 module.exports = Object.freeze({
   MIN_PAIR_AGE_MS: 5 * 60 * 1000,
-  MAX_PAIR_AGE_MS: 6 * 60 * 60 * 1000,
+  MAX_PAIR_AGE_MS: 24 * 60 * 60 * 1000,
   WATCHLIST_RECHECK_MS: 30 * 1000,
   MIN_STABLE_POOL_OBSERVATIONS: 2,
   MIN_STABLE_POOL_SPAN_MS: 30 * 1000,
@@ -23,7 +23,7 @@ module.exports = Object.freeze({
   RECOVERY_FLOW_WINDOW_MS: 60 * 1000,
   MIN_RECOVERY_FLOW_SPAN_MS: 20 * 1000,
   MAX_SNAPSHOT_INTERVAL_MS: 30 * 1000,
-  MAX_CANDIDATE_AGE_MINUTES: 360,
+  MAX_CANDIDATE_AGE_MINUTES: 1440,
   MATURE_POOL_RESERVE: 45,
   MIN_LP_LOCK_PERCENT: 30,
   MAX_TOP10_HOLDER_PERCENT: 35,
