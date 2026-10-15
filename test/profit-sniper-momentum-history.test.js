@@ -22,3 +22,19 @@ test("historical candles supply the earlier pump while live scans confirm reboun
   assert.ok(second.retracePercent >= 15 && second.retracePercent <= 30);
   assert.ok(second.reboundFromLowPercent >= 5);
 });
+
+test("a pool first seen before minimum age can hydrate once it becomes eligible", () => {
+  const tracker = createMomentumTracker();
+  const start = 1_800_000_000_000;
+  const coin = { tokenAddress: "mint-B", pairAddress: "pool-B", priceUsd: 1.15,
+    priceChange5m: 2, buys5m: 50, sells5m: 20 };
+  tracker.observe(coin, start);
+  assert.equal(tracker.hasHistorical(coin), false);
+  const candles = [
+    { timestamp: start / 1000 - 180, open: 1, high: 1.05, low: 0.99, close: 1.04 },
+    { timestamp: start / 1000 - 120, open: 1.04, high: 1.40, low: 1.03, close: 1.35 },
+    { timestamp: start / 1000 - 60, open: 1.35, high: 1.36, low: 1.08, close: 1.14 }
+  ];
+  assert.equal(tracker.hydrate(coin, candles, start + 60_000), true);
+  assert.equal(tracker.hasHistorical(coin), true);
+});
