@@ -1,7 +1,7 @@
 const CONFIG = require("./profitSniperConfig");
 
-// Historical candles establish pump/pullback context. Live 30-second
-// DexScreener snapshots still provide the required rebound and buy-flow confirmation.
+// Historical candles establish pump/pullback context. Live snapshots confirm
+// that price, volume and buy flow have resumed without requiring a fixed rebound percentage.
 function createMomentumTracker() {
   const pools = new Map();
 
@@ -28,12 +28,14 @@ function createMomentumTracker() {
       }
     });
     const afterPeak = ordered.slice(peakIndex);
+    const candlesAfterPeak = ordered.slice(peakIndex + 1);
     const troughPrice = Math.min(...afterPeak.map(candle => Number(candle.low)));
     const lastPrice = Number(ordered.at(-1).close);
     pools.set(key, {
       firstAt: Number(ordered[0].timestamp) * 1000,
       basePrice, peakPrice, troughPrice, lastPrice, samples: [],
       pumpSeen: peakPrice >= basePrice * (1 + CONFIG.MIN_PUMP_PERCENT / 100),
+      pullbackObserved: candlesAfterPeak.some(candle => Number(candle.low) < peakPrice),
       historicalHydrated: true, lastAt: now
     });
     return true;
@@ -55,6 +57,7 @@ function createMomentumTracker() {
       const basePrice = inferredPump ? price / (1 + change5m / 100) : price;
       state = { firstAt: now, basePrice, peakPrice: price, troughPrice: price, lastPrice: price,
         samples: [], pumpSeen: inferredPump,
+        pullbackObserved: false,
         peakLiquidity: Number.isFinite(liquidity) && liquidity > 0 ? liquidity : null };
     }
 
@@ -75,6 +78,7 @@ function createMomentumTracker() {
       state.peakLiquidity = Math.max(Number(state.peakLiquidity) || liquidity, liquidity);
     if (!pumpWasSeen && state.pumpSeen) state.troughPrice = price;
     else if (state.pumpSeen) state.troughPrice = Math.min(state.troughPrice || price, price);
+    if (state.pumpSeen && price < state.peakPrice) state.pullbackObserved = true;
 
     const retracePercent = state.peakPrice > 0
       ? (state.peakPrice - price) / state.peakPrice * 100 : 0;
@@ -85,51 +89,34 @@ function createMomentumTracker() {
     const recovering = price > state.lastPrice;
     const reboundFromLowPercent = state.troughPrice > 0
       ? (price / state.troughPrice - 1) * 100 : 0;
-    const normalReady = state.pumpSeen &&
-      retracePercent >= CONFIG.MIN_RETRACE_PERCENT &&
-      retracePercent <= CONFIG.MAX_ENTRY_RETRACE_PERCENT &&
-      reboundFromLowPercent >= CONFIG.MIN_REBOUND_FROM_LOW_PERCENT &&
-      recovering && flowSpanMs >= CONFIG.MIN_RECOVERY_FLOW_SPAN_MS && flowBuys > flowSells;
     const confirmationSamples = state.samples.slice(-3);
     const confirmationSpanMs = confirmationSamples.length > 1
       ? confirmationSamples.at(-1).at - confirmationSamples[0].at : 0;
     const risingSteps = confirmationSamples.slice(1).filter((sample, index) =>
       sample.price > confirmationSamples[index].price).length;
     const twoRisingObservations = confirmationSamples.length >= 3 && risingSteps >= 2 &&
-      confirmationSpanMs >= CONFIG.DEEP_MIN_CONFIRMATION_SPAN_MS;
+      confirmationSpanMs >= CONFIG.RECOVERY_CONFIRMATION_SPAN_MS;
     const currentBuyShare = buys5m + sells5m > 0 ? buys5m / (buys5m + sells5m) : 0;
     const liquidityRetained = Number.isFinite(liquidity) && liquidity > 0 &&
-      Number(state.peakLiquidity) > 0 && liquidity >= state.peakLiquidity * CONFIG.DEEP_MIN_LIQUIDITY_RETENTION;
+      Number(state.peakLiquidity) > 0 && liquidity >= state.peakLiquidity * CONFIG.RECOVERY_MIN_LIQUIDITY_RETENTION;
     const volumeIncreasing = confirmationSamples.length >= 3 &&
       Number.isFinite(confirmationSamples[0].volume5m) &&
       Number.isFinite(confirmationSamples.at(-1).volume5m) &&
       confirmationSamples.at(-1).volume5m > confirmationSamples[0].volume5m;
     const pumpPercent = state.basePrice > 0 ? (state.peakPrice / state.basePrice - 1) * 100 : 0;
-    const deepReady = pumpPercent >= CONFIG.DEEP_MIN_PUMP_PERCENT &&
-      retracePercent > CONFIG.DEEP_PULLBACK_MIN_PERCENT &&
-      retracePercent <= CONFIG.DEEP_PULLBACK_MAX_PERCENT &&
-      reboundFromLowPercent >= CONFIG.DEEP_MIN_REBOUND_PERCENT && twoRisingObservations &&
-      currentBuyShare >= CONFIG.DEEP_MIN_BUY_SHARE && liquidityRetained && volumeIncreasing &&
-      flowBuys > flowSells;
-    const ready = normalReady || deepReady;
-    const entryRoute = normalReady ? "normal_pullback" : deepReady ? "deep_pullback" : null;
-    const deepRange = retracePercent > CONFIG.DEEP_PULLBACK_MIN_PERCENT &&
-      retracePercent <= CONFIG.DEEP_PULLBACK_MAX_PERCENT;
+    const ready = state.pumpSeen && state.pullbackObserved &&
+      retracePercent <= CONFIG.MAX_RETRACE_PERCENT && twoRisingObservations &&
+      currentBuyShare >= CONFIG.RECOVERY_MIN_BUY_SHARE && liquidityRetained &&
+      volumeIncreasing && flowBuys > flowSells;
+    const entryRoute = ready ? "confirmed_pullback_recovery" : null;
     const reason = retracePercent > CONFIG.MAX_RETRACE_PERCENT ? "retrace_over_45_percent"
       : !state.pumpSeen ? "pump_not_observed"
-      : retracePercent < CONFIG.MIN_RETRACE_PERCENT ? "retrace_below_10_percent"
-      : deepRange && pumpPercent < CONFIG.DEEP_MIN_PUMP_PERCENT ? "deep_pump_below_50_percent"
-      : deepRange && reboundFromLowPercent < CONFIG.DEEP_MIN_REBOUND_PERCENT ? "deep_rebound_below_12_percent"
-      : deepRange && !twoRisingObservations ? "deep_rise_not_confirmed_60s"
-      : deepRange && currentBuyShare < CONFIG.DEEP_MIN_BUY_SHARE ? "deep_buy_ratio_below_60_percent"
-      : deepRange && !liquidityRetained ? "deep_liquidity_not_retained_90_percent"
-      : deepRange && !volumeIncreasing ? "deep_volume_not_increasing"
-      : deepRange && flowBuys <= flowSells ? "deep_recent_buy_flow_not_above_sells"
-      : retracePercent > CONFIG.MAX_ENTRY_RETRACE_PERCENT ? "retrace_outside_10_to_30_percent"
-      : reboundFromLowPercent < CONFIG.MIN_REBOUND_FROM_LOW_PERCENT ? "rebound_below_5_percent"
-      : !recovering ? "recovery_not_confirmed"
-      : flowSpanMs < 20_000 ? "recent_flow_warming_up"
-      : flowBuys <= flowSells ? "recent_buy_flow_not_above_sells"
+      : !state.pullbackObserved ? "pullback_not_observed"
+      : !twoRisingObservations ? "recovery_not_confirmed_60s"
+      : currentBuyShare < CONFIG.RECOVERY_MIN_BUY_SHARE ? "recovery_buy_ratio_below_55_percent"
+      : !liquidityRetained ? "recovery_liquidity_not_retained_90_percent"
+      : !volumeIncreasing ? "recovery_volume_not_increasing"
+      : flowBuys <= flowSells ? "recovery_recent_buy_flow_not_above_sells"
       : null;
 
     state.lastPrice = price;
@@ -139,7 +126,7 @@ function createMomentumTracker() {
     return { ready, reason, entryRoute, pumpSeen: state.pumpSeen, historicalHydrated: !!state.historicalHydrated,
       pumpPercent: state.basePrice > 0 ? (state.peakPrice / state.basePrice - 1) * 100 : null,
       peakPrice: state.peakPrice, troughPrice: state.troughPrice, retracePercent, reboundFromLowPercent, recovering, flowBuys, flowSells,
-      flowSpanMs, currentBuyShare, liquidityRetained, volumeIncreasing,
+      flowSpanMs, pullbackObserved: !!state.pullbackObserved, currentBuyShare, liquidityRetained, volumeIncreasing,
       confirmationSpanMs, risingSteps, flowIsApproximation: true };
   }
 
