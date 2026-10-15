@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { mapLaunchPair, qualifiesLaunchCandidate, qualifiesPoolObservation, selectTrackedPools, thresholds } = require("../poolDiscovery");
+const { mapLaunchPair, qualifiesLaunchCandidate, qualifiesPoolObservation, selectTrackedPools,
+  selectTrackedPoolsAcrossAgeWindow, thresholds } = require("../poolDiscovery");
 
 const now = 1_800_000_000_000;
 function candidate(overrides = {}) {
@@ -80,6 +81,19 @@ test("reserves discovery capacity for pools mature enough to enter", () => {
   assert.equal(selected.length, 10);
   assert.equal(selected.filter(item => item.poolAddress.startsWith("mature-")).length, 3);
   assert.equal(selected.filter(item => item.poolAddress.startsWith("young-")).length, 7);
+});
+
+test("reserves discovery capacity across the full five-minute to six-hour window", () => {
+  const agesMinutes = [2, 10, 40, 120, 240];
+  const pools = agesMinutes.flatMap((age, bucket) => Array.from({ length: 30 }, (_, index) => ({
+    poolAddress: `bucket-${bucket}-${index}`,
+    createdAt: now - (age * 60_000 + index)
+  })));
+  const selected = selectTrackedPoolsAcrossAgeWindow(pools, now, 50);
+  assert.equal(selected.length, 50);
+  for (let bucket = 0; bucket < agesMinutes.length; bucket++) {
+    assert.equal(selected.filter(item => item.poolAddress.startsWith(`bucket-${bucket}-`)).length, 10);
+  }
 });
 
 
