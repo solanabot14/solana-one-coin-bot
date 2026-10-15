@@ -239,7 +239,7 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
   }
   validate(state);
   let timer=null,busy=false,generation=0,marketOpen=null,nextOpen=null,nextClose=null,connection='WAITING_FOR_ALPACA',barsCache={},lastBarsAt=-Infinity,sessionMode='WAITING',dailyPnlUsd=0,lastResearchAt=-Infinity,referenceDate=null,referenceCloses={};
-  let baselineDate=null,baselines={},lastBaselineAttempt=-Infinity;
+  let baselineDate=null,baselines={},lastBaselineAttempt=-Infinity,baselineError=null;
   const configured = () => !!(env.ALPACA_PAPER_API_KEY && env.ALPACA_PAPER_SECRET_KEY);
   function commit(s) {
     validate(s); io.mkdirSync(path.dirname(file),{recursive:true});
@@ -393,9 +393,9 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
   }
   async function refreshBaselines(openAt,gen) {
     const today=dateKey(now());
-    if(baselineDate!==today){baselines={};baselineDate=today;lastBaselineAttempt=-Infinity;}
-    const missing=symbols.filter(symbol=>!baselines[symbol]).slice(0,12);if(!missing.length)return;
-    if(now()-lastBaselineAttempt<MINUTE)return;
+    if(baselineDate!==today){baselines={};baselineDate=today;lastBaselineAttempt=-Infinity;baselineError=null;}
+    const missing=symbols.filter(symbol=>!baselines[symbol] && (symbol==='SPY'||assetEligibility(assetMaster[symbol],assetMasterAsOf,now()).allowed)).slice(0,12);if(!missing.length)return;
+    if(now()-lastBaselineAttempt<(baselineError?5*MINUTE:MINUTE))return;
     lastBaselineAttempt=now();
     const shared={symbols:missing.join(','),end:new Date(openAt-330*MINUTE-1000).toISOString(),limit:'10000',sort:'asc'};
     try{
@@ -403,7 +403,8 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
       const historical=await collectBars({...shared,timeframe:'5Min',start:new Date(openAt-21*86400000).toISOString(),feed:'iex',adjustment:'raw'});
       if(gen!==generation||!state.running)return;
       Object.assign(baselines,buildBaselines(daily,historical,today,missing));
-    }catch(error){console.warn('Stock historical baseline warmup: '+error.message);}
+      baselineError=null;
+    }catch(error){baselineError=error.message;console.warn('Stock historical baseline warmup: '+error.message);}
   }
 
   async function researchPremarket(openAt,gen) {
@@ -542,8 +543,8 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
       ranked.sort((a,b)=>b.score-a.score);
       let entered=0;
       for(const c of ranked){if(buy(c.symbol,c.quote,c.signal,c.metrics)){entered++;if(applyDailyRisk(freshSnapshots)){sessionMode='DAILY_LOSS_PAUSE';break;}}else rejections.push({symbol:c.symbol,reason:researchGate(c.symbol).allowed?'Setup qualified; position, cash, risk budget, cooldown or daily entry limit':researchGate(c.symbol).reason,metrics:c.metrics,time:new Date(now()).toISOString()});}
-      const s=structuredClone(state);s.lastScanAt=new Date(now()).toISOString();s.lastError=null;s.rejections=rejections;
-      s.scanDiagnostics={scanned:symbols.length,qualified:ranked.length,entered,lastScanAt:s.lastScanAt,watchlist:symbols,filters:SCAN_FILTERS,baselineSessionDate:baselineDate,baselineSymbolsReady:Object.keys(baselines).length,qualifiedSetups:ranked.map(c=>({symbol:c.symbol,signal:c.signal,score:c.score,metrics:c.metrics})),skippedByReason:rejections.reduce((out,r)=>{out[r.reason]=(out[r.reason]||0)+1;return out;},{})};
+      const s=structuredClone(state);s.lastScanAt=new Date(now()).toISOString();s.lastError=baselineError;s.rejections=rejections;
+      s.scanDiagnostics={scanned:symbols.length,qualified:ranked.length,entered,lastScanAt:s.lastScanAt,watchlist:symbols,filters:SCAN_FILTERS,baselineSessionDate:baselineDate,baselineSymbolsReady:Object.keys(baselines).length,baselineError,qualifiedSetups:ranked.map(c=>({symbol:c.symbol,signal:c.signal,score:c.score,metrics:c.metrics})),skippedByReason:rejections.reduce((out,r)=>{out[r.reason]=(out[r.reason]||0)+1;return out;},{})};
       const eq=s.cashUsd+s.openPositions.reduce((v,p)=>v+p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE),0);
       s.peakEquityUsd=Math.max(s.peakEquityUsd,eq);s.maxDrawdownPercent=Math.max(s.maxDrawdownPercent,(1-eq/s.peakEquityUsd)*100);commit(s);
     }catch(e){if(gen===generation){connection='CONNECTION_ERROR';const s=structuredClone(state);s.lastError=e.message;commit(s);}}
@@ -587,6 +588,7 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
 let singleton;
 const instance=()=>singleton||(singleton=createStockBot());
 module.exports={assetEligibility,parseEconomicCalendar,parseFedCalendar,macroEntryGate,easternTimestamp,sessionStrength,createStockBot,assess,quote,sessionOpen,rankPremarket,buildBaselines,sameTimeVolume,SYMBOLS,STRATEGY,SCAN_FILTERS,RISK_RULES,tradeReports,exitCategory,start:()=>instance().start(),stop:()=>instance().stop(),closeAll:()=>instance().closeAll(),getStatus:()=>instance().getStatus(),getDashboardData:()=>instance().getDashboardData()};
+
 
 
 

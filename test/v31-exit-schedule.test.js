@@ -14,7 +14,7 @@ test("V3.1 target sale catches a position up to 40% of original after an earlier
 
   const progress = getOriginalPositionExitProgress(position, history);
   assert.equal(progress.soldPercent, 25);
-  assert.equal(percentOfRemainingToReachOriginalTarget(position, history, 40), 20);
+  assert.ok(Math.abs(percentOfRemainingToReachOriginalTarget(position, history, 40) - 20) < 1e-12);
   assert.ok(Math.abs(percentOfRemainingToReachOriginalTarget(position, history, 80) - 73.33333333333333) < 1e-12);
 });
 
@@ -39,3 +39,4 @@ test("V3.1 does not resell a cumulative target already reached", () => {
 
   assert.equal(percentOfRemainingToReachOriginalTarget(position, history, 40), 0);
 });
+

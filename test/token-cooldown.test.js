@@ -69,6 +69,8 @@ function rig(candidates, checkLiquidityLock = async () => ({ allowed: true, lock
     getTokenData: async () => null,
     notifier,
     checkLiquidityLock,
+    acceptedSignals:["BUY","STRONG BUY"],
+    useReentryGuards:true,
     reentryStateFile: options.reentryStateFile || temporaryStateFile()
   });
   return { bot, state };
@@ -108,7 +110,7 @@ test("never exceeds two concurrent entries", async t => {
 });
 
 
-test("activates a +4% protective floor after a +10% peak gain", async t => {
+test("default bot has no obsolete +4% profit floor and still exits at its hard stop", async t => {
   const position = {
     id: "existing-lock-position",
     tokenAddress: "lock-token",
@@ -163,9 +165,12 @@ test("activates a +4% protective floor after a +10% peak gain", async t => {
 
   currentPrice = 104;
   await monitor();
-  assert.equal(sellCalls.length, 1);
-  assert.equal(sellCalls[0].options.reason, "PROFIT LOCK");
-  assert.equal(sellCalls[0].price, 104);
+  assert.equal(sellCalls.length, 0);
+  currentPrice=89;
+  await monitor();
+  assert.equal(sellCalls.length,1);
+  assert.equal(sellCalls[0].options.reason,"HARD STOP");
+  assert.equal(sellCalls[0].price,89);
 });
 
 
@@ -210,3 +215,4 @@ test("keeps a full-exit token blocked across restart until two strong activity c
   assert.equal(state.positions.length, 1, "a second valid scan with >=25% volume growth releases the reentry lock");
   assert.equal(state.positions[0].tokenAddress, tokenAddress);
 });
+

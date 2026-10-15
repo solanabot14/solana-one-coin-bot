@@ -4,7 +4,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { createPaperTrader } = require("../paperTrader");
-const { createBot } = require("../bot");
+const { createBot: createSharedBot } = require("../bot");
+const createBot = options => createSharedBot({discoverCandidates:async()=>[],checkLiquidityLock:async()=>({allowed:true,lockedPercent:100}),notifier:{notifyTrade:async()=>{},notifyCritical:async()=>{}},...options});
 const { buildDashboardData, groupCompletedTrades } = require("../dashboardData");
 const { createDashboardServer, getConfig } = require("../dashboard");
 
@@ -131,17 +132,17 @@ test("delayed monitoring cannot sell after Stop or sell a replacement position",
   assert.equal(trader.getPortfolio().history.length, 3);
 });
 
-test("unchanged profit targets and trailing exit execute once and restore across restart", async t => {
+test("current +20%/+40% profit targets and 12% trailing exit execute once and restore across restart", async t => {
   const { trader, file } = account(t);
   trader.buy(coin);
-  let quote = 1.16;
+  let quote = 1.21;
   const timers = fakeTimers();
   const bot = createBot({ trader, timers, getTokenData: async () => ({ priceUsd: quote }) });
   bot.startBot();
   await settle();
   await timers.run(2000);
   assert.equal(trader.getPortfolio().history.length, 2);
-  quote = 1.31;
+  quote = 1.41;
   await timers.run(2000);
   assert.equal(trader.getPortfolio().history.length, 3);
   bot.stopBot();
@@ -172,9 +173,10 @@ test("dashboard excludes partial positions, averages exit prices and marks missi
   assert.ok(Math.abs(closed.totalPnl - 3.5) < 1e-10);
 });
 
-test("network configuration requires credentials and respects Railway port", () => {
+test("public configuration stays read-only and respects Railway port", () => {
   assert.equal(getConfig({}).host, "127.0.0.1");
-  assert.throws(() => getConfig({ HOST: "0.0.0.0" }), /DASHBOARD/);
+  assert.equal(getConfig({ HOST: "0.0.0.0" }).readOnly, true);
+  assert.throws(() => getConfig({DASHBOARD_USER:"admin"}), /DASHBOARD/);
   const config = getConfig({ RAILWAY_ENVIRONMENT_ID: "test", PORT: "4321",
     DASHBOARD_USER: "admin", DASHBOARD_PASSWORD: "test-password-long-enough" });
   assert.equal(config.port, 4321);
@@ -273,23 +275,14 @@ test("HTTP authentication, POST controls, cross-site rejection and health endpoi
   assert.match(page.body, /dashboard-client.js/);
 });
 
-test("browser renders hostile symbols as text and unavailable equity honestly", () => {
-  const nodes = new Map();
-  const document = { getElementById(id) {
-    if (!nodes.has(id)) nodes.set(id, { addEventListener() {} });
-    return nodes.get(id);
-  } };
-  const source = fs.readFileSync(path.join(__dirname, "../dashboard-client.js"), "utf8")
-    .replace(/pollStatus\(\);\s*pollData\(\);\s*$/, "");
-  const context = { document };
-  vm.runInNewContext(source, context);
-  const symbol = '<img src=x onerror="alert(1)">';
-  context.renderData({ startingBalance: 100, cashBalance: 90, equity: null, totalPnl: null,
-    position: { symbol }, live: null, livePositions: [{ position: { symbol }, live: null }], openSlots: 1,
-    stats: { completedTrades: 0, winRate: 0, winners: 0, losers: 0, grossProfit: 0, grossLoss: 0, netPnl: 0, profitFactorLabel: "—" },
-    completedTrades: [{ symbol, tokenAddress: "token1", entryPrice: 1, exitPrice: 1, amountInvested: 10, pnl: 0, pnlPercent: 0 }] });
-  assert.equal(nodes.get("equity").textContent, "Unavailable");
-  assert.match(nodes.get("live").innerHTML, /Price unavailable/);
-  assert.ok(!nodes.get("history").innerHTML.includes("<img"));
-  assert.match(nodes.get("history").innerHTML, /&lt;img/);
+test("browser escapes hostile symbols and preserves unavailable equity", () => {
+  const {context,node,ui}=require('./helpers/client.cjs').clientContext();
+  const symbol='<img src=x onerror="alert(1)">';
+  const data={startingBalance:100,cashBalance:90,equity:null,totalPnl:null,
+    livePositions:[{position:{symbol},live:null}],completedTrades:[{symbol,entryPrice:1,exitPrice:1,amountInvested:10,pnl:0,pnlPercent:0}]};
+  ui.state.api={v31:data};ui.buildSystems();assert.equal(ui.systems().find(s=>s.id==='v31').equity,null);context.location.pathname='/trading/v31';ui.render();
+  const html=node('view').innerHTML;
+  assert.doesNotMatch(html,/<img/);
+  assert.match(html,/&lt;img/);
+  assert.match(html,/Not recorded/);
 });

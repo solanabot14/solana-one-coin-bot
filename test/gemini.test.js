@@ -12,7 +12,7 @@ function candidate(overrides = {}) {
   return {
     tokenAddress: "Mint111111111111111111111111111111111111111",
     pairAddress: "Pair111111111111111111111111111111111111111",
-    symbol: "TEST", priceUsd: 0.01, liquidityUsd: 6000,
+    symbol: "TEST", priceUsd: 0.01, liquidityUsd: 6000, priceChange5m: 2,
     poolCreatedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
     buys5m: 10, sells5m: 5,
     ...overrides
@@ -67,3 +67,4 @@ test("Gemini paper sells allocate 50%, then 30%, leaving 20% runner", () => {
     assert.equal(state.position.tp2Done, true);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+

@@ -5,7 +5,7 @@
   "main": "dashboard.js",
   "scripts": {
     "start": "node dashboard.js",
-    "test": "node --test test/token-cooldown.test.js test/dex-batching.test.js test/pullback-strategy.test.js test/pullback-discovery.test.js test/scanner-shared-cache.test.js test/gecko-terminal.test.js test/swarm-methodology.test.js test/position-batch-monitor.test.js analytics.test.js test/exit-profile-test.test.js test/pool-discovery.test.js test/pool-discovery-strategy.test.js test/profit-sniper.test.js test/profit-sniper-entry-guard.test.js test/v31-exit-schedule.test.js test/profit-sniper-session.test.js test/profit-sniper-reconcile.test.js test/gemini-entry-guard.test.js test/outcome-bot.test.js test/coinbase-news.test.js",
+    "test": "node --test",
     "test:all": "node --test"
   },
   "keywords": [],

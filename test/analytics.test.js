@@ -93,28 +93,21 @@ test("position IDs separate identical token/times and bridge unambiguous older p
   assert.equal(groupCompletedTrades(history("open").slice(0, 2)).length, 0);
 });
 
-test("completed table renders percentages, recorded dollars, missing metrics and all 25 columns", () => {
-  const nodes = new Map();
-  const context = { document: { getElementById(id) {
-    if (!nodes.has(id)) nodes.set(id, { addEventListener() {} });
-    return nodes.get(id);
-  } } };
-  const source = fs.readFileSync(path.join(__dirname, "../dashboard-client.js"), "utf8")
-    .replace(/pollStatus\(\);\s*pollData\(\);\s*$/, "");
-  vm.runInNewContext(source, context);
-  const trade = groupCompletedTrades(history())[0];
-  context.renderHistory({ completedTrades: [trade] });
-  let html = nodes.get("history").innerHTML;
-	assert.equal((html.match(/<td[ >]/g) || []).length, 25);
-  assert.match(html, /<td>—<\/td><td>—<\/td><td>—<\/td>/);
-  assert.match(html, /\$7\.25/);
-  assert.match(html, /\$15\.75/);
-  assert.match(html, /DexScreener/);
-  context.renderHistory({ completedTrades: [{ ...trade, ...metrics }] });
-  html = nodes.get("history").innerHTML;
-  assert.match(html, /2\.50%/);
-  assert.match(html, /14\.00%/);
-  assert.match(html, /60\.00%/);
-  context.renderHistory({ completedTrades: [] });
-	assert.match(nodes.get("history").innerHTML, /colspan="25"/);
+test("current transaction table and drawer preserve recorded dollars and missing metrics", () => {
+  const {ui,node}=require('./helpers/client.cjs').clientContext();
+  const trade=groupCompletedTrades(history())[0];
+  const system={id:'v31',name:'V3.1',mode:'PAPER'};
+  const normalized=ui.normalizeTrade(trade,system,false);
+  const html=ui.renderTransactions([normalized]);
+  assert.match(html,/\$15\.75/);
+  assert.match(html,/DEXSCREENER/);
+  assert.match(html,/Not recorded/);
+  assert.equal(normalized.invested,10);
+  assert.equal(normalized.saleValue,15.75);
+  assert.equal(normalized.sourceRecord.tp1SaleValue,7.25);
+  ui.openTransaction(0);
+  assert.match(node('detailDrawer').innerHTML,/7\.25/);
+  assert.match(node('detailDrawer').innerHTML,/15\.75/);
+  const empty=ui.renderTransactions([]);
+  assert.match(empty,/No transactions/);
 });
