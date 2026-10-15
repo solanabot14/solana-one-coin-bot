@@ -63,6 +63,7 @@ async function discoverCandidates(options = {}) {
     const coin = { ...raw, momentumPattern };
     const failures = getMomentumFailureReasons(coin, now);
     const ageMs = now - Number(coin.pairCreatedAt);
+    const wasOnWatchlist = ageWatchlist.has(key);
     if (failures.length === 1 && failures[0] === "age" && ageMs < CONFIG.MIN_PAIR_AGE_MS) {
       const prior = ageWatchlist.get(key);
       ageWatchlist.set(key, prior || { addedAt: now, initialLiquidityUsd: Number(coin.liquidityUsd),
@@ -71,6 +72,7 @@ async function discoverCandidates(options = {}) {
       item.lastSnapshot = coin;
       item.lastSeenAt = now;
       item.rechecks++;
+      if (prior) ageWatchlistRechecks++;
     } else if (ageWatchlist.has(key)) {
       const item = ageWatchlist.get(key);
       item.lastSnapshot = coin;
@@ -78,7 +80,7 @@ async function discoverCandidates(options = {}) {
       item.rechecks++;
       ageWatchlistRechecks++;
     }
-    return { key, coin, failures, ageMs, wasWatchlisted: ageWatchlist.has(key) };
+    return { key, coin, failures, ageMs, wasWatchlisted: wasOnWatchlist };
   });
 
   const portfolio = trader.getPortfolio();
@@ -306,6 +308,7 @@ function getStatus() {
       ageWatchlistRechecks,
       entriesFromAgeWatchlist: (trader.getPortfolio().history || []).filter(row => row?.type === "BUY" &&
         (row.entryReasons || []).includes("AGE WATCHLIST REENTRY")).length,
+      lastVerifiedHolderSecurity: entryGuard.getSecurityDiagnostics(),
       watchlistRecheckIntervalMs: CONFIG.WATCHLIST_RECHECK_MS
     }
   };
