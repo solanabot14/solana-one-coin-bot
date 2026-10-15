@@ -161,6 +161,9 @@ async function discoverCandidates(options = {}) {
   for (const item of candidates) {
     const { coin, key, ageMs, wasWatchlisted } = item;
     let failures = [...item.failures];
+    // Observe the pool during momentum warmup, so both independent windows
+    // mature together. Entry still requires current momentum and stable reserves.
+    const poolStability = entryGuard.observe(coin, now);
     const watch = ageWatchlist.get(key);
     if (watch) {
       if (now - watch.addedAt > CONFIG.WATCHLIST_MAX_AGE_MS) {
@@ -174,7 +177,6 @@ async function discoverCandidates(options = {}) {
     if (stoppedMints.has(coin.tokenAddress)) failures.push("stopLossReentryBlocked");
     if ((buysByMint.get(coin.tokenAddress) || 0) >= CONFIG.MAX_TOKEN_ATTEMPTS) failures.push("maxTokenAttempts");
     if (!failures.length) {
-      const poolStability = entryGuard.observe(coin, now);
       if (!poolStability.ready) failures.push("poolStability");
     }
     for (const reason of failures) {
