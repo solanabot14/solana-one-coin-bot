@@ -114,6 +114,7 @@ function createSniperEntryGuard({
   )).data
 } = {}) {
   const observations = new Map();
+  let lastSecurityDiagnostics = null;
 
   function observe(coin, now = clock()) {
     if (!coin?.tokenAddress || !coin.pairAddress) return { ready: false, reason: "missing exact pool identity" };
@@ -171,13 +172,25 @@ function createSniperEntryGuard({
         price > Number(coin.priceUsd) * MAX_PRICE_INCREASE) {
       return { allowed: false, reason: "pool liquidity or price changed before purchase" };
     }
+    const holders = holderConcentration(report);
+    const authorities = tokenAuthoritiesRenounced(report);
+    lastSecurityDiagnostics = {
+      tokenAddress: coin.tokenAddress,
+      pairAddress: coin.pairAddress,
+      checkedAt: new Date(clock()).toISOString(),
+      top10HoldersPercent: holders.top10Percent,
+      largestHolderPercent: holders.largestPercent,
+      holderConcentrationVerified: holders.verified,
+      mintAuthorityRenounced: authorities.mintRenounced,
+      freezeAuthorityRenounced: authorities.freezeRenounced
+    };
     const poolRisk = evaluatePoolReport(report, coin, liquidity);
     if (poolRisk) return { allowed: false, reason: poolRisk };
     return { allowed: true, coin: { ...fresh,
       reasons: [...(coin.reasons || []), "Fresh exact-pool quote and RugCheck pool reserve verified immediately before paper entry"] } };
   }
 
-  return { observe, validate };
+  return { observe, validate, getSecurityDiagnostics: () => lastSecurityDiagnostics };
 }
 
 module.exports = { createSniperEntryGuard, hasCatastrophicLoss, evaluatePoolReport };
