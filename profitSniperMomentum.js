@@ -33,10 +33,13 @@ function createMomentumTracker() {
     const lastPrice = Number(ordered.at(-1).close);
     pools.set(key, {
       firstAt: Number(ordered[0].timestamp) * 1000,
-      basePrice, peakPrice, troughPrice, lastPrice, samples: [],
-      pumpSeen: peakPrice >= basePrice * (1 + CONFIG.MIN_PUMP_PERCENT / 100),
-      pullbackObserved: candlesAfterPeak.some(candle => Number(candle.low) < peakPrice),
-      historicalHydrated: true, lastAt: now
+      basePrice, peakPrice: Math.max(peakPrice, existing?.peakPrice || 0),
+      troughPrice: Math.min(troughPrice, existing?.troughPrice || troughPrice),
+      lastPrice: existing?.lastPrice || lastPrice, samples: existing?.samples || [],
+      peakLiquidity: existing?.peakLiquidity,
+      pumpSeen: !!existing?.pumpSeen || peakPrice >= basePrice * (1 + CONFIG.MIN_PUMP_PERCENT / 100),
+      pullbackObserved: !!existing?.pullbackObserved || candlesAfterPeak.some(candle => Number(candle.low) < peakPrice),
+      historicalHydrated: true, lastAt: existing?.lastAt ?? now
     });
     return true;
   }
@@ -67,7 +70,8 @@ function createMomentumTracker() {
     const sellDelta = previous && Number.isFinite(sells5m) && Number.isFinite(previous.sells5m)
       ? Math.max(0, sells5m - previous.sells5m) : 0;
     state.samples.push({ at: now, price, buys5m, sells5m, volume5m, liquidity, buyDelta, sellDelta });
-    state.samples = state.samples.filter(item => now - item.at <= CONFIG.RECOVERY_FLOW_WINDOW_MS + CONFIG.MAX_SNAPSHOT_INTERVAL_MS);
+    state.samples = state.samples.filter(item => now - item.at <=
+      CONFIG.RECOVERY_CONFIRMATION_SPAN_MS + 75000);
     const pumpWasSeen = state.pumpSeen;
     if (price > state.peakPrice) {
       state.peakPrice = price;
@@ -89,12 +93,17 @@ function createMomentumTracker() {
     const recovering = price > state.lastPrice;
     const reboundFromLowPercent = state.troughPrice > 0
       ? (price / state.troughPrice - 1) * 100 : 0;
-    const confirmationSamples = state.samples.slice(-3);
+    // Anchor by elapsed time, not by a fixed number of uneven scan intervals.
+    const anchor = state.samples.findLastIndex(sample =>
+      sample.at <= now - CONFIG.RECOVERY_CONFIRMATION_SPAN_MS);
+    const confirmationSamples = anchor >= 0 ? state.samples.slice(anchor) : state.samples;
     const confirmationSpanMs = confirmationSamples.length > 1
       ? confirmationSamples.at(-1).at - confirmationSamples[0].at : 0;
     const risingSteps = confirmationSamples.slice(1).filter((sample, index) =>
       sample.price > confirmationSamples[index].price).length;
-    const recoveryObserved = confirmationSamples.length >= 3 && risingSteps >= 1 &&
+    const noStaleGap = confirmationSamples.slice(1).every((sample, index) =>
+      sample.at - confirmationSamples[index].at <= 75000);
+    const recoveryObserved = confirmationSamples.length >= 3 && risingSteps >= 1 && noStaleGap &&
       price >= state.lastPrice &&
       confirmationSpanMs >= CONFIG.RECOVERY_CONFIRMATION_SPAN_MS;
     const currentBuyShare = buys5m + sells5m > 0 ? buys5m / (buys5m + sells5m) : 0;

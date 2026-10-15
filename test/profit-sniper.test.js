@@ -94,7 +94,9 @@ test("cached scans require a pump, pullback and sustained recovery with buy flow
   assert.equal(sample(30_000, 1.31, 110, 100, 11_000, 31).pumpSeen, true);
   sample(60_000, 1.50, 120, 100, 12_000, 20);
   assert.equal(sample(90_000, 1.20, 125, 100, 13_000, 2).ready, false);
-  assert.equal(sample(105_000, 1.24, 130, 101, 14_000, 3).ready, false);
+  // The actual elapsed window already exceeds 60s despite the last three
+  // observations spanning only 45s. A real recovery can now qualify here.
+  assert.equal(sample(105_000, 1.24, 130, 101, 14_000, 3).ready, true);
   const rebound = sample(150_000, 1.26, 140, 101, 15_000, 4);
   assert.equal(rebound.ready, true);
   assert.equal(rebound.flowIsApproximation, true);

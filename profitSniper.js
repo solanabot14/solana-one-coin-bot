@@ -48,6 +48,9 @@ const { qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, cho
 let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, source: "GeckoTerminal new + trending/top pools (24h) + exact DexScreener pairs + RugCheck; pair age 5m-6h" };
 const entryGuard = createSniperEntryGuard();
 const momentumTracker = createMomentumTracker();
+const historicalHydrator = require("./profitSniperHydration").createHistoricalHydrator({
+  tracker: momentumTracker, data: require("./profitSniperData").sniperData
+});
 const ageWatchlist = new Map();
 const recoveryWatchlist = createRecoveryWatchlist({
   maxAgeMs: CONFIG.RECOVERY_WATCHLIST_MAX_AGE_MS,
@@ -85,22 +88,12 @@ async function discoverCandidates(options = {}) {
   const now = Date.now();
   const currentKeys = new Set();
   const candidates = [];
-  let historicalRequests = 0;
   for (const raw of scanned) {
     const key = String(raw.tokenAddress || "") + ":" + String(raw.pairAddress || "");
     currentKeys.add(key);
     const basicFailures = getMomentumFailureReasons({ ...raw, momentumPattern: { ready: true } }, now);
-    if (!basicFailures.length && !momentumTracker.hasHistorical(raw) && historicalRequests < 2 &&
-        require("./profitSniperData").sniperData.canFetchHistorical(raw)) {
-      historicalRequests++;
-      try {
-        const ageMinutes = Math.max(1, Math.ceil((now - Number(raw.pairCreatedAt)) / 60_000) + 2);
-        const candles = await require("./profitSniperData").sniperData.getHistoricalCandles(raw,
-          { signal: options.signal, limit: Math.min(360, ageMinutes) });
-        momentumTracker.hydrate(raw, candles, now);
-      } catch (error) {
-        console.warn("PROFIT SNIPER HISTORICAL PATTERN UNAVAILABLE | " + raw.pairAddress + " | " + error.message);
-      }
+    if (!basicFailures.length) {
+      historicalHydrator.schedule(raw, { signal: options.signal, limit: 360 });
     }
     const momentumPattern = momentumTracker.observe(raw, now);
     const coin = { ...raw, momentumPattern };
@@ -405,6 +398,8 @@ function getStatus() {
       entriesFromAgeWatchlist: (trader.getPortfolio().history || []).filter(row => row?.type === "BUY" &&
         (row.entryReasons || []).includes("AGE WATCHLIST REENTRY")).length,
       lastVerifiedHolderSecurity: entryGuard.getSecurityDiagnostics(),
+      historicalLookupPending: historicalHydrator.isPending(),
+      historicalProvider: require("./geckoTerminal").getRequestStatus(),
       watchlistRecheckIntervalMs: CONFIG.WATCHLIST_RECHECK_MS
     }
   };

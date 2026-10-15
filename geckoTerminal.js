@@ -47,6 +47,8 @@ function createGeckoTerminalClient({
 	const candleRequests = new Map();
 	let cooldownUntil = 0;
 	let rateLimitFailures = 0;
+	let last429 = null;
+	let requestsSent = 0;
 
 	function unavailable() {
 		const error = new Error("GeckoTerminal cooldown after HTTP 429; retry later");
@@ -62,6 +64,7 @@ function createGeckoTerminalClient({
 			if (run.signal?.aborted) throw new Error("GeckoTerminal request aborted.");
 			if (clock() < cooldownUntil) throw unavailable();
 			lastRequestAt = clock();
+			requestsSent++;
 			try {
 				const result = await run.execute();
 				rateLimitFailures = 0;
@@ -74,6 +77,10 @@ function createGeckoTerminalClient({
 					const serverDelay = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : Date.parse(raw) - clock();
 					const backoff = Math.min(300000, 60000 * 2 ** Math.min(rateLimitFailures - 1, 3));
 					cooldownUntil = clock() + Math.max(backoff, Number.isFinite(serverDelay) ? serverDelay : 0);
+					last429 = { endpoint: run.endpoint, at: new Date(clock()).toISOString(),
+						retryAfter: raw ?? null, cooldownUntil: new Date(cooldownUntil).toISOString(),
+						providerResponse: true };
+					console.warn("GECKOTERMINAL HTTP 429 | " + JSON.stringify(last429));
 				}
 				throw error;
 			}
@@ -94,6 +101,7 @@ function createGeckoTerminalClient({
 		if (feed === "trending") params.duration = duration;
 		const request = queueRequest({
 			signal,
+			endpoint: `${API_BASE}/networks/solana/${endpoint}`,
 			execute: async () => {
 				const url = `${API_BASE}/networks/solana/${endpoint}`;
 				const response = await httpGet(url, {
@@ -132,7 +140,9 @@ function createGeckoTerminalClient({
 		if (cached && clock() - cached.at < cached.ttl) return structuredClone(cached.candles);
 		if (candleRequests.has(cacheKey)) return structuredClone(await candleRequests.get(cacheKey));
 
-		const request = queueRequest({ signal, execute: async () => {
+		const request = queueRequest({ signal,
+			endpoint: `${API_BASE}/networks/solana/pools/${encodeURIComponent(poolAddress)}/ohlcv/minute`,
+			execute: async () => {
 			const url = `${API_BASE}/networks/solana/pools/${encodeURIComponent(poolAddress)}/ohlcv/minute`;
 			const response = await httpGet(url, {
 				params: { aggregate: 1, limit: normalizedLimit, currency: "usd", token: "base" },
@@ -155,7 +165,9 @@ function createGeckoTerminalClient({
 		return structuredClone(await shared);
 	}
 
-	return { getPoolCandles, getNewSolanaPools, getTrendingSolanaPools, getTopSolanaPools };
+	return { getPoolCandles, getNewSolanaPools, getTrendingSolanaPools, getTopSolanaPools,
+		getRequestStatus: () => ({ provider: "GeckoTerminal", requestsSent, requestSpacingMs,
+			cooldownRemainingMs: Math.max(0, cooldownUntil - clock()), last429: structuredClone(last429) }) };
 }
 
 const client = createGeckoTerminalClient();
@@ -168,6 +180,7 @@ module.exports = {
 	getPoolCandles: client.getPoolCandles,
 	getNewSolanaPools: client.getNewSolanaPools,
 	getTrendingSolanaPools: client.getTrendingSolanaPools,
-	getTopSolanaPools: client.getTopSolanaPools
+	getTopSolanaPools: client.getTopSolanaPools,
+	getRequestStatus: client.getRequestStatus
 };
 

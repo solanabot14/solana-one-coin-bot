@@ -8,6 +8,9 @@ test("HTTP 429 pauses all feeds and candles, respects Retry-After and increases 
     httpGet: async () => { calls++; throw Object.assign(new Error("limited"), {
       response: { status: 429, headers: { "retry-after": "90" } } }); } });
   await assert.rejects(client.getNewSolanaPools(), /limited/);
+  assert.match(client.getRequestStatus().last429.endpoint, /new_pools$/);
+  assert.equal(client.getRequestStatus().last429.providerResponse, true);
+  assert.equal(client.getRequestStatus().requestsSent, 1);
   await assert.rejects(client.getTrendingSolanaPools(), /cooldown/);
   await assert.rejects(client.getPoolCandles("a", "b"), /cooldown/);
   assert.equal(calls, 1);
