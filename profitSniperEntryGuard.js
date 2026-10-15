@@ -157,7 +157,7 @@ function createSniperEntryGuard({
       ? { firstAt: now, lastAt: now, count: 1, liquidity, peakLiquidity: liquidity, price }
       : { firstAt: previous.firstAt, lastAt: now,
           count: previous.count + (now - previous.lastAt >= 20_000 ? 1 : 0),
-          liquidity, peakLiquidity: Math.max(previous.peakLiquidity, liquidity), price };
+          liquidity, peakLiquidity: Math.max(previous.liquidity, liquidity), price };
     observations.set(key, next);
     const ready = next.count >= CONFIG.MIN_STABLE_POOL_OBSERVATIONS && now - next.firstAt >= CONFIG.MIN_STABLE_POOL_SPAN_MS;
     return { ready, reason: reset && previous ? "liquidity or price fell during observation" :

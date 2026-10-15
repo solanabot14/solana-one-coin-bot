@@ -26,6 +26,7 @@ test("background hydration preserves accumulated live observations", () => {
   const tracker = createMomentumTracker();
   sample(tracker, 0, 1.5, 100, 10000);
   sample(tracker, 30000, 1.4, 110, 11000);
+  sample(tracker, 45000, 1.41, 120, 12000);
   tracker.hydrate(base, [
     {timestamp:-120,open:1,high:1.5,low:1,close:1.5},
     {timestamp:-60,open:1.5,high:1.5,low:1.35,close:1.4}

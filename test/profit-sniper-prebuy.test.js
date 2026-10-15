@@ -20,10 +20,12 @@ function pair({ liquidity = 30000, price = 1, token = "mint-A", pool = "pool-A",
     volume: { h24: 0, m5: 2000 }, txns: { m5: { buys: 40, sells: 10 } },
     priceChange: { m5: momentum, h1: 5, h24: 5 } };
 }
-function fixture({ first = pair(), final = pair({ price: 1.02 }), lockReport = report(), headers = {}, onWait, fail = false } = {}) {
+function fixture({ first = pair(), final = pair({ price: 1.02 }), lockReport = report(), headers = {}, onWait, fail = false,
+  verifyExecution = async () => ({allowed:true,lossPercent:0.5}) } = {}) {
   let time = now, quotes = 0;
   const urls = [];
   const guard = createEntryGuard({ clock: () => time,
+    verifyExecution,
     wait: async ms => { time += ms; if (onWait) onWait(); },
     httpGet: async (url, options) => {
       urls.push(url);
@@ -68,8 +70,8 @@ test("exact 20% liquidity drop remains eligible", async () => {
   const { guard } = fixture({ first: pair({ liquidity: 25000 }), final: pair({ liquidity: 20000 }), lockReport: report({ liquidity: 20000 }) });
   assert.equal((await guard.prepareEntry(coin)).allowed, true);
 });
-test("fresh 5m chase cap is bypassed only for a confirmed pullback recovery", async () => {
-  assert.equal((await fixture({ final: pair({ momentum: 36 }) }).guard.prepareEntry(coin)).allowed, false);
+test("high five-minute movement is informational; confirmed activity and fresh safety checks still required", async () => {
+  assert.equal((await fixture({ final: pair({ momentum: 36 }) }).guard.prepareEntry(coin)).allowed, true);
   const confirmed = { ...coin, momentumPattern: { ready: true, pullbackObserved: true,
     entryRoute: "confirmed_pullback_recovery" } };
   assert.equal((await fixture({ first: pair({ momentum: 80 }), final: pair({ momentum: 80 }) })
@@ -91,5 +93,12 @@ test("stopping during confirmation cancels the candidate", async () => {
   const controller = new AbortController();
   const { guard } = fixture({ onWait: () => controller.abort() });
   assert.equal((await guard.prepareEntry(coin, { signal: controller.signal })).allowed, false);
+});
+
+test("missing execution routes and final price falling both prevent entry", async () => {
+  const missing=fixture({verifyExecution:async()=>({allowed:false,reason:"NO_SELL_ROUTE"})});
+  assert.equal((await missing.guard.prepareEntry(coin)).reason,"NO_SELL_ROUTE");
+  const falling=fixture({first:pair({price:1}),final:pair({price:0.99})});
+  assert.equal((await falling.guard.prepareEntry(coin)).reason,"PRICE_FALLING_BEFORE_PURCHASE");
 });
 

@@ -8,8 +8,8 @@ function createRecoveryWatchlist({ maxAgeMs, maxSize, minimumLiquidityUsd, minim
 
   function isPromising(coin) {
     const pattern = coin?.momentumPattern || {};
-    return pattern.pumpSeen === true && pattern.pullbackObserved === true &&
-      Number(pattern.retracePercent) <= maximumRetracePercent &&
+    return (pattern.ready === true || pattern.recovering === true ||
+        (pattern.pumpSeen === true && pattern.pullbackObserved === true)) &&
       Number(coin?.liquidityUsd) >= minimumLiquidityUsd &&
       Number(coin?.volume5m) >= minimumVolume5mUsd;
   }

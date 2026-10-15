@@ -26,7 +26,7 @@ test("Sniper uses 5m-24h age, activity, liquidity and rebound gates", () => {
   assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 17, sells5m: 13 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 29, sells5m: 0 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 30, sells5m: 0 })), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 36 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 36 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 80,
     momentumPattern: { ready: true, pullbackObserved: true,
       entryRoute: "confirmed_pullback_recovery" } })), true);
@@ -78,13 +78,13 @@ test("age rejection is distinguishable for watchlist tracking", () => {
   assert.ok(getMomentumFailureReasons(candidate({ tokenAddress: "EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J" })).includes("blockedTokenAddress"));
   const tooYoung = getMomentumFailureReasons(candidate({ pairCreatedAt: Date.now() - 4 * 60 * 1000 }));
   assert.deepEqual(tooYoung, ["age"]);
-  assert.ok(getMomentumFailureReasons(candidate({ priceChange5m: 36 })).includes("momentum5m"));
+  assert.ok(!getMomentumFailureReasons(candidate({ priceChange5m: 36 })).includes("momentum5m"));
   assert.ok(!getMomentumFailureReasons(candidate({ priceChange5m: 80,
     momentumPattern: { ready: true, pullbackObserved: true,
       entryRoute: "confirmed_pullback_recovery" } })).includes("momentum5m"));
 });
 
-test("cached scans require a pump, pullback and sustained recovery with buy flow", () => {
+test("local recovery requires sustained rising observations and rejects continued selling", () => {
   const { createMomentumTracker } = require("../profitSniperMomentum");
   const tracker = createMomentumTracker();
   const base = { tokenAddress: "mint-rebound", pairAddress: "pool-rebound", liquidityUsd: 20_000 };
@@ -94,17 +94,17 @@ test("cached scans require a pump, pullback and sustained recovery with buy flow
   assert.equal(sample(30_000, 1.31, 110, 100, 11_000, 31).pumpSeen, true);
   sample(60_000, 1.50, 120, 100, 12_000, 20);
   assert.equal(sample(90_000, 1.20, 125, 100, 13_000, 2).ready, false);
-  // The actual elapsed window already exceeds 60s despite the last three
-  // observations spanning only 45s. A real recovery can now qualify here.
-  assert.equal(sample(105_000, 1.24, 130, 101, 14_000, 3).ready, true);
+  // One small bounce inside a declining window is not yet confirmed recovery.
+  assert.equal(sample(105_000, 1.24, 130, 101, 14_000, 3).ready, false);
   const rebound = sample(150_000, 1.26, 140, 101, 15_000, 4);
   assert.equal(rebound.ready, true);
   assert.equal(rebound.flowIsApproximation, true);
   const exhausted = sample(180_000, 0.75, 146, 102, 16_000, -5);
-  assert.equal(exhausted.reason, "retrace_over_45_percent");
+  assert.equal(exhausted.ready, false);
+  assert.equal(exhausted.reason, "recent_price_not_confirmed_upward");
 });
 
-test("a deep pullback uses the same adaptive recovery route", () => {
+test("a deep old pullback can qualify after a fresh local recovery", () => {
   const { createMomentumTracker } = require("../profitSniperMomentum");
   const tracker = createMomentumTracker();
   const base = { tokenAddress: "mint-deep", pairAddress: "pool-deep", liquidityUsd: 20_000 };
@@ -116,12 +116,12 @@ test("a deep pullback uses the same adaptive recovery route", () => {
   sample(90_000, 0.92, 140, 75, 13_000);
   const recovered = sample(120_000, 1.00, 160, 80, 15_000);
   assert.equal(recovered.ready, true);
-  assert.equal(recovered.entryRoute, "confirmed_pullback_recovery");
+  assert.ok(["activity_continuation","local_recovery"].includes(recovered.entryRoute));
   assert.equal(recovered.liquidityRetained, true);
   assert.equal(recovered.volumeIncreasing, true);
 });
 
-test("one real rise after a small pullback can qualify before the separate stability guard", () => {
+test("a small pullback needs two rising observations before the separate stability guard", () => {
   const { createMomentumTracker } = require("../profitSniperMomentum");
   const build = suffix => {
     const tracker = createMomentumTracker();
@@ -134,9 +134,10 @@ test("one real rise after a small pullback can qualify before the separate stabi
     return observe;
   };
   const observe = build("small");
-  const recovered = observe(90_000, 1.48, 135, 86, 13_000, 1);
+  assert.equal(observe(90_000, 1.48, 135, 86, 13_000, 1).ready, false);
+  const recovered = observe(120_000, 1.49, 145, 88, 14_000, 1);
   assert.equal(recovered.ready, true);
-  assert.equal(recovered.entryRoute, "confirmed_pullback_recovery");
+  assert.ok(["activity_continuation","local_recovery"].includes(recovered.entryRoute));
 });
 
 test("promising pools stay tracked when the rotating discovery feed drops them", () => {

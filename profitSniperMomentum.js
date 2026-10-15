@@ -1,7 +1,7 @@
 const CONFIG = require("./profitSniperConfig");
 
-// Historical candles establish pump/pullback context. Live snapshots confirm
-// that price, volume and buy flow have resumed without requiring a fixed rebound percentage.
+// Confirm recent direction and activity. Session highs and old pumps are
+// informational; security and executable quotes are independent pre-buy checks.
 function createMomentumTracker() {
   const pools = new Map();
 
@@ -37,7 +37,7 @@ function createMomentumTracker() {
       troughPrice: Math.min(troughPrice, existing?.troughPrice || troughPrice),
       lastPrice: existing?.lastPrice || lastPrice, samples: existing?.samples || [],
       peakLiquidity: existing?.peakLiquidity,
-      pumpSeen: !!existing?.pumpSeen || peakPrice >= basePrice * (1 + CONFIG.MIN_PUMP_PERCENT / 100),
+      pumpSeen: !!existing?.pumpSeen || peakPrice > basePrice,
       pullbackObserved: !!existing?.pullbackObserved || candlesAfterPeak.some(candle => Number(candle.low) < peakPrice),
       historicalHydrated: true, lastAt: existing?.lastAt ?? now
     });
@@ -56,7 +56,7 @@ function createMomentumTracker() {
 
     let state = pools.get(key);
     if (!state) {
-      const inferredPump = Number.isFinite(change5m) && change5m >= CONFIG.MIN_PUMP_PERCENT;
+      const inferredPump = Number.isFinite(CONFIG.MIN_PUMP_PERCENT) && Number.isFinite(change5m) && change5m >= CONFIG.MIN_PUMP_PERCENT;
       const basePrice = inferredPump ? price / (1 + change5m / 100) : price;
       state = { firstAt: now, basePrice, peakPrice: price, troughPrice: price, lastPrice: price,
         samples: [], pumpSeen: inferredPump,
@@ -64,70 +64,53 @@ function createMomentumTracker() {
         peakLiquidity: Number.isFinite(liquidity) && liquidity > 0 ? liquidity : null };
     }
 
-    const previous = state.samples[state.samples.length - 1];
-    const buyDelta = previous && Number.isFinite(buys5m) && Number.isFinite(previous.buys5m)
-      ? Math.max(0, buys5m - previous.buys5m) : 0;
-    const sellDelta = previous && Number.isFinite(sells5m) && Number.isFinite(previous.sells5m)
-      ? Math.max(0, sells5m - previous.sells5m) : 0;
-    state.samples.push({ at: now, price, buys5m, sells5m, volume5m, liquidity, buyDelta, sellDelta });
-    state.samples = state.samples.filter(item => now - item.at <=
-      CONFIG.RECOVERY_CONFIRMATION_SPAN_MS + 75000);
-    const pumpWasSeen = state.pumpSeen;
-    if (price > state.peakPrice) {
-      state.peakPrice = price;
-      state.troughPrice = price;
-    }
-    state.pumpSeen = state.pumpSeen || price >= state.basePrice * (1 + CONFIG.MIN_PUMP_PERCENT / 100);
-    if (Number.isFinite(liquidity) && liquidity > 0)
-      state.peakLiquidity = Math.max(Number(state.peakLiquidity) || liquidity, liquidity);
-    if (!pumpWasSeen && state.pumpSeen) state.troughPrice = price;
-    else if (state.pumpSeen) state.troughPrice = Math.min(state.troughPrice || price, price);
-    if (state.pumpSeen && price < state.peakPrice) state.pullbackObserved = true;
-
-    const retracePercent = state.peakPrice > 0
-      ? (state.peakPrice - price) / state.peakPrice * 100 : 0;
-    const flowSamples = state.samples.filter(item => now - item.at <= CONFIG.RECOVERY_FLOW_WINDOW_MS);
-    const flowBuys = flowSamples.reduce((sum, item) => sum + item.buyDelta, 0);
-    const flowSells = flowSamples.reduce((sum, item) => sum + item.sellDelta, 0);
-    const flowSpanMs = flowSamples.length > 1 ? flowSamples.at(-1).at - flowSamples[0].at : 0;
-    const recovering = price > state.lastPrice;
-    const reboundFromLowPercent = state.troughPrice > 0
-      ? (price / state.troughPrice - 1) * 100 : 0;
-    // Anchor by elapsed time, not by a fixed number of uneven scan intervals.
-    const anchor = state.samples.findLastIndex(sample =>
-      sample.at <= now - CONFIG.RECOVERY_CONFIRMATION_SPAN_MS);
-    const confirmationSamples = anchor >= 0 ? state.samples.slice(anchor) : state.samples;
-    const confirmationSpanMs = confirmationSamples.length > 1
-      ? confirmationSamples.at(-1).at - confirmationSamples[0].at : 0;
-    const risingSteps = confirmationSamples.slice(1).filter((sample, index) =>
-      sample.price > confirmationSamples[index].price).length;
-    const noStaleGap = confirmationSamples.slice(1).every((sample, index) =>
-      sample.at - confirmationSamples[index].at <= 75000);
-    const recoveryObserved = confirmationSamples.length >= 3 && risingSteps >= 1 && noStaleGap &&
-      price >= state.lastPrice &&
-      confirmationSpanMs >= CONFIG.RECOVERY_CONFIRMATION_SPAN_MS;
-    const currentBuyShare = buys5m + sells5m > 0 ? buys5m / (buys5m + sells5m) : 0;
-    const liquidityRetained = Number.isFinite(liquidity) && liquidity > 0 &&
-      Number(state.peakLiquidity) > 0 && liquidity >= state.peakLiquidity * CONFIG.RECOVERY_MIN_LIQUIDITY_RETENTION;
-    const volumeIncreasing = confirmationSamples.length >= 3 &&
-      Number.isFinite(confirmationSamples[0].volume5m) &&
-      Number.isFinite(confirmationSamples.at(-1).volume5m) &&
-      confirmationSamples.at(-1).volume5m > confirmationSamples[0].volume5m;
-    const pumpPercent = state.basePrice > 0 ? (state.peakPrice / state.basePrice - 1) * 100 : 0;
-    const ready = state.pumpSeen && state.pullbackObserved &&
-      retracePercent <= CONFIG.MAX_RETRACE_PERCENT && recoveryObserved &&
-      currentBuyShare >= CONFIG.RECOVERY_MIN_BUY_SHARE && liquidityRetained &&
-      volumeIncreasing && flowBuys > flowSells;
-    const entryRoute = ready ? "confirmed_pullback_recovery" : null;
-    const reason = retracePercent > CONFIG.MAX_RETRACE_PERCENT ? "retrace_over_45_percent"
-      : !state.pumpSeen ? "pump_not_observed"
-      : !state.pullbackObserved ? "pullback_not_observed"
-      : !recoveryObserved ? "recovery_not_confirmed_60s"
-      : currentBuyShare < CONFIG.RECOVERY_MIN_BUY_SHARE ? "recovery_buy_ratio_below_55_percent"
-      : !liquidityRetained ? "recovery_liquidity_not_retained_90_percent"
-      : !volumeIncreasing ? "recovery_volume_not_increasing"
-      : flowBuys <= flowSells ? "recovery_recent_buy_flow_not_above_sells"
-      : null;
+    const previous = state.samples.at(-1);
+    if (previous && now - previous.at > 75000) state.samples = [];
+    if (!previous || now > previous.at)
+      state.samples.push({at:now,price,buys5m,sells5m,volume5m,liquidity});
+    state.samples = state.samples.filter(item => now-item.at <= CONFIG.RECOVERY_CONFIRMATION_SPAN_MS+75000);
+    const anchor = state.samples.findLastIndex(item => item.at <= now-CONFIG.RECOVERY_CONFIRMATION_SPAN_MS);
+    const samples = anchor >= 0 ? state.samples.slice(anchor) : state.samples;
+    const span = samples.length > 1 ? now-samples[0].at : 0;
+    const risingSteps = samples.slice(1).filter((item,index)=>item.price>samples[index].price).length;
+    const noGap = samples.slice(1).every((item,index)=>item.at-samples[index].at<=75000);
+    const freshWindow = samples.length>=3 && span>=CONFIG.RECOVERY_CONFIRMATION_SPAN_MS && noGap;
+    const lows = samples.map(item=>item.price);
+    const low = Math.min(...lows);
+    const lowIndex = lows.lastIndexOf(low);
+    const afterLow = samples.slice(lowIndex);
+    const recoverySteps = afterLow.slice(1).filter((item,index)=>item.price>afterLow[index].price).length;
+    const notFalling = previous && price>=previous.price;
+    const continuation = freshWindow && notFalling && price>samples[0].price && risingSteps>=2;
+    const recovery = freshWindow && notFalling && price>low && recoverySteps>=2;
+    const transactions = buys5m+sells5m;
+    const currentBuyShare = transactions>0 ? buys5m/transactions : 0;
+    const volumeIncreasing = samples.length>=3 && Number.isFinite(volume5m) && volume5m>samples[0].volume5m;
+    const highVolume = volume5m>=CONFIG.HIGH_VOLUME_5M_USD && transactions>=CONFIG.HIGH_TRANSACTIONS_5M;
+    const activitySufficient = volume5m>=CONFIG.MIN_VOLUME_5M_USD && transactions>=CONFIG.MIN_TRANSACTIONS_5M &&
+      (volumeIncreasing || highVolume);
+    // Price patterns are opportunities, not security attestations. Recent pool
+    // changes and executable quotes are independently checked immediately pre-buy.
+    const liquidityRetained = Number.isFinite(liquidity) && liquidity>=CONFIG.MIN_LIQUIDITY_USD;
+    state.peakPrice = Math.max(state.peakPrice,price);
+    state.troughPrice = Math.min(state.troughPrice,price);
+    state.pullbackObserved = state.pullbackObserved || price<state.peakPrice;
+    const ready = (continuation || recovery) && activitySufficient && liquidityRetained &&
+      currentBuyShare>=CONFIG.MIN_BUY_SHARE_5M;
+    const entryRoute = ready ? (continuation ? "activity_continuation" : "local_recovery") : null;
+    const reason = !freshWindow ? "waiting_for_fresh_60s_window"
+      : !(continuation || recovery) ? "recent_price_not_confirmed_upward"
+      : !liquidityRetained ? "liquidity_below_floor"
+      : currentBuyShare<CONFIG.MIN_BUY_SHARE_5M ? "buy_share_below_55_percent"
+      : !activitySufficient ? "volume_neither_growing_nor_sufficiently_high" : null;
+    const retracePercent = state.peakPrice>0 ? (state.peakPrice-price)/state.peakPrice*100 : 0;
+    const reboundFromLowPercent = low>0 ? (price/low-1)*100 : 0;
+    const pumpPercent = state.basePrice>0 ? (state.peakPrice/state.basePrice-1)*100 : 0;
+    const recovering = !!previous && price>previous.price;
+    const confirmationSpanMs = span;
+    const flowSpanMs = span;
+    const flowBuys = null, flowSells = null;
+    state.pumpSeen = state.pumpSeen || price>state.basePrice;
 
     state.lastPrice = price;
     state.lastAt = now;
@@ -137,7 +120,9 @@ function createMomentumTracker() {
       pumpPercent: state.basePrice > 0 ? (state.peakPrice / state.basePrice - 1) * 100 : null,
       peakPrice: state.peakPrice, troughPrice: state.troughPrice, retracePercent, reboundFromLowPercent, recovering, flowBuys, flowSells,
       flowSpanMs, pullbackObserved: !!state.pullbackObserved, currentBuyShare, liquidityRetained, volumeIncreasing,
-      confirmationSpanMs, risingSteps, flowIsApproximation: true };
+      confirmationSpanMs, risingSteps, activitySufficient, highVolume, observedAt:now,
+      volumeBasis: highVolume ? "high_absolute_5m" : volumeIncreasing ? "growing_rolling_5m" : "insufficient",
+      flowMeasurement: "rolling_5m_counts_not_new_trades", flowIsApproximation: true };
   }
 
   function remove(coin) {

@@ -1,5 +1,5 @@
 const { setTimeout: sleep } = require("node:timers/promises");
-const { constants, getMomentumFailureReasons } = require("./profitSniperStrategy");
+const { constants, getMomentumFailureReasons, getBuySizing } = require("./profitSniperStrategy");
 const CONFIG = require("./profitSniperConfig");
 const { evaluatePoolReport, isLiquidityBurned } = require("./profitSniperEntryGuard");
 const CONFIRMATION_MS = 7500;
@@ -34,6 +34,7 @@ function poolLock(report, coin) {
 
 function createEntryGuard({
   httpGet,
+  verifyExecution = require("./profitSniperExecutionQuote").createExecutionVerifier(),
   clock = Date.now,
   wait = (ms, signal) => sleep(ms, undefined, { signal })
 } = {}) {
@@ -95,13 +96,16 @@ function createEntryGuard({
     if (failures.length) throw new Error("FRESH_QUOTE_FAILED: " + failures.join(","));
     return q;
   }
-  async function prepareEntry(coin, { signal } = {}) {
+  async function prepareEntry(coin, { signal, portfolio } = {}) {
     try {
       const first = await quote(coin, signal);
       // Wait only in the scanner: the separate position monitor keeps running.
       await wait(CONFIRMATION_MS, signal);
       const lock = await readLock(coin, signal);
       if (!lock.allowed) return reject(coin, lock.reason);
+      const amountUsd = getBuySizing(portfolio || {cashBalance:100,positions:[],history:[]}).amountInvested;
+      const execution = await verifyExecution(coin, {amountUsd,signal});
+      if (!execution.allowed) return reject(coin, execution.reason);
       // This is the last network operation before the synchronous paper buy.
       const final = await quote(coin, signal);
       if (signal?.aborted) return reject(coin, "ABORTED");
@@ -109,6 +113,7 @@ function createEntryGuard({
         return reject(coin, "STALE_FINAL_CHECK");
       if (final.sampledAt - first.sampledAt < CONFIRMATION_MS)
         return reject(coin, "CONFIRMATION_TOO_SHORT");
+      if (final.priceUsd < first.priceUsd) return reject(coin, "PRICE_FALLING_BEFORE_PURCHASE");
       if (final.liquidityUsd < first.liquidityUsd * (1 - MAX_LIQUIDITY_DROP))
         return reject(coin, "LIQUIDITY_DROPPED_OVER_20_PERCENT");
       const discrepancy = Math.abs(final.liquidityUsd - lock.liquidityUsd) /
@@ -118,17 +123,20 @@ function createEntryGuard({
       lastCheck = { symbol: coin.symbol, tokenAddress: coin.tokenAddress, pairAddress: coin.pairAddress,
         allowed: true, reason: "VERIFIED", firstLiquidityUsd: first.liquidityUsd,
         finalLiquidityUsd: final.liquidityUsd, reportLiquidityUsd: lock.liquidityUsd,
-        lockedPercent: lock.lockedPercent, checkedAt: new Date(clock()).toISOString() };
+        lockedPercent: lock.lockedPercent, executionQuote:execution,
+        checkedAt: new Date(clock()).toISOString() };
       return { allowed: true, coin: { ...coin, ...final, reasons: [...(coin.reasons || []),
         "Exact pool lock " + lock.lockedPercent + "%; reserves $" + lock.liquidityUsd.toFixed(2),
+        "Buy/sell route quoted for $" + amountUsd.toFixed(2) + "; estimated round-trip cost " + execution.lossPercent.toFixed(2) + "%",
         "Fresh pre-buy checks with 7.5s confirmation wait: liquidity $" + first.liquidityUsd.toFixed(2) +
-          " -> $" + final.liquidityUsd.toFixed(2) + "; fixed $10 paper entry"] } };
+          " -> $" + final.liquidityUsd.toFixed(2) + "; compounded paper sizing"] } };
     } catch (error) { return reject(coin, error.message || "ENTRY_DATA_UNAVAILABLE"); }
   }
   return { checkLiquidityLock, prepareEntry, getStatus: () => ({
     confirmationMs: CONFIRMATION_MS, maximumSampleAgeMs: MAX_SAMPLE_AGE_MS,
     maximumLiquidityDropPercent: MAX_LIQUIDITY_DROP * 100,
     exactPoolLockRequired: true, minimumLiquidityUsd: constants.MIN_LIQUIDITY_USD,
+    executionQuotesRequired: true, maximumRoundTripLossPercent: CONFIG.MAX_ROUND_TRIP_LOSS_PERCENT,
     counters: { ...counters }, lastCheck
   }) };
 }
