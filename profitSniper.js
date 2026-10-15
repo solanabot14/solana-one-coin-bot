@@ -66,7 +66,7 @@ async function discoverCandidates(options = {}) {
     if (failures.length === 1 && failures[0] === "age" && ageMs < CONFIG.MIN_PAIR_AGE_MS) {
       const prior = ageWatchlist.get(key);
       ageWatchlist.set(key, prior || { addedAt: now, initialLiquidityUsd: Number(coin.liquidityUsd),
-        tokenAddress: coin.tokenAddress, pairAddress: coin.pairAddress, lastSnapshot: coin });
+        tokenAddress: coin.tokenAddress, pairAddress: coin.pairAddress, lastSnapshot: coin, rechecks: 0 });
       const item = ageWatchlist.get(key);
       item.lastSnapshot = coin;
       item.lastSeenAt = now;
@@ -76,6 +76,7 @@ async function discoverCandidates(options = {}) {
       item.lastSnapshot = coin;
       item.lastSeenAt = now;
       item.rechecks++;
+      ageWatchlistRechecks++;
     }
     return { key, coin, failures, ageMs, wasWatchlisted: ageWatchlist.has(key) };
   });
@@ -89,6 +90,11 @@ async function discoverCandidates(options = {}) {
     if (row.type === "BUY") buysByMint.set(row.tokenAddress, (buysByMint.get(row.tokenAddress) || 0) + 1);
     if (row.type === "SELL" && /HARD STOP|STOP LOSS/i.test(String(row.reason || "")))
       stoppedMints.add(row.tokenAddress);
+  }
+
+  for (const [key, item] of ageWatchlist) {
+    if (history.some(row => row?.type === "BUY" && row.tokenAddress === item.tokenAddress &&
+        (row.entryReasons || []).includes("AGE WATCHLIST REENTRY"))) ageWatchlist.delete(key);
   }
 
   const entries = [];
@@ -141,11 +147,10 @@ async function discoverCandidates(options = {}) {
         reason: pattern.reason || null
       },
       fromAgeWatchlist: wasWatchlisted,
-      reason: failures.length ? [...new Set(failures)].join(",") : "entered"
+      reason: failures.length ? [...new Set(failures)].join(",") : "entry_candidate_selected"
     };
     logs.push(record);
     if (!failures.length) {
-      if (wasWatchlisted) ageWatchlistRechecks++;
       entries.push({ ...coin, signal: "ORDER FLOW BUY",
         reasons: [...(coin.reasons || []), "Direct Sniper entry gates passed",
           ...(wasWatchlisted ? ["AGE WATCHLIST REENTRY"] : []),
