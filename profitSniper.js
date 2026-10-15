@@ -85,15 +85,18 @@ async function discoverCandidates(options = {}) {
   const now = Date.now();
   const currentKeys = new Set();
   const candidates = [];
+  let historicalRequests = 0;
   for (const raw of scanned) {
     const key = String(raw.tokenAddress || "") + ":" + String(raw.pairAddress || "");
     currentKeys.add(key);
     const basicFailures = getMomentumFailureReasons({ ...raw, momentumPattern: { ready: true } }, now);
-    if (!basicFailures.length && !momentumTracker.hasHistorical(raw)) {
+    if (!basicFailures.length && !momentumTracker.hasHistorical(raw) && historicalRequests < 2 &&
+        require("./profitSniperData").sniperData.canFetchHistorical(raw)) {
+      historicalRequests++;
       try {
         const ageMinutes = Math.max(1, Math.ceil((now - Number(raw.pairCreatedAt)) / 60_000) + 2);
-        const candles = await require("./geckoTerminal").getPoolCandles(raw.pairAddress,
-          raw.tokenAddress, { signal: options.signal, limit: Math.min(360, ageMinutes) });
+        const candles = await require("./profitSniperData").sniperData.getHistoricalCandles(raw,
+          { signal: options.signal, limit: Math.min(360, ageMinutes) });
         momentumTracker.hydrate(raw, candles, now);
       } catch (error) {
         console.warn("PROFIT SNIPER HISTORICAL PATTERN UNAVAILABLE | " + raw.pairAddress + " | " + error.message);

@@ -21,7 +21,7 @@ function hasCatastrophicLoss(history, tokenAddress) {
 function isLiquidityBurned(report, market) {
   const lp = market?.lp || {};
   return lp.burned === true || lp.lpBurned === true || market?.lpBurned === true ||
-    report?.lpBurned === true || Number(lp.lpBurnedPct) >= 99.99 ||
+    Number(lp.lpBurnedPct) >= 99.99 ||
     Number(market?.lpBurnedPct) >= 99.99;
 }
 
@@ -30,11 +30,31 @@ function holderConcentration(report) {
     : Array.isArray(report?.tokenHolders) ? report.tokenHolders
     : Array.isArray(report?.holders) ? report.holders : null;
   if (!holders || holders.length < 1) return { verified: false, top10Percent: null, largestPercent: null };
-  const percentages = holders.slice(0, 10).map(holder => {
+  // Exclude only the token reserve accounts identified by this report's markets.
+  // An owner/name label alone never exempts an account (including exchanges).
+  const reserves = new Set();
+  for (const market of Array.isArray(report?.markets) ? report.markets : []) {
+    for (const side of ["A", "B"]) {
+      const account = market["liquidity" + side + "Account"];
+      if (market["mint" + side] === report.mint && account?.mint === report.mint &&
+          market["liquidity" + side] && !account.delegate && !account.closeAuthority)
+        reserves.add(market["liquidity" + side]);
+    }
+  }
+  const owners = new Map();
+  for (const holder of holders) {
+    if (reserves.has(holder?.address) ||
+        holder?.owner === "1nc1nerator11111111111111111111111111111111" ||
+        holder?.address === "1nc1nerator11111111111111111111111111111111") continue;
     const raw = holder?.pct ?? holder?.percentage ?? holder?.percent;
-    const value = Number(raw);
-    return Number.isFinite(value) && value >= 0 ? value : NaN;
-  });
+    const value = raw === null || raw === undefined || raw === "" ? NaN : Number(raw);
+    if (!Number.isFinite(value) || value < 0 || value > 100)
+      return { verified: false, top10Percent: null, largestPercent: null };
+    const key = holder.owner || holder.address || holder;
+    owners.set(key, (owners.get(key) || 0) + value);
+  }
+  const percentages = [...owners.values()].sort((a, b) => b - a).slice(0, 10);
+  if (!percentages.length) return { verified: false, top10Percent: null, largestPercent: null };
   if (percentages.some(value => !Number.isFinite(value)))
     return { verified: false, top10Percent: null, largestPercent: null };
   return { verified: true, top10Percent: percentages.reduce((sum, value) => sum + value, 0),
@@ -106,10 +126,8 @@ function createSniperEntryGuard({
     "https://api.dexscreener.com/latest/dex/pairs/solana/" + encodeURIComponent(address),
     { timeout: 10_000, signal }
   )).data?.pairs,
-  fetchReport = async (address, signal) => (await axios.get(
-    "https://api.rugcheck.xyz/v1/tokens/" + encodeURIComponent(address) + "/report",
-    { timeout: 8_000, signal }
-  )).data
+  fetchReport = async (address, signal) =>
+    (await require("./profitSniperData").sniperData.getReport(address, signal)).data
 } = {}) {
   const observations = new Map();
   let lastSecurityDiagnostics = null;

@@ -33,10 +33,14 @@ function poolLock(report, coin) {
 }
 
 function createEntryGuard({
-  httpGet = (...args) => require("axios").get(...args),
+  httpGet,
   clock = Date.now,
   wait = (ms, signal) => sleep(ms, undefined, { signal })
 } = {}) {
+  const reportClient = httpGet
+    ? require("./profitSniperData").createSniperDataClient({ httpGet, clock, wait })
+    : require("./profitSniperData").sniperData;
+  const get = httpGet || ((...args) => require("axios").get(...args));
   let lastCheck = null;
   const counters = { passed: 0, rejected: 0 };
   const reject = (coin, reason) => {
@@ -48,7 +52,7 @@ function createEntryGuard({
   async function request(url, signal) {
     if (signal?.aborted) throw new Error("ABORTED");
     const startedAt = clock();
-    const response = await httpGet(url, { timeout: MAX_SAMPLE_AGE_MS, signal,
+    const response = await get(url, { timeout: MAX_SAMPLE_AGE_MS, signal,
       headers: { "Cache-Control": "no-cache" } });
     if (signal?.aborted) throw new Error("ABORTED");
     const ageSeconds = Number(response.headers?.age || 0);
@@ -57,8 +61,7 @@ function createEntryGuard({
     return { data: response.data, sampledAt: clock() };
   }
   async function readLock(coin, signal) {
-    const response = await request("https://api.rugcheck.xyz/v1/tokens/" +
-      encodeURIComponent(coin.tokenAddress) + "/report", signal);
+    const response = await reportClient.getReport(coin.tokenAddress, signal);
     return { ...poolLock(response.data, coin), sampledAt: response.sampledAt };
   }
   async function checkLiquidityLock(tokenAddress, { coin, signal } = {}) {
