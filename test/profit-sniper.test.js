@@ -7,15 +7,15 @@ function candidate(overrides = {}) {
     volume5m: 2000, buys5m: 20, sells5m: 10, priceChange5m: 2,
     momentumPattern: { ready: true }, signal: "AVOID", ...overrides };
 }
-test("Sniper uses 5m-6h age, activity, liquidity and rebound gates", () => {
+test("Sniper uses 5m-24h age, activity, liquidity and rebound gates", () => {
   assert.equal(qualifiesMomentumCandidate(candidate()), true);
   const now = Date.now();
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 4 * 60 * 1000 }), now), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 5 * 60 * 1000 }), now), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 29 * 60 * 1000 }), now), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 5 * 60 * 60 * 1000 }), now), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 6 * 60 * 60 * 1000 }), now), true);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 6 * 60 * 60 * 1000 - 1 }), now), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 24 * 60 * 60 * 1000 }), now), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 24 * 60 * 60 * 1000 - 1 }), now), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: 0 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume24h: undefined })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ volume5m: 1499 })), false);
