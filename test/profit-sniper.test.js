@@ -78,7 +78,7 @@ test("age rejection is distinguishable for watchlist tracking", () => {
   assert.ok(getMomentumFailureReasons(candidate({ priceChange5m: 36 })).includes("momentum5m"));
 });
 
-test("cached scans require a 30% pump, 15-30% retrace and 5% rebound with buy flow", () => {
+test("cached scans require a 30% pump, 10-30% retrace and 5% rebound with buy flow", () => {
   const { createMomentumTracker } = require("../profitSniperMomentum");
   const tracker = createMomentumTracker();
   const base = { tokenAddress: "mint-rebound", pairAddress: "pool-rebound" };
@@ -94,6 +94,24 @@ test("cached scans require a 30% pump, 15-30% retrace and 5% rebound with buy fl
   assert.equal(rebound.flowIsApproximation, true);
   const exhausted = sample(150_000, 0.95, 136, 102, -5);
   assert.equal(exhausted.reason, "retrace_over_35_percent");
+});
+
+test("a 10% pullback can qualify but a shallower pullback cannot", () => {
+  const { createMomentumTracker } = require("../profitSniperMomentum");
+  const build = suffix => {
+    const tracker = createMomentumTracker();
+    const base = { tokenAddress: `mint-${suffix}`, pairAddress: `pool-${suffix}` };
+    const observe = (at, price, buys5m, sells5m, priceChange5m = 5) =>
+      tracker.observe({ ...base, priceUsd: price, buys5m, sells5m, priceChange5m }, at);
+    observe(0, 1, 100, 100, 0);
+    observe(30_000, 1.50, 110, 101, 31);
+    observe(60_000, 1.28, 120, 102, -10);
+    return observe;
+  };
+  assert.equal(build("ten")(90_000, 1.349, 135, 103, 5).ready, true);
+  const shallow = build("shallow")(90_000, 1.36, 135, 103, 5);
+  assert.equal(shallow.ready, false);
+  assert.equal(shallow.reason, "retrace_below_10_percent");
 });
 
 
