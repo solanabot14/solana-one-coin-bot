@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const SYMBOLS = ['SPY','QQQ','IWM','DIA','AAPL','MSFT','AMZN','GOOGL','META','NVDA','TSLA','AMD','AVGO','MU','INTC','PLTR','COIN','HOOD','UBER','NFLX','SHOP','SOFI','PYPL','CRM','ORCL','JPM','BAC','XOM','WMT','DIS','F','GM','RIVN','NIO','LCID','AAL','DAL','UAL','CCL','NCLH','RCL','SNAP','PINS','RBLX','DKNG','AFRM','XYZ','T','VZ','PFE','C','WFC','CVX','OXY','SLB','CAT','BA','GE','XLF','XLK'];
-const STRATEGY = 'Active intraday opportunity: premarket research from 4am ET (delayed data); dynamic movers/most-active/news discovery up to 180 symbols including baseline stocks/ETFs; daily ATRP 2-6%, same-time historical IEX relative volume >=2x, average SIP daily traded value >=$20m, spread <=0.15%; confirmed breakouts and pullback recoveries; 3 slots; sell 50% at +1.5%, trail remainder 0.75% with cost-adjusted break-even protection; -1.2% initial stop; 60 min max hold; close 10 min before bell. Start $10, grow size 10% after a net winning completed trade, cap $20, reset $10 after loss. Daily loss limit 2.5% of opening equity: liquidate and halt until next trading day; at most one reentry per stock, none after a stop. No entry in first 15 minutes. Local paper only; Alpaca/Benzinga recent news every 5 min, deduplicated and timestamped; news is context, never an automatic buy. BLS/BEA/Fed calendars; pause new entries 5 min before/10 min after high-impact releases and 13:45-15:00 ET on FOMC decision days; stale/incomplete calendars block entries. SEC identity, recent filings and SIC sector proxies; at most 2 positions per sector; SPY relative strength; SEC filing corroboration does not verify sentiment. Planned risk <=0.25% equity per trade before gaps. Sector/news research runs in background; exits remain active.';
+const STRATEGY = 'Active intraday opportunity: premarket research from 4am ET (delayed data); dynamic movers/most-active/news discovery up to 180 symbols including baseline stocks/ETFs; daily ATRP 2-6%, same-time historical IEX relative volume >=2x, average SIP daily traded value >=$20m, spread <=0.15%; confirmed breakouts and pullback recoveries; 3 slots; sell 50% at +1.5%, trail remainder 0.75% with cost-adjusted break-even protection; -1.2% initial stop; 60 min max hold; close 10 min before bell. Start $10, grow size 10% after a net winning completed trade, cap $20, reset $10 after loss. Daily loss limit 2.5% of opening equity: liquidate and halt until next trading day; at most one reentry per stock, none after a stop. No entry in first 15 minutes. Local paper only; Alpaca/Benzinga recent news every 5 min, deduplicated and timestamped; news is context, never an automatic buy. BLS/BEA/Fed calendars; pause new entries 5 min before/10 min after high-impact releases and 13:45-15:00 ET on FOMC decision days; BEA/Fed calendars must be fresh; expired BLS coverage limits total exposure to one $10 position and keeps known event pauses. Alpaca verifies active listed fractionable assets; warrants/units/preferred/leveraged products excluded. SEC evidence is supplementary; at most 2 positions per known sector and one position with unconfirmed sector; SPY relative strength; SEC filing corroboration does not verify sentiment. Planned risk <=0.25% equity per trade before gaps. Sector/news research runs in background; exits remain active.';
 const SCAN_FILTERS = Object.freeze({minAtrPercent:2,maxAtrPercent:6,minTimeRelativeVolume:2,maxSpreadPercent:0.15,minAverageDailyDollarVolume:20000000,minVolumeSessions:5,volumeLookbackSessions:10});
 const SLIPPAGE = 0.0005, FEE = 0.0001;
 const RISK_RULES=Object.freeze({dailyLossPercent:2.5,maxEntriesPerSymbolPerDay:2,noReentryAfterStop:true,entryDelayMinutes:15});
@@ -193,11 +193,26 @@ function parseFedCalendar(html){
   return events;
 }
 function macroEntryGate(calendar,at){
-  const required=['BLS','BEA','FED'];
-  if(!required.every(name=>calendar?.sources?.[name]?.lastSuccessAt&&Date.parse(calendar.sources[name].lastSuccessAt)<=at&&at-Date.parse(calendar.sources[name].lastSuccessAt)<=(calendar.sources[name].status==='CACHED_OFFICIAL_SNAPSHOT'?7*24:24)*60*MINUTE&&calendar.sources[name].coverageThrough>=dateKey(at)))return {allowed:false,reason:'Economic calendar incomplete or stale; exits remain active'};
+  const sourceFresh=name=>{
+    const s=calendar?.sources?.[name],t=Date.parse(s?.lastSuccessAt);
+    return Number.isFinite(t)&&t<=at&&at-t<=(s.status==='CACHED_OFFICIAL_SNAPSHOT'?7*24:24)*60*MINUTE&&s.coverageThrough>=dateKey(at);
+  };
+  // BEA/Fed must be fresh. An unavailable BLS update reduces exposure rather
+  // than silently disabling the bot indefinitely; known release windows still apply.
+  if(!['BEA','FED'].every(sourceFresh))return {allowed:false,reason:'BEA/Fed economic calendars incomplete or stale; exits remain active'};
   const event=(calendar.events||[]).find(e=>e.highImpact&&at>=Date.parse(e.time)-(e.windowBeforeMinutes??5)*MINUTE&&at<=Date.parse(e.time)+(e.windowAfterMinutes??10)*MINUTE);
-  return event?{allowed:false,reason:'Economic-event entry pause: '+event.title,event}:{allowed:true};
+  if(event)return {allowed:false,reason:'Economic-event entry pause: '+event.title,event};
+  const degraded=!sourceFresh('BLS');
+  return {allowed:true,degraded,warnings:degraded?['BLS updates unavailable or expired: using known events only; maximum one total position and $10 notional until coverage recovers']:[]};
 }
+function assetEligibility(asset,asOf,at){
+  const age=at-Date.parse(asOf);
+  if(!Number.isFinite(age)||age<0||age>24*60*MINUTE)return {allowed:false,reason:'Fresh Alpaca asset identity unavailable'};
+  if(!asset||asset.class!=='us_equity'||asset.status!=='active'||asset.tradable!==true||asset.fractionable!==true||!['NYSE','NASDAQ','AMEX','ARCA','NYSEARCA','BATS'].includes(asset.exchange))return {allowed:false,reason:'Asset is not active, exchange-listed, tradable and fractionable'};
+  if(/\bwarrants?\b|\bright[s]?\b|\bunits?\b|\bpreferred\b|\bdepositary shares?\b|\b[23]x\b|\bleveraged\b|\binverse\b/i.test(asset.name||''))return {allowed:false,reason:'Warrant, unit, preferred or leveraged/inverse product excluded'};
+  return {allowed:true};
+}
+
 function sectorFromSic(sic){
   const n=Number(sic);if(!n)return 'UNKNOWN';
   if(n>=6500&&n<6600||n===6798)return 'REAL_ESTATE';
@@ -240,7 +255,7 @@ function sessionStrength(bars,at,openAt){
 }
 
 function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DATA_DIR || __dirname,'stock-paper-state.json'), env=process.env, io=fs, fetchImpl=globalThis.fetch, now=()=>Date.now(), timers=globalThis}={}) {
-  let symbols=[...new Set([...SYMBOLS,...BENCHMARK_SYMBOLS])],lastDiscoveryAt=-Infinity,discoveryDate=null;
+  let symbols=[...new Set([...SYMBOLS,...BENCHMARK_SYMBOLS])],lastDiscoveryAt=-Infinity,discoveryDate=null,assetMaster={},assetMasterAsOf=null;
   let state={schemaVersion:1,startingBalanceUsd:100,cashUsd:100,openPositions:[],history:[],running:false,lastScanAt:null,lastError:null,rejections:[],closedDates:{},peakEquityUsd:100,maxDrawdownPercent:0};
   if (io.existsSync(file)) state=JSON.parse(io.readFileSync(file,'utf8'));
   state.lastExitAt ||= {};
@@ -379,13 +394,17 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
   }
   function researchGate(symbol,at=now()){
     const macro=macroEntryGate(state.economicCalendar,at);if(!macro.allowed)return macro;
-    const profile=state.secResearch?.profiles?.[symbol];
-    if(!profile||!['AVAILABLE','BENCHMARK_ETF'].includes(profile.status)||!Number.isFinite(Date.parse(profile.checkedAt))||Date.parse(profile.checkedAt)>at||at-Date.parse(profile.checkedAt)>24*60*MINUTE||profile.sector==='UNKNOWN')return {allowed:false,reason:'SEC identity / sector research pending or unavailable'};
-    if(profile.bankruptcyFlag)return {allowed:false,reason:'SEC bankruptcy event: new entries blocked'};
-    const sector=profile.sector;
-    const count=state.openPositions.filter(p=>(p.entryMetrics?.sector||state.secResearch?.profiles?.[p.symbol]?.sector||'UNKNOWN')===sector).length;
+    const asset=state.assetResearch?.assets?.[symbol],identity=assetEligibility(asset,state.assetResearch?.asOf,at);
+    if(!identity.allowed)return identity;
+    const sec=state.secResearch?.profiles?.[symbol];
+    if(sec?.bankruptcyFlag)return {allowed:false,reason:'Known SEC bankruptcy event: new entries blocked'};
+    const secAge=at-Date.parse(sec?.checkedAt),known=sec&&['AVAILABLE','BENCHMARK_ETF'].includes(sec.status)&&Number.isFinite(secAge)&&secAge>=0&&secAge<=24*60*MINUTE&&sec.sector!=='UNKNOWN';
+    const profile=known?sec:{symbol,status:'ALPACA_VERIFIED_SEC_UNAVAILABLE',sector:'UNKNOWN',checkedAt:state.assetResearch.asOf,sectorBasis:'Sector unconfirmed; asset identity confirmed by Alpaca',filings:[]};
+    if(macro.degraded&&state.openPositions.length>=1)return {allowed:false,reason:'Reduced macro coverage: maximum one total position'};
+    const sector=profile.sector,count=state.openPositions.filter(p=>(p.entryMetrics?.sector||state.secResearch?.profiles?.[p.symbol]?.sector||'UNKNOWN')===sector).length;
+    if(sector==='UNKNOWN'&&count>=1)return {allowed:false,reason:'Maximum one position with unconfirmed sector'};
     if(count>=2)return {allowed:false,reason:'Maximum two positions in the same SIC sector proxy'};
-    return {allowed:true,profile};
+    return {allowed:true,profile,asset,macro,secAvailable:known};
   }
 
   async function discover(gen) {
@@ -394,22 +413,32 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
     const errors={},results=await Promise.allSettled([
       request('https://data.alpaca.markets/v1beta1/screener/stocks/movers?top=50'),
       request('https://data.alpaca.markets/v1beta1/screener/stocks/most-actives?top=50&by=volume'),
-      request('https://data.alpaca.markets/v1beta1/news?'+new URLSearchParams({start:new Date(now()-24*60*MINUTE).toISOString(),end:new Date(now()).toISOString(),limit:'50',sort:'desc',include_content:'false'}))
+      request('https://data.alpaca.markets/v1beta1/news?'+new URLSearchParams({start:new Date(now()-24*60*MINUTE).toISOString(),end:new Date(now()).toISOString(),limit:'50',sort:'desc',include_content:'false'})),
+      assetMasterAsOf&&now()-Date.parse(assetMasterAsOf)<6*60*MINUTE?Promise.resolve(null):request('https://paper-api.alpaca.markets/v2/assets?status=active&asset_class=us_equity')
     ]);
     if(gen!==generation||!state.running)return;
-    const names=['movers','mostActive','news'];results.forEach((r,i)=>{if(r.status==='rejected')errors[names[i]]=r.reason.message;});
+    const names=['movers','mostActive','news','assets'];results.forEach((r,i)=>{if(r.status==='rejected')errors[names[i]]=r.reason.message;});
+    if(results[3].status==='fulfilled'&&results[3].value!==null){
+      if(Array.isArray(results[3].value)&&results[3].value.length){assetMaster=Object.fromEntries(results[3].value.filter(a=>typeof a?.symbol==='string').map(a=>[a.symbol,{symbol:a.symbol,name:a.name,class:a.class,status:a.status,exchange:a.exchange,tradable:a.tradable,fractionable:a.fractionable}]));assetMasterAsOf=new Date(now()).toISOString();}
+      else errors.assets='Malformed or empty Alpaca asset master';
+    }
     const movers=results[0].status==='fulfilled'?results[0].value:{},active=results[1].status==='fulfilled'?results[1].value:{};
     const seen=new Set(),news=(results[2].status==='fulfilled'?results[2].value.news||[]:[]).filter(n=>{
       const age=now()-Date.parse(n.created_at),key=String(n.headline||'').toLowerCase().trim();
       if(!key||seen.has(key)||!Number.isFinite(age)||age<0||age>24*60*MINUTE)return false;seen.add(key);return true;
     }).map(n=>({id:n.id,headline:n.headline,url:n.url,source:n.source,publishedAt:n.created_at,symbols:n.symbols||[],verification:'News feed only; primary-source verification pending'}));
-    const discovered=[...(movers.gainers||[]).map(r=>r.symbol),...(active.most_actives||[]).map(r=>r.symbol),...news.flatMap(n=>n.symbols)].filter(v=>typeof v==='string'&&/^[A-Z][A-Z0-9.]{0,9}$/.test(v));
+    const discovered=[...(movers.gainers||[]).map(r=>r.symbol),...(active.most_actives||[]).map(r=>r.symbol),...news.flatMap(n=>n.symbols)].filter(v=>typeof v==='string'&&/^[A-Z][A-Z0-9.]{0,9}$/.test(v)&&(!assetMasterAsOf||assetEligibility(assetMaster[v],assetMasterAsOf,now()).allowed));
     const today=dateKey(now()),prior=discoveryDate===today?symbols:SYMBOLS;
     const next=[...new Set([...state.openPositions.map(p=>p.symbol),...BENCHMARK_SYMBOLS,...discovered,...prior])].slice(0,180);
     if(next.slice().sort().join(',')!==symbols.slice().sort().join(',')){symbols=next;referenceDate=null;lastBaselineAttempt=-Infinity;lastBarsAt=-Infinity;}
     discoveryDate=today;
-    console.info('Stock research discovery: '+JSON.stringify({sources:Object.fromEntries(names.map((name,i)=>[name,results[i].status==='fulfilled'?'AVAILABLE':'UNAVAILABLE'])),symbols:symbols.length,news:news.length,errors}));
-    const copy=structuredClone(state);copy.marketResearch={updatedAt:new Date(now()).toISOString(),symbols,news,errors,sourceStatus:Object.fromEntries(names.map((name,i)=>[name,results[i].status==='fulfilled'?'AVAILABLE':'UNAVAILABLE'])),macroCalendarStatus:macroEntryGate(state.economicCalendar,now()).allowed?'AVAILABLE':'PAUSE_OR_INCOMPLETE',sectorExposureStatus:'SEC_SIC_PROXY',primarySourceVerificationStatus:'SEC_EVENT_CORROBORATION',note:'Screeners may reflect previous session before open; price/volume confirmation remains required. IEX execution quotes and 16-minute delayed SIP premarket research.'};commit(copy);
+    console.info('Stock research discovery: '+JSON.stringify({sources:Object.fromEntries(names.map((name,i)=>[name,results[i].status==='fulfilled'&&!errors[name]?'AVAILABLE':'UNAVAILABLE'])),symbols:symbols.length,news:news.length,errors}));
+    const copy=structuredClone(state);
+    if(assetMasterAsOf)copy.assetResearch={asOf:assetMasterAsOf,source:'Alpaca paper asset master',assets:Object.fromEntries(symbols.filter(s=>assetMaster[s]).map(s=>[s,assetMaster[s]])),error:errors.assets||null};
+    else copy.assetResearch={...(copy.assetResearch||{}),error:errors.assets||'Asset master unavailable'};
+    const eligible=symbols.filter(symbol=>assetEligibility(copy.assetResearch?.assets?.[symbol],copy.assetResearch?.asOf,now()).allowed);
+    console.info('Stock operational universe: '+JSON.stringify({eligibleSymbols:eligible.length,sample:eligible.slice(0,10),assetSourceAsOf:copy.assetResearch?.asOf||null,assetError:copy.assetResearch.error,macroGate:macroEntryGate(copy.economicCalendar,now()),secPolicy:'Supplementary; one unconfirmed-sector position maximum'}));
+    copy.marketResearch={updatedAt:new Date(now()).toISOString(),symbols,news,errors,sourceStatus:Object.fromEntries(names.map((name,i)=>[name,results[i].status==='fulfilled'&&!errors[name]?'AVAILABLE':'UNAVAILABLE'])),macroCalendarStatus:macroEntryGate(state.economicCalendar,now()).allowed?'AVAILABLE':'PAUSE_OR_INCOMPLETE',sectorExposureStatus:'SEC_SIC_PROXY',primarySourceVerificationStatus:'SEC_EVENT_CORROBORATION',note:'Screeners may reflect previous session before open; price/volume confirmation remains required. IEX execution quotes and 16-minute delayed SIP premarket research.'};commit(copy);
   }
   async function refreshBars(openAt) {
     if(now()-lastBarsAt<MINUTE)return;
@@ -460,11 +489,11 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
     }catch(e){if(gen!==generation)return;const s=structuredClone(state);s.premarketAnalysis={...(s.premarketAnalysis||{}),sessionDate:today,lastAttemptAt:new Date(now()).toISOString(),status:'Premarket data unavailable',error:e.message,minimumDelayMinutes:16};commit(s);}
   }
   function buy(symbol,q,signal,metrics) {
-    if(!researchGate(symbol).allowed)return false;
+    const gate=researchGate(symbol);if(!gate.allowed)return false;
     const entriesToday=state.history.filter(r=>r.type==='BUY'&&r.symbol===symbol&&dateKey(Date.parse(r.time))===dateKey(now())).length;
     const stoppedToday=state.history.some(r=>r.type==='SELL'&&r.symbol===symbol&&dateKey(Date.parse(r.time))===dateKey(now())&&(r.exitCategory||exitCategory(r.reason))==='STOP');
     const cooldown=(state.lastExitWon[symbol]?5:15)*MINUTE;
-    const equity=state.cashUsd+state.openPositions.reduce((s,p)=>s+p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE),0),notional=Math.min(state.nextEntryUsd,20,equity*0.2,equity*0.0025/(0.012+2*SLIPPAGE+2*FEE+q.spreadPercent/100));
+    const equity=state.cashUsd+state.openPositions.reduce((s,p)=>s+p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE),0),notional=Math.min(state.nextEntryUsd,gate.macro.degraded?10:20,equity*0.2,equity*0.0025/(0.012+2*SLIPPAGE+2*FEE+q.spreadPercent/100));
     if(!state.running||state.riskSession?.halted||stoppedToday||state.openPositions.length>=3||state.openPositions.some(p=>p.symbol===symbol)||now()-Number(state.lastExitAt[symbol]||0)<cooldown||entriesToday>=2||notional<10||state.cashUsd<notional*(1+FEE))return false;
     const s=structuredClone(state), entryPrice=q.ask*(1+SLIPPAGE), quantity=notional/entryPrice;
     const p={id:randomUUID(),symbol,tokenAddress:symbol,entryPrice,entryReferencePriceUsd:q.mid,entryQuoteTime:q.time,quantity,originalQuantity:quantity,notionalUsd:notional,costBasisUsd:notional*(1+FEE),originalCostBasisUsd:notional*(1+FEE),entryFeeUsd:notional*FEE,highestPrice:q.bid,lowestPrice:q.bid,markPriceUsd:q.bid,lastMarkAt:q.time,maxRunUpPercent:0,maxAdverseExcursionPercent:Math.min(0,(q.bid/entryPrice-1)*100),maxDrawdownPercent:0,excursionCoverage:'Observed bid quotes during 15-second monitoring; not tick-by-tick extremes',entryTime:new Date(now()).toISOString(),strategy:STRATEGY,entryReason:signal,entryMetrics:metrics,partialTaken:false,realizedPnlUsd:0};
@@ -569,7 +598,7 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
         const relativeToMarket=own&&marketStrength?own.returnPercent-marketStrength.returnPercent:null;
         const relativeToSector=own&&sectorStrength?own.returnPercent-sectorStrength.returnPercent:null;
         const news=(state.marketResearch?.news||[]).filter(n=>n.symbols.includes(symbol)).map(n=>corroborateNews(n,gate.profile));
-        const metrics={...a.metrics,news,researchAsOf:state.marketResearch?.updatedAt||null,sector,sectorBasis:gate.profile?.sectorBasis,sectorBenchmark:benchmark,relativeToMarketPercent:relativeToMarket,relativeToSectorPercent:relativeToSector,sectorAboveVwap:sectorStrength?.aboveVwap??null,secEvidence:gate.profile?.filings||[],secCheckedAt:gate.profile?.checkedAt,offeringFlag:gate.profile?.offeringFlag||false,macroGate:macroEntryGate(state.economicCalendar,now()),riskBudgetPercent:0.25};
+        const metrics={...a.metrics,news,researchAsOf:state.marketResearch?.updatedAt||null,sector,sectorBasis:gate.profile?.sectorBasis,sectorBenchmark:benchmark,relativeToMarketPercent:relativeToMarket,relativeToSectorPercent:relativeToSector,sectorAboveVwap:sectorStrength?.aboveVwap??null,secEvidence:gate.profile?.filings||[],secCheckedAt:gate.profile?.checkedAt,offeringFlag:gate.profile?.offeringFlag||false,macroGate:macroEntryGate(state.economicCalendar,now()),riskBudgetPercent:0.25,assetIdentitySource:'Alpaca',assetIdentityAsOf:state.assetResearch?.asOf,assetExchange:gate.asset?.exchange,secAvailable:gate.secAvailable??false,researchWarnings:gate.macro?.warnings||[]};
         const reason=!gate.allowed?gate.reason:relativeToMarket===null?'Fresh SPY benchmark bars unavailable':relativeToMarket< -0.25?'Underperforming SPY by more than 0.25 percentage points':null;
         if(reason){rejections.push({symbol,reason,metrics,time:new Date(now()).toISOString()});continue;}
         const research=state.premarketAnalysis?.sessionDate===dateKey(now())?state.premarketAnalysis.rankings?.find(r=>r.symbol===symbol&&r.longWatchCandidate):null;
@@ -602,7 +631,7 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
     }catch(e){results.push({success:false,error:e.message});}finally{busy=false;}
     return {success:results.every(r=>r.success),results};
   }
-  function getStatus(){return {running:state.running&&configured()&&connection==='CONNECTED',enabled:state.running,mode:'PAPER',tradingStyle:'INTRADAY_OPPORTUNITY',watchlistSize:symbols.length,sessionMode,dailyPnlUsd:state.riskSession?equityOf()-state.riskSession.capitalUsd:dailyPnlUsd,riskRules:RISK_RULES,riskSession:state.riskSession||null,pendingExits:state.openPositions.filter(p=>p.pendingExitReason).map(p=>({symbol:p.symbol,reason:p.pendingExitReason})),connection:configured()?connection:'WAITING_FOR_ALPACA',marketOpen,nextOpen,nextClose,lastScanAt:state.lastScanAt,lastError:state.lastError,premarketLastUpdatedAt:state.premarketAnalysis?.lastUpdatedAt||null,premarketDataDelayMinutes:16,researchStatus:{macroGate:macroEntryGate(state.economicCalendar,now()),secProfiles:Object.keys(state.secResearch?.profiles||{}).length,secError:state.secResearch?.lastError||null},statusMessage:!configured()?'Waiting for Alpaca paper API connection':!state.running?'Stopped':state.lastError||(sessionMode==='PREMARKET_ANALYSIS'?'Analyzing premarket movers; consolidated data delayed at least 16 min; no premarket orders':!marketOpen?'Market closed; next research window starts 4am ET':sessionMode==='CLOSING_SESSION'?'Closing positions before market close':sessionMode==='NO_NEW_ENTRIES'?'Last 30 minutes: exits only':sessionMode==='DAILY_LOSS_PAUSE'?'Daily 2.5% loss limit reached: liquidating; entries halted until next trading day':sessionMode==='OPENING_WAIT'?'First 15 minutes: monitoring only':sessionMode==='EXIT_PENDING_QUOTE'?'Pending liquidation: waiting for fresh quotes':(!macroEntryGate(state.economicCalendar,now()).allowed?macroEntryGate(state.economicCalendar,now()).reason:'Scanning news, sector strength, intraday breakouts and pullback recoveries')),openPositions:state.openPositions.length,maxOpenPositions:3};}
+  function getStatus(){return {running:state.running&&configured()&&connection==='CONNECTED',enabled:state.running,mode:'PAPER',tradingStyle:'INTRADAY_OPPORTUNITY',watchlistSize:symbols.length,sessionMode,dailyPnlUsd:state.riskSession?equityOf()-state.riskSession.capitalUsd:dailyPnlUsd,riskRules:RISK_RULES,riskSession:state.riskSession||null,pendingExits:state.openPositions.filter(p=>p.pendingExitReason).map(p=>({symbol:p.symbol,reason:p.pendingExitReason})),connection:configured()?connection:'WAITING_FOR_ALPACA',marketOpen,nextOpen,nextClose,lastScanAt:state.lastScanAt,lastError:state.lastError,premarketLastUpdatedAt:state.premarketAnalysis?.lastUpdatedAt||null,premarketDataDelayMinutes:16,researchStatus:{assetIdentitySource:'Alpaca',assetDataAsOf:state.assetResearch?.asOf||null,eligibleSymbolCount:symbols.filter(symbol=>assetEligibility(state.assetResearch?.assets?.[symbol],state.assetResearch?.asOf,now()).allowed).length,secPolicy:'Supplementary; missing SEC data allows at most one unconfirmed-sector position',macroGate:macroEntryGate(state.economicCalendar,now()),secProfiles:Object.keys(state.secResearch?.profiles||{}).length,secError:state.secResearch?.lastError||null},statusMessage:!configured()?'Waiting for Alpaca paper API connection':!state.running?'Stopped':state.lastError||(sessionMode==='PREMARKET_ANALYSIS'?'Analyzing premarket movers; consolidated data delayed at least 16 min; no premarket orders':!marketOpen?'Market closed; next research window starts 4am ET':sessionMode==='CLOSING_SESSION'?'Closing positions before market close':sessionMode==='NO_NEW_ENTRIES'?'Last 30 minutes: exits only':sessionMode==='DAILY_LOSS_PAUSE'?'Daily 2.5% loss limit reached: liquidating; entries halted until next trading day':sessionMode==='OPENING_WAIT'?'First 15 minutes: monitoring only':sessionMode==='EXIT_PENDING_QUOTE'?'Pending liquidation: waiting for fresh quotes':(!macroEntryGate(state.economicCalendar,now()).allowed?macroEntryGate(state.economicCalendar,now()).reason:'Scanning news, sector strength, intraday breakouts and pullback recoveries')),openPositions:state.openPositions.length,maxOpenPositions:3};}
   function getDashboardData(){
     const livePositions=state.openPositions.map(p=>{const value=p.quantity*p.markPriceUsd*(1-SLIPPAGE)*(1-FEE),pnl=value-p.costBasisUsd;return {position:p,live:{priceUsd:p.markPriceUsd,currentValue:value,pnl,pnlPercent:pnl/p.costBasisUsd*100,holdTimeMs:now()-Date.parse(p.entryTime)},pnl};});
     const equity=state.cashUsd+livePositions.reduce((s,p)=>s+p.live.currentValue,0),totalPnl=equity-100;
@@ -617,12 +646,12 @@ function createStockBot({file=path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH ||
       trade.maxDrawdownPercent ??= null;trade.maxRunUpPercent ??= null;
     }
     const reports=tradeReports(state.history,completedTrades,now());
-    return {label:'Stock Bot',marketResearch:state.marketResearch||null,economicCalendar:state.economicCalendar||null,macroEntryGate:macroEntryGate(state.economicCalendar,now()),secResearch:state.secResearch||null,sectorExposure:state.openPositions.reduce((out,p)=>{const sector=p.entryMetrics?.sector||state.secResearch?.profiles?.[p.symbol]?.sector||'UNKNOWN';out[sector]=(out[sector]||0)+1;return out;},{}),reports,mode:'PAPER',paperOnly:true,simulation:'Local paper ledger; no broker orders',exchange:'Alpaca IEX market data',strategy:STRATEGY,scannerFilters:SCAN_FILTERS,premarketAnalysis:state.premarketAnalysis||null,scanDiagnostics:state.scanDiagnostics||null,startingBalance:100,startingBalanceUsd:100,cashBalance:state.cashUsd,equity,totalPnl,totalPnlPercent:totalPnl,livePositions,completedTrades,history:state.history,rejections:state.rejections,lastScanAt:state.lastScanAt,lastError:state.lastError,maxDrawdownPercent:state.maxDrawdownPercent,estimatedFeePercentPerSide:FEE*100,estimatedSlippagePercentPerSide:SLIPPAGE*100,nextTradeSizeUsd:state.nextEntryUsd,compoundIncrementPercent:10,maxTradeSizeUsd:20,maxEntriesPerSymbolPerDay:2,maxReentriesPerSymbolPerDay:1,maxOpenPositions:3,...getStatus(),openPositions:livePositions};
+    return {label:'Stock Bot',marketResearch:state.marketResearch||null,assetResearch:state.assetResearch||null,economicCalendar:state.economicCalendar||null,macroEntryGate:macroEntryGate(state.economicCalendar,now()),secResearch:state.secResearch||null,sectorExposure:state.openPositions.reduce((out,p)=>{const sector=p.entryMetrics?.sector||state.secResearch?.profiles?.[p.symbol]?.sector||'UNKNOWN';out[sector]=(out[sector]||0)+1;return out;},{}),reports,mode:'PAPER',paperOnly:true,simulation:'Local paper ledger; no broker orders',exchange:'Alpaca IEX market data',strategy:STRATEGY,scannerFilters:SCAN_FILTERS,premarketAnalysis:state.premarketAnalysis||null,scanDiagnostics:state.scanDiagnostics||null,startingBalance:100,startingBalanceUsd:100,cashBalance:state.cashUsd,equity,totalPnl,totalPnlPercent:totalPnl,livePositions,completedTrades,history:state.history,rejections:state.rejections,lastScanAt:state.lastScanAt,lastError:state.lastError,maxDrawdownPercent:state.maxDrawdownPercent,estimatedFeePercentPerSide:FEE*100,estimatedSlippagePercentPerSide:SLIPPAGE*100,nextTradeSizeUsd:state.nextEntryUsd,compoundIncrementPercent:10,maxTradeSizeUsd:20,maxEntriesPerSymbolPerDay:2,maxReentriesPerSymbolPerDay:1,maxOpenPositions:3,...getStatus(),openPositions:livePositions};
   }
   return {start,stop,tick,closeAll,getStatus,getDashboardData,getState:()=>structuredClone(state)};
 }
 let singleton;
 const instance=()=>singleton||(singleton=createStockBot());
-module.exports={parseEconomicCalendar,parseFedCalendar,macroEntryGate,easternTimestamp,sectorFromSic,secProfile,corroborateNews,sessionStrength,createStockBot,assess,quote,sessionOpen,rankPremarket,buildBaselines,sameTimeVolume,SYMBOLS,STRATEGY,SCAN_FILTERS,RISK_RULES,tradeReports,exitCategory,start:()=>instance().start(),stop:()=>instance().stop(),closeAll:()=>instance().closeAll(),getStatus:()=>instance().getStatus(),getDashboardData:()=>instance().getDashboardData()};
+module.exports={assetEligibility,parseEconomicCalendar,parseFedCalendar,macroEntryGate,easternTimestamp,sectorFromSic,secProfile,corroborateNews,sessionStrength,createStockBot,assess,quote,sessionOpen,rankPremarket,buildBaselines,sameTimeVolume,SYMBOLS,STRATEGY,SCAN_FILTERS,RISK_RULES,tradeReports,exitCategory,start:()=>instance().start(),stop:()=>instance().stop(),closeAll:()=>instance().closeAll(),getStatus:()=>instance().getStatus(),getDashboardData:()=>instance().getDashboardData()};
 
 
