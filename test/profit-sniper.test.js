@@ -78,25 +78,25 @@ test("age rejection is distinguishable for watchlist tracking", () => {
   assert.ok(getMomentumFailureReasons(candidate({ priceChange5m: 36 })).includes("momentum5m"));
 });
 
-test("cached scans require a 30% pump, 10-30% retrace and 5% rebound with buy flow", () => {
+test("cached scans require a pump, pullback and sustained recovery with buy flow", () => {
   const { createMomentumTracker } = require("../profitSniperMomentum");
   const tracker = createMomentumTracker();
-  const base = { tokenAddress: "mint-rebound", pairAddress: "pool-rebound" };
-  const sample = (at, price, buys5m, sells5m, priceChange5m = 5) =>
-    tracker.observe({ ...base, priceUsd: price, buys5m, sells5m, priceChange5m }, at);
-  assert.equal(sample(0, 1, 100, 100, 0).ready, false);
-  assert.equal(sample(30_000, 1.31, 110, 100, 31).pumpSeen, true);
-  sample(60_000, 1.50, 120, 100, 20);
-  assert.equal(sample(90_000, 1.20, 125, 100, 2).ready, false);
-  assert.equal(sample(105_000, 1.24, 130, 101, 3).ready, false);
-  const rebound = sample(120_000, 1.26, 140, 101, 4);
+  const base = { tokenAddress: "mint-rebound", pairAddress: "pool-rebound", liquidityUsd: 20_000 };
+  const sample = (at, price, buys5m, sells5m, volume5m, priceChange5m = 5) =>
+    tracker.observe({ ...base, priceUsd: price, buys5m, sells5m, volume5m, priceChange5m }, at);
+  assert.equal(sample(0, 1, 100, 100, 10_000, 0).ready, false);
+  assert.equal(sample(30_000, 1.31, 110, 100, 11_000, 31).pumpSeen, true);
+  sample(60_000, 1.50, 120, 100, 12_000, 20);
+  assert.equal(sample(90_000, 1.20, 125, 100, 13_000, 2).ready, false);
+  assert.equal(sample(105_000, 1.24, 130, 101, 14_000, 3).ready, false);
+  const rebound = sample(150_000, 1.26, 140, 101, 15_000, 4);
   assert.equal(rebound.ready, true);
   assert.equal(rebound.flowIsApproximation, true);
-  const exhausted = sample(150_000, 0.75, 136, 102, -5);
+  const exhausted = sample(180_000, 0.75, 146, 102, 16_000, -5);
   assert.equal(exhausted.reason, "retrace_over_45_percent");
 });
 
-test("deep pullback route requires a strong sustained recovery", () => {
+test("a deep pullback uses the same adaptive recovery route", () => {
   const { createMomentumTracker } = require("../profitSniperMomentum");
   const tracker = createMomentumTracker();
   const base = { tokenAddress: "mint-deep", pairAddress: "pool-deep", liquidityUsd: 20_000 };
@@ -108,28 +108,28 @@ test("deep pullback route requires a strong sustained recovery", () => {
   sample(90_000, 0.92, 140, 75, 13_000);
   const recovered = sample(120_000, 1.00, 160, 80, 15_000);
   assert.equal(recovered.ready, true);
-  assert.equal(recovered.entryRoute, "deep_pullback");
+  assert.equal(recovered.entryRoute, "confirmed_pullback_recovery");
   assert.equal(recovered.liquidityRetained, true);
   assert.equal(recovered.volumeIncreasing, true);
-  assert.ok(recovered.reboundFromLowPercent >= 12);
 });
 
-test("a 10% pullback can qualify but a shallower pullback cannot", () => {
+test("a small pullback can qualify without a fixed rebound percentage", () => {
   const { createMomentumTracker } = require("../profitSniperMomentum");
   const build = suffix => {
     const tracker = createMomentumTracker();
-    const base = { tokenAddress: `mint-${suffix}`, pairAddress: `pool-${suffix}` };
-    const observe = (at, price, buys5m, sells5m, priceChange5m = 5) =>
-      tracker.observe({ ...base, priceUsd: price, buys5m, sells5m, priceChange5m }, at);
-    observe(0, 1, 100, 100, 0);
-    observe(30_000, 1.50, 110, 101, 31);
-    observe(60_000, 1.28, 120, 102, -10);
+    const base = { tokenAddress: `mint-${suffix}`, pairAddress: `pool-${suffix}`, liquidityUsd: 20_000 };
+    const observe = (at, price, buys5m, sells5m, volume5m, priceChange5m = 5) =>
+      tracker.observe({ ...base, priceUsd: price, buys5m, sells5m, volume5m, priceChange5m }, at);
+    observe(0, 1, 100, 80, 10_000, 0);
+    observe(30_000, 1.50, 110, 82, 11_000, 31);
+    observe(60_000, 1.47, 120, 84, 12_000, -2);
     return observe;
   };
-  assert.equal(build("ten")(90_000, 1.349, 135, 103, 5).ready, true);
-  const shallow = build("shallow")(90_000, 1.36, 135, 103, 5);
-  assert.equal(shallow.ready, false);
-  assert.equal(shallow.reason, "retrace_below_10_percent");
+  const observe = build("small");
+  assert.equal(observe(90_000, 1.48, 135, 86, 13_000, 1).ready, false);
+  const recovered = observe(120_000, 1.49, 150, 88, 14_000, 1);
+  assert.equal(recovered.ready, true);
+  assert.equal(recovered.entryRoute, "confirmed_pullback_recovery");
 });
 
 
