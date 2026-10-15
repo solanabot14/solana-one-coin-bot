@@ -7,11 +7,11 @@ function candidate(overrides = {}) {
     volume5m: 2000, buys5m: 20, sells5m: 10, priceChange5m: 2,
     momentumPattern: { ready: true }, signal: "AVOID", ...overrides };
 }
-test("Sniper uses 10m-6h age, activity, liquidity and rebound gates", () => {
+test("Sniper uses 5m-6h age, activity, liquidity and rebound gates", () => {
   assert.equal(qualifiesMomentumCandidate(candidate()), true);
   const now = Date.now();
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 9 * 60 * 1000 }), now), false);
-  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 10 * 60 * 1000 }), now), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 4 * 60 * 1000 }), now), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 5 * 60 * 1000 }), now), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 29 * 60 * 1000 }), now), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 5 * 60 * 60 * 1000 }), now), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ pairCreatedAt: now - 6 * 60 * 60 * 1000 }), now), true);
@@ -73,7 +73,7 @@ test("exit rules remain unchanged", () => {
 });
 test("age rejection is distinguishable for watchlist tracking", () => {
   assert.ok(getMomentumFailureReasons(candidate({ tokenAddress: "EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J" })).includes("blockedTokenAddress"));
-  const tooYoung = getMomentumFailureReasons(candidate({ pairCreatedAt: Date.now() - 9 * 60 * 1000 }));
+  const tooYoung = getMomentumFailureReasons(candidate({ pairCreatedAt: Date.now() - 4 * 60 * 1000 }));
   assert.deepEqual(tooYoung, ["age"]);
   assert.ok(getMomentumFailureReasons(candidate({ priceChange5m: 36 })).includes("momentum5m"));
 });
