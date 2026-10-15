@@ -57,16 +57,16 @@ function createGeckoTerminalClient({
 		return request;
 	}
 
-	async function getPoolFeed(feed, { signal, duration = "24h" } = {}) {
-		const key = feed === "trending" ? feed + ":" + duration : feed;
+	async function getPoolFeed(feed, { signal, duration = "24h", page = 1 } = {}) {
+		const normalizedPage = Math.max(1, Math.floor(Number(page) || 1));
+		const key = `${feed}:${duration}:${normalizedPage}`;
 		const cached = feedCache.get(key);
 		if (cached && clock() - cached.at < NEW_POOLS_CACHE_MS) return structuredClone(cached.pools);
 		if (feedRequests.has(key)) return structuredClone(await feedRequests.get(key));
 		const endpoint = feed === "new" ? "new_pools"
 			: feed === "trending" ? "trending_pools" : "pools";
-		const params = { include: "base_token,quote_token" };
+		const params = { include: "base_token,quote_token", page: normalizedPage };
 		if (feed === "trending") params.duration = duration;
-		if (feed === "top") params.page = 1;
 		const request = queueRequest({
 			signal,
 			execute: async () => {
@@ -143,3 +143,4 @@ module.exports = {
 	getTrendingSolanaPools: client.getTrendingSolanaPools,
 	getTopSolanaPools: client.getTopSolanaPools
 };
+
