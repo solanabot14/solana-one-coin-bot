@@ -31,13 +31,13 @@ function rig({ freshPair = pair, freshReport = report } = {}) {
   return { guard, advance: ms => { now += ms; }, portfolio: { history: [] } };
 }
 
-test("requires three observations over time and resets after liquidity falls", () => {
+test("requires two observations across 30 seconds and resets after liquidity falls", () => {
   const { guard, advance } = rig();
   assert.equal(guard.observe(candidate).ready, false);
-  advance(30_000);
-  assert.equal(guard.observe(candidate).ready, false);
+  assert.equal(guard.getStatus().waitingCandidates, 1);
   advance(30_000);
   assert.equal(guard.observe(candidate).ready, true);
+  assert.equal(guard.getStatus().waitingCandidates, 0);
   advance(30_000);
   assert.equal(guard.observe({ ...candidate, liquidityUsd: 20_000 }).ready, false);
 });
@@ -49,7 +49,6 @@ test("a pool must be at least 10 minutes old before stability checks can admit i
   const { guard, advance, portfolio } = rig({ freshPair: { ...pair, pairCreatedAt: young.pairCreatedAt } });
   assert.deepEqual(getMomentumFailureReasons(young, start), []);
   guard.observe(young);
-  advance(30_000); guard.observe(young);
   advance(30_000);
   assert.equal(guard.observe(young).ready, true);
   assert.deepEqual(getMomentumFailureReasons(young, start + 60_000), []);
@@ -59,7 +58,6 @@ test("a pool must be at least 10 minutes old before stability checks can admit i
 test("a liquidity dip below the entry floor clears earlier observations", async () => {
   const { guard, advance, portfolio } = rig();
   guard.observe(candidate);
-  advance(30_000); guard.observe(candidate);
   advance(30_000); assert.equal(guard.observe(candidate).ready, true);
   advance(30_000); assert.equal(guard.observe({ ...candidate, liquidityUsd: 100 }).ready, false);
   advance(30_000); assert.equal(guard.observe(candidate).ready, false);
@@ -75,7 +73,6 @@ test("fresh pair and full pool report checks start together", async () => {
     fetchReport: async () => { reportStarted = true; return report; } });
   guard.observe(candidate);
   now += 30_000; guard.observe(candidate);
-  now += 30_000; guard.observe(candidate);
   const validation = guard.validate(candidate, { portfolio: { history: [] } });
   assert.equal(reportStarted, true);
   resolvePair([pair]);
@@ -86,7 +83,6 @@ test("fresh exact-pool quote and pool-specific reserve are required immediately 
   const { guard, advance, portfolio } = rig();
   guard.observe(candidate);
   advance(30_000); guard.observe(candidate);
-  advance(30_000); guard.observe(candidate);
   const valid = await guard.validate(candidate, { portfolio });
   assert.equal(valid.allowed, true);
   assert.equal(valid.coin.pairAddress, "pool-A");
@@ -94,12 +90,10 @@ test("fresh exact-pool quote and pool-specific reserve are required immediately 
 
   const drained = rig({ freshPair: { ...pair, liquidity: { usd: 0.50 } } });
   drained.guard.observe(candidate); drained.advance(30_000); drained.guard.observe(candidate);
-  drained.advance(30_000); drained.guard.observe(candidate);
   assert.equal((await drained.guard.validate(candidate, { portfolio })).allowed, false);
 
   const wrongMint = rig({ freshPair: { ...pair, baseToken: { address: "mint-B" } } });
   wrongMint.guard.observe(candidate); wrongMint.advance(30_000); wrongMint.guard.observe(candidate);
-  wrongMint.advance(30_000); wrongMint.guard.observe(candidate);
   assert.match((await wrongMint.guard.validate(candidate, { portfolio })).reason, /exact pool and mint/);
 });
 
