@@ -1,14 +1,13 @@
 const axios = require("axios");
 const { getMomentumFailureReasons, constants } = require("./profitSniperStrategy");
+const CONFIG = require("./profitSniperConfig");
 
-const MIN_OBSERVATIONS = 3;
-const MIN_OBSERVATION_SPAN_MS = 45_000;
 const MAX_OBSERVATION_GAP_MS = 75_000;
 const MIN_LIQUIDITY_RETENTION = 0.90;
 const MIN_PRICE_RETENTION = 0.90;
 const MAX_PRICE_INCREASE = 1.15;
 const MIN_REPORT_RESERVE_RATIO = 0.75;
-const MIN_LOCKED_PERCENT = 30;
+const MIN_LOCKED_PERCENT = CONFIG.MIN_LP_LOCK_PERCENT;
 
 function hasCatastrophicLoss(history, tokenAddress) {
   return (Array.isArray(history) ? history : []).some(row =>
@@ -19,19 +18,60 @@ function hasCatastrophicLoss(history, tokenAddress) {
   );
 }
 
+function isLiquidityBurned(report, market) {
+  const lp = market?.lp || {};
+  return lp.burned === true || lp.lpBurned === true || market?.lpBurned === true ||
+    report?.lpBurned === true || Number(lp.lpBurnedPct) >= 99.99 ||
+    Number(market?.lpBurnedPct) >= 99.99;
+}
+
+function holderConcentration(report) {
+  const holders = Array.isArray(report?.topHolders) ? report.topHolders
+    : Array.isArray(report?.tokenHolders) ? report.tokenHolders
+    : Array.isArray(report?.holders) ? report.holders : null;
+  if (!holders || holders.length < 1) return { verified: false, top10Percent: null, largestPercent: null };
+  const percentages = holders.slice(0, 10).map(holder => {
+    const raw = holder?.pct ?? holder?.percentage ?? holder?.percent;
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 ? value : NaN;
+  });
+  if (percentages.some(value => !Number.isFinite(value)))
+    return { verified: false, top10Percent: null, largestPercent: null };
+  return { verified: true, top10Percent: percentages.reduce((sum, value) => sum + value, 0),
+    largestPercent: Math.max(...percentages) };
+}
+
+function tokenAuthoritiesRenounced(report) {
+  const token = report?.token || {};
+  const mintAuthority = token.mintAuthority !== undefined ? token.mintAuthority : report?.mintAuthority;
+  const freezeAuthority = token.freezeAuthority !== undefined ? token.freezeAuthority : report?.freezeAuthority;
+  const renounced = value => value === null || value === "" || value === false;
+  return { mintRenounced: renounced(mintAuthority), freezeRenounced: renounced(freezeAuthority) };
+}
+
 function evaluatePoolReport(report, coin, liquidityUsd) {
   if (!report || report.mint !== coin.tokenAddress || report.rugged === true) return "RugCheck report unavailable or flagged";
   const market = (Array.isArray(report.markets) ? report.markets : [])
     .find(item => item.pubkey === coin.pairAddress);
   if (!market) return "RugCheck did not verify the exact pool";
+  const authorities = tokenAuthoritiesRenounced(report);
+  if (!authorities.mintRenounced) return "Mint authority is active or unverified";
+  if (!authorities.freezeRenounced) return "Freeze authority is active or unverified";
+  const holders = holderConcentration(report);
+  if (!holders.verified) return "Top-holder concentration is unavailable";
+  if (holders.top10Percent > CONFIG.MAX_TOP10_HOLDER_PERCENT)
+    return "Top 10 holders exceed 35%";
+  if (holders.largestPercent > CONFIG.MAX_SINGLE_HOLDER_PERCENT)
+    return "A holder exceeds 8%";
   const lp = market.lp || {};
   const reserveUsd = Number(lp.baseUSD) + Number(lp.quoteUSD);
+  const burned = isLiquidityBurned(report, market);
   const lockedPercent = Number(lp.lpLockedPct);
   const lockedUsd = Number(lp.lpLockedUSD);
-  if (!Number.isFinite(reserveUsd) || reserveUsd < constants.MIN_LIQUIDITY_USD ||
+  if (!Number.isFinite(reserveUsd) || reserveUsd < CONFIG.MIN_LIQUIDITY_USD ||
       reserveUsd < liquidityUsd * MIN_REPORT_RESERVE_RATIO) return "RugCheck pool reserve is too low or disagrees with DexScreener";
-  if (!Number.isFinite(lockedPercent) || lockedPercent < MIN_LOCKED_PERCENT ||
-      !Number.isFinite(lockedUsd) || lockedUsd < reserveUsd * MIN_LOCKED_PERCENT / 100 * MIN_REPORT_RESERVE_RATIO) {
+  if (!burned && (!Number.isFinite(lockedPercent) || lockedPercent < MIN_LOCKED_PERCENT || lockedPercent > 100 ||
+      !Number.isFinite(lockedUsd) || lockedUsd < reserveUsd * MIN_LOCKED_PERCENT / 100 * MIN_REPORT_RESERVE_RATIO)) {
     return "Exact pool lock cannot be verified";
   }
   if ((Array.isArray(report.risks) ? report.risks : []).some(risk =>
@@ -72,6 +112,7 @@ function createSniperEntryGuard({
   )).data
 } = {}) {
   const observations = new Map();
+  let lastSecurityDiagnostics = null;
 
   function observe(coin, now = clock()) {
     if (!coin?.tokenAddress || !coin.pairAddress) return { ready: false, reason: "missing exact pool identity" };
@@ -96,9 +137,28 @@ function createSniperEntryGuard({
     for (const [address, item] of observations) {
       if (now - item.lastAt > 2 * MAX_OBSERVATION_GAP_MS) observations.delete(address);
     }
-    const ready = next.count >= MIN_OBSERVATIONS && now - next.firstAt >= MIN_OBSERVATION_SPAN_MS;
+    const ready = next.count >= CONFIG.MIN_STABLE_POOL_OBSERVATIONS && now - next.firstAt >= CONFIG.MIN_STABLE_POOL_SPAN_MS;
     return { ready, reason: reset && previous ? "liquidity or price fell during observation" :
       ready ? null : "waiting for stable pool observations", observations: next.count };
+  }
+
+  function getStatus(now = clock()) {
+    const waiting = [];
+    for (const [key, item] of observations) {
+      const waitedMs = Math.max(0, now - item.firstAt);
+      if (item.count < CONFIG.MIN_STABLE_POOL_OBSERVATIONS ||
+          waitedMs < CONFIG.MIN_STABLE_POOL_SPAN_MS) {
+        const [tokenAddress, pairAddress] = key.split(":");
+        waiting.push({ tokenAddress, pairAddress, observations: item.count, waitedMs });
+      }
+    }
+    return {
+      requiredObservations: CONFIG.MIN_STABLE_POOL_OBSERVATIONS,
+      minimumSpanMs: CONFIG.MIN_STABLE_POOL_SPAN_MS,
+      waitingCandidates: waiting.length,
+      longestWaitMs: waiting.reduce((longest, item) => Math.max(longest, item.waitedMs), 0),
+      candidates: waiting
+    };
   }
 
   async function validate(coin, { signal, portfolio } = {}) {
@@ -106,10 +166,10 @@ function createSniperEntryGuard({
       return { allowed: false, reason: "previous catastrophic loss for this mint" };
     }
     const observed = observations.get(coin?.tokenAddress + ":" + coin?.pairAddress);
-    if (!observed || observed.count < MIN_OBSERVATIONS ||
-        clock() - observed.firstAt < MIN_OBSERVATION_SPAN_MS ||
+    if (!observed || observed.count < CONFIG.MIN_STABLE_POOL_OBSERVATIONS ||
+        clock() - observed.firstAt < CONFIG.MIN_STABLE_POOL_SPAN_MS ||
         clock() - observed.lastAt > MAX_OBSERVATION_GAP_MS) {
-      return { allowed: false, reason: "exact pool did not hold liquidity across three scans" };
+      return { allowed: false, reason: "exact pool did not hold liquidity across two scans" };
     }
     const [pairs, report] = await Promise.all([
       fetchPair(coin.pairAddress, signal), fetchReport(coin.tokenAddress, signal)
@@ -129,13 +189,25 @@ function createSniperEntryGuard({
         price > Number(coin.priceUsd) * MAX_PRICE_INCREASE) {
       return { allowed: false, reason: "pool liquidity or price changed before purchase" };
     }
+    const holders = holderConcentration(report);
+    const authorities = tokenAuthoritiesRenounced(report);
+    lastSecurityDiagnostics = {
+      tokenAddress: coin.tokenAddress,
+      pairAddress: coin.pairAddress,
+      checkedAt: new Date(clock()).toISOString(),
+      top10HoldersPercent: holders.top10Percent,
+      largestHolderPercent: holders.largestPercent,
+      holderConcentrationVerified: holders.verified,
+      mintAuthorityRenounced: authorities.mintRenounced,
+      freezeAuthorityRenounced: authorities.freezeRenounced
+    };
     const poolRisk = evaluatePoolReport(report, coin, liquidity);
     if (poolRisk) return { allowed: false, reason: poolRisk };
     return { allowed: true, coin: { ...fresh,
       reasons: [...(coin.reasons || []), "Fresh exact-pool quote and RugCheck pool reserve verified immediately before paper entry"] } };
   }
 
-  return { observe, validate };
+  return { observe, validate, getStatus, getSecurityDiagnostics: () => lastSecurityDiagnostics };
 }
 
-module.exports = { createSniperEntryGuard, hasCatastrophicLoss, evaluatePoolReport };
+module.exports = { createSniperEntryGuard, hasCatastrophicLoss, evaluatePoolReport, holderConcentration, tokenAuthoritiesRenounced, isLiquidityBurned };
