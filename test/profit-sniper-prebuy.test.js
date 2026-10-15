@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createEntryGuard, poolLock } = require("../profitSniperPrebuy");
 const coin = { tokenAddress: "mint-A", pairAddress: "pool-A", symbol: "TEST", priceUsd: 0.5,
-  pairCreatedAt: 1800000000000 - 15 * 60 * 1000, liquidityUsd: 30000,
+  pairCreatedAt: 1800000000000 - 15 * 60 * 1000, liquidityUsd: 25000,
   volume5m: 2000, buys5m: 40, sells5m: 10, priceChange5m: 2,
   momentumPattern: { ready: true } };
 const now = 1800000000000;
