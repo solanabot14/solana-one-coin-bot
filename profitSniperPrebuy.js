@@ -85,6 +85,7 @@ function createEntryGuard({
       volume5m: number(p.volume?.m5), buys5m: number(p.txns?.m5?.buys),
       sells5m: number(p.txns?.m5?.sells), priceChange5m: number(p.priceChange?.m5),
       priceChange1h: number(p.priceChange?.h1), priceChange24h: number(p.priceChange?.h24),
+      momentumPattern: coin.momentumPattern,
       sampledAt: response.sampledAt };
     if (!(q.priceUsd > 0) || !Number.isFinite(q.priceUsd)) throw new Error("INVALID_PRICE");
     const failures = getMomentumFailureReasons(q, clock());
