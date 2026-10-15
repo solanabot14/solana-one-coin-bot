@@ -9,6 +9,7 @@ const strategy = require("./profitSniperStrategy");
 const CONFIG = require("./profitSniperConfig");
 const { createMomentumTracker } = require("./profitSniperMomentum");
 const { createSniperEntryGuard } = require("./profitSniperEntryGuard");
+const { WINDOW_MS, buildProfitSniper48h } = require("./profitSniperAnalytics");
 const { constants } = strategy;
 const { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_24H_USD, MAX_VOLUME_TO_LIQUIDITY, MIN_VOLUME_5M_USD,
   MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M, MIN_MOMENTUM_5M, MAX_MOMENTUM_5M,
@@ -48,7 +49,25 @@ const entryGuard = createSniperEntryGuard();
 const momentumTracker = createMomentumTracker();
 const ageWatchlist = new Map();
 const cumulativeRejectionCounts = {};
+const TELEMETRY_PATH = statePath("profitSniperTelemetry48h.json");
+let rejectionEvents48h = [];
+try {
+  const saved = JSON.parse(fs.readFileSync(TELEMETRY_PATH, "utf8"));
+  rejectionEvents48h = Array.isArray(saved?.rejectionEvents) ? saved.rejectionEvents : [];
+} catch {}
 let ageWatchlistRechecks = 0;
+
+function recordRejections(now, counts) {
+  rejectionEvents48h.push({ at: now, counts: { ...counts } });
+  rejectionEvents48h = rejectionEvents48h.filter(event => Number(event.at) >= now - WINDOW_MS);
+  try {
+    const temporary = TELEMETRY_PATH + ".tmp";
+    fs.writeFileSync(temporary, JSON.stringify({ updatedAt: new Date(now).toISOString(), rejectionEvents: rejectionEvents48h }));
+    fs.renameSync(temporary, TELEMETRY_PATH);
+  } catch (error) {
+    console.warn("PROFIT SNIPER TELEMETRY SAVE FAILED | " + error.message);
+  }
+}
 
 async function discoverCandidates(options = {}) {
   const scanned = await poolDiscovery.discoverLaunchCandidates({ ...options, minimumLiquidityUsd: MIN_LIQUIDITY_USD,
@@ -173,6 +192,7 @@ async function discoverCandidates(options = {}) {
 
   const qualified = selectUniqueMintCandidates(entries
     .sort((a, b) => Number(b.score || 0) - Number(a.score || 0) || Number(b.volume5m || 0) - Number(a.volume5m || 0)));
+  recordRejections(now, rejectedGates);
   const scanState = poolDiscovery.getScanDiagnostics();
   lastScanDiagnostics = {
     state: "scan_complete",
@@ -283,6 +303,7 @@ async function closePosition(positionId) {
 }
 
 function getStatus() {
+  const portfolio = trader.getPortfolio();
   return {
     running: bot.getBotStatus(),
     error: bot.getLastError(),
@@ -302,6 +323,12 @@ function getStatus() {
       postTp1FloorPercent: PROFIT_FLOOR_AFTER_TP1_PERCENT, compoundRates: COMPOUND_RATES,
       maxOpenPositions: MAX_OPEN_POSITIONS, minimumTradeUsd: MINIMUM_TRADE_USD,
       sizingMode: "compounding" },
+    analytics48h: {
+      ...buildProfitSniper48h(portfolio, rejectionEvents48h),
+      rejectionCoverageStartedAt: rejectionEvents48h.length
+        ? new Date(Math.min(...rejectionEvents48h.map(event => Number(event.at)))).toISOString() : null,
+      unavailableRejectionMetrics: ["noSellRoute", "roundTripLoss", "priceImpact", "failClosed"]
+    },
     scanDiagnostics: lastScanDiagnostics,
     entryDiagnostics: {
       rejectionCounts: { ...cumulativeRejectionCounts },
