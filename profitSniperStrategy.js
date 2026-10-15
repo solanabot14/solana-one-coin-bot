@@ -37,6 +37,9 @@ function getMomentumFailureReasons(coin, now = Date.now()) {
   const transactions5m = buys5m + sells5m;
   const buyRatio = transactions5m > 0 ? buys5m / transactions5m : 0;
   const momentum5m = Number(coin.priceChange5m);
+  const confirmedPullbackRecovery = coin.momentumPattern?.ready === true &&
+    coin.momentumPattern?.pullbackObserved === true &&
+    coin.momentumPattern?.entryRoute === "confirmed_pullback_recovery";
 
   const ageValid = Number.isFinite(createdAt) && ageMs >= MIN_PAIR_AGE_MS && ageMs <= MAX_PAIR_AGE_MS;
   if (!ageValid) failures.push("age");
@@ -45,7 +48,8 @@ function getMomentumFailureReasons(coin, now = Date.now()) {
   if (!Number.isFinite(transactions5m) || transactions5m < MIN_TRANSACTIONS_5M) failures.push("transactions5m");
   const buySellRatio = sells5m > 0 ? buys5m / sells5m : (buys5m > 0 ? Infinity : 0);
   if (buyRatio < MIN_BUY_RATIO_5M || buySellRatio < MIN_BUY_SELL_RATIO_5M) failures.push("buyRatio5m");
-  if (!Number.isFinite(momentum5m) || momentum5m > MAX_MOMENTUM_5M) failures.push("momentum5m");
+  if (!Number.isFinite(momentum5m) ||
+      (momentum5m > MAX_MOMENTUM_5M && !confirmedPullbackRecovery)) failures.push("momentum5m");
   if (ageValid && coin.momentumPattern?.ready !== true)
     failures.push(coin.momentumPattern?.reason === "retrace_over_45_percent" ? "retraceOver45Percent" : "momentumPattern");
   if (!coin.tokenAddress) failures.push("tokenAddress");

@@ -27,6 +27,9 @@ test("Sniper uses 5m-6h age, activity, liquidity and rebound gates", () => {
   assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 29, sells5m: 0 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 30, sells5m: 0 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 36 })), false);
+  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 80,
+    momentumPattern: { ready: true, pullbackObserved: true,
+      entryRoute: "confirmed_pullback_recovery" } })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ momentumPattern: { ready: false } })), false);
   assert.equal(constants.MIN_LIQUIDITY_USD, 8000);
   assert.equal(constants.MIN_VOLUME_5M_USD, 1500);
@@ -76,6 +79,9 @@ test("age rejection is distinguishable for watchlist tracking", () => {
   const tooYoung = getMomentumFailureReasons(candidate({ pairCreatedAt: Date.now() - 4 * 60 * 1000 }));
   assert.deepEqual(tooYoung, ["age"]);
   assert.ok(getMomentumFailureReasons(candidate({ priceChange5m: 36 })).includes("momentum5m"));
+  assert.ok(!getMomentumFailureReasons(candidate({ priceChange5m: 80,
+    momentumPattern: { ready: true, pullbackObserved: true,
+      entryRoute: "confirmed_pullback_recovery" } })).includes("momentum5m"));
 });
 
 test("cached scans require a pump, pullback and sustained recovery with buy flow", () => {

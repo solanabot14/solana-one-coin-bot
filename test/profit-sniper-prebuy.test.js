@@ -68,8 +68,12 @@ test("exact 20% liquidity drop remains eligible", async () => {
   const { guard } = fixture({ first: pair({ liquidity: 25000 }), final: pair({ liquidity: 20000 }), lockReport: report({ liquidity: 20000 }) });
   assert.equal((await guard.prepareEntry(coin)).allowed, true);
 });
-test("fresh 5m move must remain under the chase cap", async () => {
+test("fresh 5m chase cap is bypassed only for a confirmed pullback recovery", async () => {
   assert.equal((await fixture({ final: pair({ momentum: 36 }) }).guard.prepareEntry(coin)).allowed, false);
+  const confirmed = { ...coin, momentumPattern: { ready: true, pullbackObserved: true,
+    entryRoute: "confirmed_pullback_recovery" } };
+  assert.equal((await fixture({ first: pair({ momentum: 80 }), final: pair({ momentum: 80 }) })
+    .guard.prepareEntry(confirmed)).allowed, true);
   assert.equal((await fixture({ final: pair({ momentum: 30 }) }).guard.prepareEntry(coin)).allowed, true);
 });
 test("missing and insufficient exact-pool lock are rejected below the 30% floor", () => {
@@ -88,3 +92,4 @@ test("stopping during confirmation cancels the candidate", async () => {
   const { guard } = fixture({ onWait: () => controller.abort() });
   assert.equal((await guard.prepareEntry(coin, { signal: controller.signal })).allowed, false);
 });
+
