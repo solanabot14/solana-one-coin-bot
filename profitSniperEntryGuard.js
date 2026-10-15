@@ -2,8 +2,6 @@ const axios = require("axios");
 const { getMomentumFailureReasons, constants } = require("./profitSniperStrategy");
 const CONFIG = require("./profitSniperConfig");
 
-const MIN_OBSERVATIONS = 3;
-const MIN_OBSERVATION_SPAN_MS = 45_000;
 const MAX_OBSERVATION_GAP_MS = 75_000;
 const MIN_LIQUIDITY_RETENTION = 0.90;
 const MIN_PRICE_RETENTION = 0.90;
@@ -139,9 +137,28 @@ function createSniperEntryGuard({
     for (const [address, item] of observations) {
       if (now - item.lastAt > 2 * MAX_OBSERVATION_GAP_MS) observations.delete(address);
     }
-    const ready = next.count >= MIN_OBSERVATIONS && now - next.firstAt >= MIN_OBSERVATION_SPAN_MS;
+    const ready = next.count >= CONFIG.MIN_STABLE_POOL_OBSERVATIONS && now - next.firstAt >= CONFIG.MIN_STABLE_POOL_SPAN_MS;
     return { ready, reason: reset && previous ? "liquidity or price fell during observation" :
       ready ? null : "waiting for stable pool observations", observations: next.count };
+  }
+
+  function getStatus(now = clock()) {
+    const waiting = [];
+    for (const [key, item] of observations) {
+      const waitedMs = Math.max(0, now - item.firstAt);
+      if (item.count < CONFIG.MIN_STABLE_POOL_OBSERVATIONS ||
+          waitedMs < CONFIG.MIN_STABLE_POOL_SPAN_MS) {
+        const [tokenAddress, pairAddress] = key.split(":");
+        waiting.push({ tokenAddress, pairAddress, observations: item.count, waitedMs });
+      }
+    }
+    return {
+      requiredObservations: CONFIG.MIN_STABLE_POOL_OBSERVATIONS,
+      minimumSpanMs: CONFIG.MIN_STABLE_POOL_SPAN_MS,
+      waitingCandidates: waiting.length,
+      longestWaitMs: waiting.reduce((longest, item) => Math.max(longest, item.waitedMs), 0),
+      candidates: waiting
+    };
   }
 
   async function validate(coin, { signal, portfolio } = {}) {
@@ -149,10 +166,10 @@ function createSniperEntryGuard({
       return { allowed: false, reason: "previous catastrophic loss for this mint" };
     }
     const observed = observations.get(coin?.tokenAddress + ":" + coin?.pairAddress);
-    if (!observed || observed.count < MIN_OBSERVATIONS ||
-        clock() - observed.firstAt < MIN_OBSERVATION_SPAN_MS ||
+    if (!observed || observed.count < CONFIG.MIN_STABLE_POOL_OBSERVATIONS ||
+        clock() - observed.firstAt < CONFIG.MIN_STABLE_POOL_SPAN_MS ||
         clock() - observed.lastAt > MAX_OBSERVATION_GAP_MS) {
-      return { allowed: false, reason: "exact pool did not hold liquidity across three scans" };
+      return { allowed: false, reason: "exact pool did not hold liquidity across two scans" };
     }
     const [pairs, report] = await Promise.all([
       fetchPair(coin.pairAddress, signal), fetchReport(coin.tokenAddress, signal)
@@ -190,7 +207,7 @@ function createSniperEntryGuard({
       reasons: [...(coin.reasons || []), "Fresh exact-pool quote and RugCheck pool reserve verified immediately before paper entry"] } };
   }
 
-  return { observe, validate, getSecurityDiagnostics: () => lastSecurityDiagnostics };
+  return { observe, validate, getStatus, getSecurityDiagnostics: () => lastSecurityDiagnostics };
 }
 
 module.exports = { createSniperEntryGuard, hasCatastrophicLoss, evaluatePoolReport, holderConcentration, tokenAuthoritiesRenounced, isLiquidityBurned };
