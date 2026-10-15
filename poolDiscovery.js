@@ -13,6 +13,8 @@ const DEXSCREENER_PAIR_API = "https://api.dexscreener.com/latest/dex/pairs/solan
 const MAX_PAIR_ADDRESSES_PER_REQUEST = 30;
 const MAX_TRACKED_NEW_POOLS = 60;
 const MAX_TRACKED_MATURE_POOLS = 90;
+const MATURE_AGE_BUCKETS_MS = [0, 5 * 60 * 1000, 30 * 60 * 1000,
+  60 * 60 * 1000, 3 * 60 * 60 * 1000, 6 * 60 * 60 * 1000];
 const PAIR_REQUEST_TIMEOUT_MS = 10000;
 const trackedLaunchPools = new Map();
 const trackedMaturePools = new Map();
@@ -171,6 +173,34 @@ function selectTrackedPools(poolDescriptors, now, maxTrackedPools, minimumMature
     .slice(0, maxTrackedPools);
 }
 
+function selectTrackedPoolsAcrossAgeWindow(poolDescriptors, now, maxTrackedPools,
+  ageBuckets = MATURE_AGE_BUCKETS_MS) {
+  const sorted = [...poolDescriptors].sort((a, b) => b.createdAt - a.createdAt);
+  if (!Array.isArray(ageBuckets) || ageBuckets.length < 2) return sorted.slice(0, maxTrackedPools);
+  const selected = [];
+  const selectedAddresses = new Set();
+  const reservePerBucket = Math.max(1, Math.floor(maxTrackedPools / (ageBuckets.length - 1)));
+  for (let index = 0; index < ageBuckets.length - 1; index++) {
+    const minimumAge = ageBuckets[index];
+    const maximumAge = ageBuckets[index + 1];
+    for (const item of sorted) {
+      const age = now - item.createdAt;
+      if (age < minimumAge || age >= maximumAge || selectedAddresses.has(item.poolAddress)) continue;
+      selected.push(item);
+      selectedAddresses.add(item.poolAddress);
+      if (selected.filter(row => {
+        const rowAge = now - row.createdAt;
+        return rowAge >= minimumAge && rowAge < maximumAge;
+      }).length >= reservePerBucket) break;
+    }
+  }
+  for (const item of sorted) {
+    if (selected.length >= maxTrackedPools) break;
+    if (!selectedAddresses.has(item.poolAddress)) selected.push(item);
+  }
+  return selected.slice(0, maxTrackedPools);
+}
+
 async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQUIDITY_USD, minimumVolume24hUsd = MIN_VOLUME_24H_USD,
   includeObservationCandidates = false, includeMaturePools = false, includeTrendingPools = false, maximumPairAgeMs,
   minimumMaturePairAgeMs = 0, maturePoolReserve = 0 } = {}) {
@@ -190,17 +220,26 @@ async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQU
   };
   try {
     const trackedPools = includeMaturePools ? trackedMaturePools : trackedLaunchPools;
-    const feeds = [["GECKOTERMINAL_NEW_POOL", await geckoTerminal.getNewSolanaPools({ signal })]];
-    if (includeTrendingPools || includeMaturePools) {
-      const trending = await geckoTerminal.getTrendingSolanaPools({
-        signal, duration: includeMaturePools ? "24h" : "5m"
-      });
-      feeds.push(["GECKOTERMINAL_TRENDING_POOL", trending]);
-      if (includeMaturePools) {
-        const top = await geckoTerminal.getTopSolanaPools({ signal });
-        feeds.push(["GECKOTERMINAL_TOP_POOL", top]);
-      }
-    }
+    const feedRequests = includeMaturePools ? [
+      ...[1, 2, 3].map(page => ["GECKOTERMINAL_NEW_POOL_PAGE_" + page,
+        () => geckoTerminal.getNewSolanaPools({ signal, page })]),
+      ...["5m", "1h", "6h"].map(duration => ["GECKOTERMINAL_TRENDING_" + duration.toUpperCase(),
+        () => geckoTerminal.getTrendingSolanaPools({ signal, duration })]),
+      ...[1, 2].map(page => ["GECKOTERMINAL_TOP_POOL_PAGE_" + page,
+        () => geckoTerminal.getTopSolanaPools({ signal, page })])
+    ] : [
+      ["GECKOTERMINAL_NEW_POOL", () => geckoTerminal.getNewSolanaPools({ signal })],
+      ...(includeTrendingPools ? [["GECKOTERMINAL_TRENDING_POOL",
+        () => geckoTerminal.getTrendingSolanaPools({ signal, duration: "5m" })]] : [])
+    ];
+    const feedResults = await Promise.allSettled(feedRequests.map(([, request]) => request()));
+    const feeds = [];
+    diagnostics.sourceErrors = [];
+    feedResults.forEach((result, index) => {
+      const source = feedRequests[index][0];
+      if (result.status === "fulfilled") feeds.push([source, result.value]);
+      else diagnostics.sourceErrors.push({ source, error: result.reason?.message || String(result.reason) });
+    });
     diagnostics.poolsReceived = feeds.reduce((sum, [, pools]) => sum + (Array.isArray(pools) ? pools.length : 0), 0);
     for (const [source, pools] of feeds) {
       for (const pool of Array.isArray(pools) ? pools : []) {
@@ -215,8 +254,10 @@ async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQU
     }
     const maxTrackedPools = includeMaturePools ? MAX_TRACKED_MATURE_POOLS : MAX_TRACKED_NEW_POOLS;
     if (trackedPools.size > maxTrackedPools) {
-      const newest = selectTrackedPools(trackedPools.values(), now, maxTrackedPools,
-        minimumMaturePairAgeMs, maturePoolReserve);
+      const newest = includeMaturePools
+        ? selectTrackedPoolsAcrossAgeWindow(trackedPools.values(), now, maxTrackedPools)
+        : selectTrackedPools(trackedPools.values(), now, maxTrackedPools,
+          minimumMaturePairAgeMs, maturePoolReserve);
       trackedPools.clear();
       for (const descriptor of newest) trackedPools.set(descriptor.poolAddress, descriptor);
     }
@@ -271,6 +312,6 @@ async function discoverLaunchCandidates({ signal, minimumLiquidityUsd = MIN_LIQU
 
 
 module.exports = { discoverLaunchCandidates, mapLaunchPair, qualifiesLaunchCandidate, qualifiesPoolObservation,
-  selectTrackedPools, estimateExecutionCosts, getScanDiagnostics: () => lastScanDiagnostics,
+  selectTrackedPools, selectTrackedPoolsAcrossAgeWindow, estimateExecutionCosts, getScanDiagnostics: () => lastScanDiagnostics,
   thresholds: { minimumLiquidityUsd: MIN_LIQUIDITY_USD, minimumVolume24hUsd: MIN_VOLUME_24H_USD, minimumVolume5mUsd: MIN_VOLUME_5M_USD } };
 
