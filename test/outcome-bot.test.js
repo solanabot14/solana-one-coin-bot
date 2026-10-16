@@ -51,7 +51,7 @@ test("rejects movers beyond the 25% chase cap",()=>{
     const c=Array.from({length:13},(_,i)=>({time:first+i*300,open:i===12?100.2:100,low:99.9,high:i===12?102.2:100.2,close:i===12?102:100.05,volume:i===12?1800:1000}));
     const r=bot.assessCandidate("HOT-USD",{last:"102",open:"55",volume:"50000"},c,at);
     assert.equal(r.accepted,false);
-    assert.match(r.reasons.join(" "),/24h gain above \\+25%/);
+    assert.ok(r.reasons.some(reason=>reason.includes("24h gain above +25%")));
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
