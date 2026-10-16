@@ -46,6 +46,8 @@ function estimateExecutionCosts({ amountUsd, liquidityUsd }) {
 
 const { qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit, selectUniqueMintCandidates } = strategy;
 
+let lastEntryDecision = null;
+const finalEntryCounts = { passed: 0, rejected: 0 };
 let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, source: "DexScreener public feeds + live observations + RugCheck" };
 const entryGuard = createSniperEntryGuard();
 const momentumTracker = createMomentumTracker();
@@ -325,12 +327,26 @@ const bot = createBot({
   acceptedSignals: ["ORDER FLOW BUY"],
   requireLiquidityLock: true,
   allowUnknownLiquidityLock: false,
-  useReentryGuards: true,
+  // Sniper already enforces fresh momentum, max attempts and stop-loss bans.
+  // The inherited V3.1 reentry filter imposes a conflicting <4% 5m cap and
+  // another two observations with 25% rolling-volume acceleration.
+  useReentryGuards: false,
   useSimpleCooldown: false,
   exitDecision: chooseExit,
   validateEntry: async (coin, options) => {
-    const stable = await entryGuard.validate(coin, options);
-    return stable.allowed ? prebuy.prepareEntry(stable.coin, options) : stable;
+    let result;
+    try {
+      const stable = await entryGuard.validate(coin, options);
+      result = stable.allowed ? await prebuy.prepareEntry(stable.coin, options) : stable;
+    } catch (error) {
+      result = { allowed: false, reason: error.message || "ENTRY_DATA_UNAVAILABLE" };
+    }
+    finalEntryCounts[result.allowed ? "passed" : "rejected"]++;
+    lastEntryDecision = { checkedAt: new Date().toISOString(), symbol: coin.symbol,
+      tokenAddress: coin.tokenAddress, pairAddress: coin.pairAddress,
+      allowed: !!result.allowed, reason: result.reason || (result.allowed ? "VERIFIED" : "ENTRY_REJECTED") };
+    console.log("PROFIT SNIPER FINAL ENTRY | " + JSON.stringify(lastEntryDecision));
+    return result;
   }
 });
 
@@ -391,6 +407,10 @@ function getStatus() {
     scanDiagnostics: lastScanDiagnostics,
     entryDiagnostics: {
       rejectionCounts: { ...cumulativeRejectionCounts },
+      finalEntryCounts: { ...finalEntryCounts },
+      lastEntryDecision,
+      reentryPolicy: { inheritedV31FilterEnabled: false, maximumTokenAttempts: CONFIG.MAX_TOKEN_ATTEMPTS,
+        stopLossReentryBlocked: true, openMintDuplicatesBlocked: true },
       poolStability: entryGuard.getStatus(),
       ageWatchlistPending: ageWatchlist.size,
       recoveryWatchlistPending: recoveryWatchlist.size(),
