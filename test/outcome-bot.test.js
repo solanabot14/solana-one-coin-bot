@@ -43,14 +43,14 @@ test("80%+ gainers require pullback instead of a raw breakout",()=>{
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
-test("new positions use 40-40-20 exits and a 10% runner trail",async()=>{
+test("new positions use 40-30-30 exits and a fee-cushioned 1.75% runner trail",async()=>{
   const {bot,dir}=fixture();
   try{
     bot.start();
     assert.equal(bot.buy(candidate()).success,true);
     let p=bot.getState().openPositions[0];
-    assert.equal(p.hardStopPercent,7.5);
-    const prices=[p.entryPrice*1.11,p.entryPrice*1.21];
+    assert.equal(p.hardStopPercent,2.0);
+    const prices=[p.entryPrice*1.05,p.entryPrice*1.08];
     bot.stop();
     const saved=bot.getState(); saved.running=true; fs.writeFileSync(path.join(dir,"state.json"),JSON.stringify(saved));
     let ix=0;
@@ -63,7 +63,7 @@ test("new positions use 40-40-20 exits and a 10% runner trail",async()=>{
     p=b.getState().openPositions[0];
     assert.equal(p.tp2Done,true);
     assert.equal(p.runnerTrailActive,true);
-    assert.ok(Math.abs(p.quantity/p.originalQuantity-0.2)<1e-8);
+    assert.ok(Math.abs(p.quantity/p.originalQuantity-0.3)<1e-8);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
