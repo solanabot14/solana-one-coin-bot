@@ -19,6 +19,12 @@ def now():
 def stamp(t):
     return t.astimezone(ET).strftime('%Y-%m-%d')
 
+def entries_feed_allowed(broker):
+    """SIP is production-quality; IEX entries are allowed only for paper tests."""
+    return broker['feed'] == 'sip' or (
+        broker['feed'] == 'iex' and broker['paper'] and broker['allow_iex_entries']
+    )
+
 def load(path='config.toml'):
     with open(path, 'rb') as f:
         c = tomllib.load(f)
