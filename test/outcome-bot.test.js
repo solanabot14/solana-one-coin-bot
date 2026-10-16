@@ -16,9 +16,21 @@ function candidate(productId="SOL-USD",priceUsd=100){
   return {productId,symbol:productId.split("-")[0],priceUsd,dayChangePercent:25,hourChangePercent:3,fiveMinChangePercent:1,volumeUsd:5_000_000,pullbackPercent:3,volumeRatio:1.5,entrySetup:"PULLBACK_RECLAIM",score:100};
 }
 function candles(at){
-  const first=Math.floor(at/300_000)*300-13*300;
-  const closes=[100,102,104,106,108,110,109,108,107.5,108,108.5,108.8,110.5];
-  return closes.map((close,i)=>({time:first+i*300,open:i===12?109.5:close-0.2,low:i===8?106.5:close-0.4,high:i===11?109.2:(i===12?110.7:close+0.3),close,volume:i===12?1300:1000}));
+  const end=Math.floor(at/300_000)*300;
+  const first=end-288*300;
+  const rows=[];
+  for(let i=0;i<288;i++){
+    let close=90+i*(20/287)+Math.sin(i*0.9)*0.18;
+    if(i>=276&&i<280) close=112.5-(i-276)*0.7;
+    if(i>=280&&i<287) close=109.7+(i-280)*0.10;
+    if(i===286) close=110.0;
+    if(i===287) close=110.5;
+    const open= i===287 ? 110.1 : close-0.08;
+    const high= i===276 ? 113 : (i===286 ? 110.35 : (i===287 ? 110.7 : close+0.12));
+    const low= i===278 ? 109.1 : close-0.14;
+    rows.push({time:first+i*300,open,high,low,close,volume:i>=285&&i<287?5000:1000});
+  }
+  return rows;
 }
 
 test("accepts a strong top-gainer pullback reclaim",()=>{
@@ -32,25 +44,25 @@ test("accepts a strong top-gainer pullback reclaim",()=>{
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
-test("80%+ gainers require pullback instead of a raw breakout",()=>{
+test("rejects movers beyond the 25% chase cap",()=>{
   const {bot,dir}=fixture();
   try{
     const at=1_800_000_000_000,first=Math.floor(at/300_000)*300-13*300;
     const c=Array.from({length:13},(_,i)=>({time:first+i*300,open:i===12?100.2:100,low:99.9,high:i===12?102.2:100.2,close:i===12?102:100.05,volume:i===12?1800:1000}));
     const r=bot.assessCandidate("HOT-USD",{last:"102",open:"55",volume:"50000"},c,at);
     assert.equal(r.accepted,false);
-    assert.match(r.reasons.join(" "),/80%\+ gainer/);
+    assert.ok(r.reasons.some(reason=>reason.includes("24h gain above +25%")));
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
-test("new positions use 40-40-20 exits and a 10% runner trail",async()=>{
+test("new positions use 40-30-30 exits and a fee-cushioned 1.75% runner trail",async()=>{
   const {bot,dir}=fixture();
   try{
     bot.start();
     assert.equal(bot.buy(candidate()).success,true);
     let p=bot.getState().openPositions[0];
-    assert.equal(p.hardStopPercent,7.5);
-    const prices=[p.entryPrice*1.11,p.entryPrice*1.21];
+    assert.equal(p.hardStopPercent,2.0);
+    const prices=[p.entryPrice*1.05,p.entryPrice*1.08];
     bot.stop();
     const saved=bot.getState(); saved.running=true; fs.writeFileSync(path.join(dir,"state.json"),JSON.stringify(saved));
     let ix=0;
@@ -63,8 +75,21 @@ test("new positions use 40-40-20 exits and a 10% runner trail",async()=>{
     p=b.getState().openPositions[0];
     assert.equal(p.tp2Done,true);
     assert.equal(p.runnerTrailActive,true);
-    assert.ok(Math.abs(p.quantity/p.originalQuantity-0.2)<1e-8);
+    assert.ok(Math.abs(p.quantity/p.originalQuantity-0.3)<1e-8);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test("stop exits block same-coin re-entry for 60 minutes",()=>{
+  const {bot,dir}=fixture();
+  try{
+    bot.start();
+    assert.equal(bot.buy(candidate()).success,true);
+    const p=bot.getState().openPositions[0];
+    assert.equal(bot.closePosition(p.id,p.entryPrice*0.98,"HARD STOP TEST").success,true);
+    const retry=bot.buy(candidate());
+    assert.equal(retry.success,false);
+    assert.match(retry.error,/cooldown/);
+  }finally{bot.stop();fs.rmSync(dir,{recursive:true,force:true});}
 });
 
 test("winner compounds only after the whole trade closes",()=>{
