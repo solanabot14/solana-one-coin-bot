@@ -2,7 +2,7 @@ from datetime import datetime,timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock
 import pytest
-from common import ET,Store
+from common import ET,Store,entries_feed_allowed
 from broker import Broker,credentials
 from watchdog import must_flatten
 from macro import parse_cpi,parse_fed
@@ -30,6 +30,15 @@ def test_dated_halt_latch_is_not_watchdog_kill_switch(c,tmp_path):
 def test_live_gate(c):
     c['broker']['paper']=False
     with pytest.raises(ValueError,match='Live mode'): credentials(c)
+
+def test_iex_entry_gate_is_paper_only(c):
+    b=c['broker']
+    b.update(feed='iex',allow_iex_entries=True,paper=True)
+    assert entries_feed_allowed(b)
+    b['paper']=False
+    assert not entries_feed_allowed(b)
+    b.update(feed='sip',paper=False)
+    assert entries_feed_allowed(b)
 
 def test_missing_keys(c,monkeypatch):
     monkeypatch.delenv('ALPACA_PAPER_API_KEY',raising=False)
