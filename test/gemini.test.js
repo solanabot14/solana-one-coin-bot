@@ -74,6 +74,28 @@ test("Gemini dashboard values an open position from an alternate active pool", a
   assert.equal(mark.pairAddress, "ActivePool");
   assert.match(mark.quoteWarning, /most active current pool/);
 });
+test("Gemini dashboard uses GeckoTerminal when DexScreener has no quote", async () => {
+  const entryTime = new Date("2026-10-16T16:00:00.000Z").toISOString();
+  let fallbackToken;
+  const mark = await getGeminiPositionMark({
+    tokenAddress: "Mint", pairAddress: "SavedPool", quantity: 2,
+    amountInvestedUsd: 10, entryTime
+  }, async () => null, Date.parse(entryTime) + 60_000, async tokenAddress => {
+    fallbackToken = tokenAddress;
+    return {
+      pairAddress: "GeckoPool", priceUsd: 7.5, quoteProvider: "GeckoTerminal",
+      quoteWarning: "DexScreener has no quote for this token; price is from GeckoTerminal's top active pool."
+    };
+  });
+
+  assert.equal(fallbackToken, "Mint");
+  assert.equal(mark.priceUsd, 7.5);
+  assert.equal(mark.currentValueUsd, 15);
+  assert.equal(mark.pnl, 5);
+  assert.equal(mark.pairAddress, "GeckoPool");
+  assert.equal(mark.quoteProvider, "GeckoTerminal");
+  assert.match(mark.quoteWarning, /GeckoTerminal/);
+});
 test("Gemini dashboard keeps equity unavailable when no valid market quote exists", async () => {
   const mark = await getGeminiPositionMark({
     tokenAddress: "Mint", pairAddress: "SavedPool", quantity: 2,
