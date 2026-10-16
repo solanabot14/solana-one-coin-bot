@@ -64,7 +64,7 @@ def parse_cpi_schedule(html, year):
     """Parse BLS's official CPI schedule page as a fallback for blocked ICS."""
     soup = BeautifulSoup(html, 'html.parser')
     dates = set()
-    month_names = '|'.join(calendar.month_abbr[1:])
+    month_names = '|'.join(sorted(set(calendar.month_abbr[1:]) | set(calendar.month_name[1:]), key=len, reverse=True))
     pattern = re.compile(rf'\b(?:{month_names})\.?\s+\d{{1,2}},?\s+\d{{4}}\b', re.I)
     for table in soup.find_all('table'):
         rows = table.find_all('tr')
@@ -82,7 +82,7 @@ def parse_cpi_schedule(html, year):
             if not match:
                 continue
             text = re.sub(r'\s+', ' ', match.group(0)).replace('.', '')
-            for fmt in ('%b %d, %Y', '%b %d %Y'):
+            for fmt in ('%b %d, %Y', '%b %d %Y', '%B %d, %Y', '%B %d %Y'):
                 try:
                     parsed = datetime.strptime(text, fmt).date()
                     if parsed.year == year:
