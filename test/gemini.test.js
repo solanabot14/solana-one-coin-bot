@@ -4,7 +4,8 @@ const os = require("node:os");
 const path = require("node:path");
 const fs = require("node:fs");
 const { evaluateCandidate } = require("../geminiFilter");
-const { extractTop10Concentration } = require("../geminiSources");
+const { extractTop10Concentration, getGeckoTokenQuote } = require("../geminiSources");
+const axios = require("axios");
 const { createGeminiTrader } = require("../geminiTrader");
 const { buildGeminiAnalytics } = require("../geminiAnalytics");
 const { getGeminiPositionMark } = require("../geminiDashboard");
@@ -73,6 +74,57 @@ test("Gemini dashboard values an open position from an alternate active pool", a
   assert.equal(mark.pnlPercent, 20);
   assert.equal(mark.pairAddress, "ActivePool");
   assert.match(mark.quoteWarning, /most active current pool/);
+});
+test("GeckoTerminal maps the requested token's active pool price", async () => {
+  const originalGet = axios.get;
+  let request;
+  axios.get = async (url, options) => {
+    request = { url, options };
+    return { data: { data: [{
+      id: "solana_GeckoPool",
+      attributes: {
+        address: "GeckoPool", base_token_price_usd: "7.5",
+        quote_token_price_usd: "1", reserve_in_usd: "1000",
+        volume_usd: { h24: "500" }
+      },
+      relationships: {
+        base_token: { data: { id: "solana_GeckoMint" } },
+        quote_token: { data: { id: "solana_SOL" } }
+      }
+    }] } };
+  };
+  try {
+    const quote = await getGeckoTokenQuote("GeckoMint");
+    assert.match(request.url, /\/networks\/solana\/tokens\/GeckoMint\/pools$/);
+    assert.equal(request.options.params.include, "base_token,quote_token");
+    assert.equal(quote.priceUsd, 7.5);
+    assert.equal(quote.pairAddress, "GeckoPool");
+    assert.equal(quote.quoteProvider, "GeckoTerminal");
+  } finally {
+    axios.get = originalGet;
+  }
+});
+test("Gemini dashboard uses GeckoTerminal when DexScreener has no quote", async () => {
+  const entryTime = new Date("2026-10-16T16:00:00.000Z").toISOString();
+  let fallbackToken;
+  const mark = await getGeminiPositionMark({
+    tokenAddress: "Mint", pairAddress: "SavedPool", quantity: 2,
+    amountInvestedUsd: 10, entryTime
+  }, async () => null, Date.parse(entryTime) + 60_000, async tokenAddress => {
+    fallbackToken = tokenAddress;
+    return {
+      pairAddress: "GeckoPool", priceUsd: 7.5, quoteProvider: "GeckoTerminal",
+      quoteWarning: "DexScreener has no quote for this token; price is from GeckoTerminal's highest-liquidity pool."
+    };
+  });
+
+  assert.equal(fallbackToken, "Mint");
+  assert.equal(mark.priceUsd, 7.5);
+  assert.equal(mark.currentValueUsd, 15);
+  assert.equal(mark.pnl, 5);
+  assert.equal(mark.pairAddress, "GeckoPool");
+  assert.equal(mark.quoteProvider, "GeckoTerminal");
+  assert.match(mark.quoteWarning, /GeckoTerminal/);
 });
 test("Gemini dashboard keeps equity unavailable when no valid market quote exists", async () => {
   const mark = await getGeminiPositionMark({
