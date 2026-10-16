@@ -280,15 +280,27 @@
   function tradesForRange() { return allTrades.filter(function(t){return inRange(t,state.range);}); }
   function liveCount() { return comparisonSystems().reduce(function(s,x){return s+(Array.isArray(x.positions)?x.positions.length:0);},0); }
   function sumKnown(values) { return values.every(function(x){return n(x)!==null;})?values.reduce(function(s,x){return s+Number(x);},0):null; }
-  function unrealizedTotal() { return sumKnown(comparisonSystems().map(function(s){var positions=Array.isArray(s.positions)?s.positions:[];if(!positions.length)return 0;return sumKnown(positions.map(function(p){return n(p.live&&p.live.pnl!==undefined?p.live.pnl:p.pnl);}));})); }
+  function sumAvailable(values) { var known=values.map(n).filter(function(x){return x!==null;});return known.length?known.reduce(function(s,x){return s+x;},0):null; }
+  function positionPnl(system) { var positions=Array.isArray(system.positions)?system.positions:[];if(!positions.length)return 0;return sumKnown(positions.map(function(p){return n(p.live&&p.live.pnl!==undefined?p.live.pnl:p.pnl);})); }
+  function unrealizedTotal() { return sumKnown(comparisonSystems().map(positionPnl)); }
 
   function renderHome() {
     var rangeTrades=tradesForRange(), m=metrics(rangeTrades);
-    var equity=sumKnown(comparisonSystems().map(function(s){return s.equity;}));
+    var portfolioSystems=comparisonSystems();
+    var equityValues=portfolioSystems.map(function(s){return n(s.equity);});
+    var equity=sumKnown(equityValues);
+    var missingEquity=portfolioSystems.filter(function(s){return n(s.equity)===null;}).map(function(s){return s.label||s.name;});
+    var equityPartial=sumAvailable(equityValues);
+    var equityValue=missingEquity.length?(equityPartial===null?'Not recorded':money(equityPartial)+' partial'):money(equity);
+    var equitySubtitle=missingEquity.length?'Known marked value; current quote/data missing for: '+missingEquity.join(', '):'Current marked value across connected accounts';
     var realized=realizedTotal(allRealizedEvents);
-    var unrealized=unrealizedTotal();
-    var totalPnl=sumKnown(comparisonSystems().map(function(s){return s.totalPnl;}));
-    var starting=sumKnown(comparisonSystems().map(function(s){return n(s.account.startingBalance)||null;}));
+    var unrealizedValues=portfolioSystems.map(positionPnl);
+    var unrealized=sumKnown(unrealizedValues);
+    var missingUnrealized=portfolioSystems.filter(function(s){return positionPnl(s)===null;}).map(function(s){return s.label||s.name;});
+    var unrealizedValue=missingUnrealized.length?(sumAvailable(unrealizedValues)===null?'Not recorded':money(sumAvailable(unrealizedValues))+' partial'):money(unrealized);
+    var unrealizedSubtitle=missingUnrealized.length?'Known open-position P&L; current quote/data missing for: '+missingUnrealized.join(', '):'Open positions';
+    var totalPnl=sumKnown(portfolioSystems.map(function(s){return s.totalPnl;}));
+    var starting=sumKnown(portfolioSystems.map(function(s){return n(s.account.startingBalance)||null;}));
     var ret=starting&&totalPnl!==null?totalPnl/starting*100:null;
     var activeBots=systems.filter(function(s){return s.running;}).length;
     var sw=state.swarm||{}, slots=Array.isArray(sw.slots)?sw.slots:[];
@@ -299,10 +311,10 @@
     var dayLimit=state.range==='1D'?1:state.range==='7D'?7:state.range==='30D'?30:state.range==='90D'?90:100000;
     var systemRows=comparisonSystems().map(systemRow);
     var kpis=[
-      kpi('TOTAL EQUITY',money(equity),'Current marked value across connected accounts','neutral',true),
+      kpi('TOTAL EQUITY',equityValue,equitySubtitle,'neutral',true),
       kpi("TODAY'S P&L",money(todayPnl(allRealizedEvents)),'Realized sale events, Puerto Rico time',signClass(todayPnl(allRealizedEvents))),
       kpi('TOTAL REALIZED P&L',money(realized),'Recorded sale events, including partial exits',signClass(realized)),
-      kpi('UNREALIZED P&L',money(unrealized),'Open positions',signClass(unrealized)),
+      kpi('UNREALIZED P&L',unrealizedValue,unrealizedSubtitle,signClass(unrealized)),
       kpi('ALL-TIME P&L',money(totalPnl),'Current equity less starting balance',signClass(totalPnl)),
       kpi('UNRECONCILED',money(totalPnl!==null&&realized!==null&&unrealized!==null?totalPnl-realized-unrealized:null),'All-time P&L minus realized and open P&L',signClass(totalPnl!==null&&realized!==null&&unrealized!==null?totalPnl-realized-unrealized:null)),
       kpi('RETURN',pct(ret),'Across connected accounts',signClass(ret)),
