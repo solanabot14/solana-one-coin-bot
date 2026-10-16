@@ -66,24 +66,30 @@ def parse_cpi_schedule(html, year):
     dates = set()
     month_names = '|'.join(calendar.month_abbr[1:])
     pattern = re.compile(rf'\\b(?:{month_names})\\.?\\s+\\d{{1,2}},?\\s+\\d{{4}}\\b', re.I)
-    for row in soup.select('tr'):
-        cells = [cell.get_text(' ', strip=True) for cell in row.find_all(['th', 'td'])]
-        if not cells or not any('consumer price index' in cell.lower() for cell in cells):
+    for table in soup.find_all('table'):
+        rows = table.find_all('tr')
+        header = [cell.get_text(' ', strip=True).lower()
+                  for cell in rows[0].find_all(['th', 'td'])] if rows else []
+        if not all(any(label in cell for cell in header)
+                   for label in ('reference month', 'release date', 'release time')):
             continue
-        for cell in cells:
-            match = pattern.search(cell)
+        release_idx = next(i for i, cell in enumerate(header) if 'release date' in cell)
+        for row in rows[1:]:
+            cells = [cell.get_text(' ', strip=True) for cell in row.find_all(['th', 'td'])]
+            if release_idx >= len(cells):
+                continue
+            match = pattern.search(cells[release_idx])
             if not match:
                 continue
             text = re.sub(r'\\s+', ' ', match.group(0)).replace('.', '')
-            parsed = None
             for fmt in ('%b %d, %Y', '%b %d %Y'):
                 try:
                     parsed = datetime.strptime(text, fmt).date()
+                    if parsed.year == year:
+                        dates.add(parsed.isoformat())
                     break
                 except ValueError:
                     pass
-            if parsed and parsed.year == year:
-                dates.add(parsed.isoformat())
     if len(dates) < 6:
         raise ValueError('Incomplete BLS CPI schedule')
     return dates
