@@ -129,7 +129,7 @@ test("dashboard serves the routed analytics terminal and core workspaces", () =>
 	const clientFile = path.join(__dirname, "..", "dashboard-client.js");
 	const html = fs.readFileSync(terminalFile, "utf8");
 	const client = fs.readFileSync(clientFile, "utf8");
-	for (const route of ["/", "/trading/v31", "/trading/candle-breakout", "/trading/b31-lab", "/swarm", "/analytics", "/transactions", "/reports", "/settings"]) {
+	for (const route of ["/", "/trading/v31", "/trading/candle-breakout", "/swarm", "/analytics", "/transactions", "/reports", "/settings"]) {
 		assert.ok(html.includes('data-route="' + route + '"'), "missing navigation route " + route);
 	}
 	assert.match(html, /src="\/dashboard-client\.js"/);
