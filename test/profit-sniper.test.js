@@ -46,8 +46,8 @@ test("same ticker is distinguished by mint and duplicate pools collapse to the b
   assert.equal(selected.find(x => x.tokenAddress === "mint-A").pairAddress, "pool-A2");
   assert.equal(selected.find(x => x.tokenAddress === "mint-B").pairAddress, "pool-B");
 });
-test("trade sizing compounds 10%, 12.5%, then 15%, repeating with a $10 minimum", () => {
-  const expectedRates = [0.10, 0.125, 0.15, 0.10, 0.125];
+test("trade sizing always compounds 10% of capital with a $10 minimum", () => {
+  const expectedRates = [0.10, 0.10, 0.10, 0.10, 0.10];
   for (const [entries, expectedRate] of expectedRates.entries()) {
     const result = getBuySizing({ cashBalance: 200, positions: [],
       history: Array.from({length: entries}, () => ({type: "BUY"})) });
@@ -55,6 +55,10 @@ test("trade sizing compounds 10%, 12.5%, then 15%, repeating with a $10 minimum"
     assert.equal(result.amountInvested, Math.max(10, 200 * expectedRate));
   }
   assert.deepEqual(getBuySizing({ cashBalance: 50, positions: [], history: [] }), { amountInvested: 10, compoundRate: 0.10 });
+  assert.deepEqual(getBuySizing({ cashBalance: 250, positions: [{ amountInvested: 50 }], history: [] }),
+    { amountInvested: 30, compoundRate: 0.10 });
+  assert.deepEqual(getBuySizing({ cashBalance: 400, positions: [], history: [] }),
+    { amountInvested: 40, compoundRate: 0.10 });
 });
 test("exit rules remain unchanged", () => {
   const position = { entryPrice: 100, highestPrice: 100 };
@@ -154,5 +158,6 @@ test("promising pools stay tracked when the rotating discovery feed drops them",
   assert.equal(watchlist.values()[0].directRechecks, 1);
   assert.equal(watchlist.missing(new Set(), 601_001).length, 0);
 });
+
 
 

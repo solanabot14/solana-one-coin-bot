@@ -16,7 +16,7 @@ const TAKE_PROFIT_2_SELL_PERCENT = (40 / 60) * 100;
 const TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT = 80;
 const TRAILING_STOP_PERCENT = 12;
 const PROFIT_FLOOR_AFTER_TP1_PERCENT = 0;
-const COMPOUND_RATES = [0.10, 0.125, 0.15];
+const COMPOUND_RATES = [0.10];
 const MINIMUM_TRADE_USD = 10;
 
 function getMomentumFailureReasons(coin, now = Date.now()) {
@@ -75,9 +75,7 @@ function getBuySizing(state = {}) {
   const positions = Array.isArray(state.positions) ? state.positions : (state.position ? [state.position] : []);
   const equity = Number(state.cashBalance || 0) +
     positions.reduce((sum, position) => sum + Number(position.amountInvested || 0), 0);
-  const successfulEntries = (Array.isArray(state.history) ? state.history : [])
-    .filter(row => row && row.type === "BUY").length;
-  const compoundRate = COMPOUND_RATES[successfulEntries % COMPOUND_RATES.length];
+  const compoundRate = COMPOUND_RATES[0];
   return { amountInvested: Math.max(MINIMUM_TRADE_USD, equity * compoundRate), compoundRate };
 }
 
@@ -126,5 +124,6 @@ module.exports = {
   getBuySizing,
   chooseExit
 };
+
 
 
