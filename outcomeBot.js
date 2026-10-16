@@ -115,44 +115,87 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     async function run() { while (true) { const index = next++; if (index >= items.length) return; output[index] = await worker(items[index], index); } }
     await Promise.all(Array.from({length:Math.min(limit,items.length)},run)); return output;
   }
+  function ema(values, period) {
+    if (values.length < period) return null;
+    const alpha = 2 / (period + 1);
+    let value = values.slice(0, period).reduce((sum, n) => sum + n, 0) / period;
+    for (const next of values.slice(period)) value = next * alpha + value * (1 - alpha);
+    return value;
+  }
+  function rsi(values, period = 14) {
+    if (values.length <= period) return null;
+    let gains = 0, losses = 0;
+    for (let i = values.length - period; i < values.length; i++) {
+      const change = values[i] - values[i - 1];
+      if (change > 0) gains += change; else losses -= change;
+    }
+    if (gains === 0 && losses === 0) return 50;
+    if (losses === 0) return 100;
+    return 100 - 100 / (1 + gains / losses);
+  }
   function assessCandidate(productId, stats, candles, at = now()) {
     const last = Number(stats.last), open = Number(stats.open), baseVolume = Number(stats.volume);
     const volumeUsd = last * baseVolume;
     const dayChange = open > 0 ? (last / open - 1) * 100 : 0;
-    const lastClosedBucket = Math.floor(at / 300_000) * 300;
-    const recent = candles.filter(candle => Number(candle.time) < lastClosedBucket).slice(-13);
-    const current = recent[recent.length - 1], previous = recent[recent.length - 2], hourAnchor = recent[0];
+    const closed = candles.filter(c => Number(c.time) < Math.floor(at / 300_000) * 300).slice(-288);
+    const prices = closed.map(c => Number(c.close)).filter(n => n > 0);
+    const current = closed[closed.length - 1], previous = closed[closed.length - 2];
+    const hourAnchor = closed[closed.length - 13];
     const hourChange = hourAnchor && hourAnchor.close > 0 ? (last / hourAnchor.close - 1) * 100 : 0;
     const fiveMinChange = current && current.open > 0 ? (current.close / current.open - 1) * 100 : 0;
-    const priorBars = recent.slice(-7,-1);
-    const priorHigh = priorBars.length ? Math.max(...priorBars.map(c => c.high)) : 0;
-    const pullbackBars = recent.slice(-5,-1);
-    const pullbackLow = pullbackBars.length ? Math.min(...pullbackBars.map(c => c.low)) : 0;
-    const pullbackPercent = priorHigh > 0 ? (priorHigh-pullbackLow)/priorHigh*100 : 0;
-    const recentHigh = recent.length ? Math.max(...recent.map(c => c.high)) : 0;
-    const offHighPercent = recentHigh > 0 ? (recentHigh-last)/recentHigh*100 : 0;
-    const baselineVolumes = recent.slice(-6,-1).map(c => Number(c.volume)||0).sort((a,b)=>a-b);
-    const medianVolume = baselineVolumes.length ? baselineVolumes[Math.floor(baselineVolumes.length/2)] : 0;
-    const volumeRatio = current && medianVolume > 0 ? current.volume / medianVolume : 0;
-    const reclaim = !!(current && previous && current.close > previous.high && current.close > current.open);
-    const pullbackSetup = recent.length >= 13 && pullbackPercent >= 1.0 && pullbackPercent <= 10 && reclaim && fiveMinChange >= 0 && fiveMinChange <= 5 && volumeRatio >= 1.0;
-    const breakoutSetup = recent.length >= 13 && current && priorHigh > 0 && current.close > priorHigh && current.close > current.open && fiveMinChange >= 0.25 && fiveMinChange <= 6 && volumeRatio >= 1.35;
-    const highFlyerRequiresPullback = dayChange > 80;
-    const setup = pullbackSetup ? "PULLBACK_RECLAIM" : (!highFlyerRequiresPullback && breakoutSetup ? "VOLUME_BREAKOUT" : null);
+    const hourlyBars = closed.slice(-12);
+    const localHigh = hourlyBars.length ? Math.max(...hourlyBars.map(c => c.high)) : 0;
+    const pullbackPercent = localHigh > 0 ? Math.max(0, (localHigh - last) / localHigh * 100) : 0;
+    const sessionStart = Math.floor(at / 86_400_000) * 86_400_000 / 1000;
+    const session = closed.filter(c => c.time >= sessionStart);
+    const vwapVolume = session.reduce((sum, c) => sum + (Number(c.volume) || 0), 0);
+    const vwap = vwapVolume > 0 ? session.reduce((sum, c) => sum + ((c.high + c.low + c.close) / 3) * c.volume, 0) / vwapVolume : null;
+    const ema9 = ema(prices, 9), ema21 = ema(prices, 21), rsi5m = rsi(prices, 14);
+    const recent15mVolume = closed.slice(-3).reduce((sum, c) => sum + (Number(c.volume) || 0), 0);
+    const windows = [];
+    for (let i = Math.max(0, closed.length - 288); i + 3 <= closed.length - 3; i += 3) {
+      windows.push(closed.slice(i, i + 3).reduce((sum, c) => sum + (Number(c.volume) || 0), 0));
+    }
+    const average15mVolume = windows.length ? windows.reduce((sum, n) => sum + n, 0) / windows.length : 0;
+    const relativeVolume15m = average15mVolume > 0 ? recent15mVolume / average15mVolume : 0;
+    const priorResistance = closed.length >= 4 ? Math.max(...closed.slice(-4, -1).map(c => c.high)) : 0;
+    const pullbackSetup = !!(closed.length >= 21 && pullbackPercent >= 1 && pullbackPercent <= 2.5 &&
+      current && previous && current.close > previous.high && current.close > current.open &&
+      current.volume <= (average15mVolume / 3 || current.volume));
+    const breakoutSetup = !!(closed.length >= 21 && current && priorResistance > 0 &&
+      current.close > priorResistance && current.close > current.open);
+    const setup = pullbackSetup ? "PULLBACK_RECLAIM" : (breakoutSetup ? "BREAKOUT_RETEST" : null);
+    const recentHigh = closed.length ? Math.max(...closed.slice(-12).map(c => c.high)) : 0;
+    const offHighPercent = recentHigh > 0 ? Math.max(0, (recentHigh - last) / recentHigh * 100) : 0;
     const reasons = [];
     if (!(last > 0 && open > 0)) reasons.push("Price unavailable");
     if (!Number.isFinite(volumeUsd) || volumeUsd < MIN_DAILY_VOLUME_USD) reasons.push("24h USD volume below $5M");
-    if (dayChange < MIN_DAILY_GAIN_PERCENT) reasons.push("24h gain below top-gainer zone (+4%)");
+    if (dayChange < MIN_DAILY_GAIN_PERCENT) reasons.push("24h gain below +4%");
     if (dayChange > MAX_DAILY_GAIN_PERCENT) reasons.push("24h gain above +25% chase limit");
-    if (hourChange < 0.25 || hourChange > 35) reasons.push("1h momentum is weak or blow-off extended");
-    if (recent.length < 13) reasons.push("Not enough closed 5m candles");
-    if (offHighPercent > 10) reasons.push("Price is reversing too far from its recent high");
-    if (!setup) reasons.push(highFlyerRequiresPullback ? "80%+ gainer must pull back and reclaim before entry" : "Waiting for pullback/reclaim or volume breakout");
+    if (closed.length < 288) reasons.push("Insufficient 24h candle history; possible recent listing");
+    if (relativeVolume15m < 3) reasons.push("15m relative volume below 3x");
+    if (!(vwap > 0 && last > vwap)) reasons.push("Price is not above session VWAP");
+    if (!(ema9 > 0 && ema21 > 0 && ema9 > ema21)) reasons.push("5m EMA9 is not above EMA21");
+    if (!(rsi5m !== null && rsi5m < 80)) reasons.push("5m RSI is 80 or higher");
+    if (hourChange <= 0 || hourChange > 25) reasons.push("1h trend is weak or extended");
+    if (!setup) reasons.push("Waiting for a 1%-2.5% pullback reclaim or resistance breakout");
+    if (offHighPercent > 2.5) reasons.push("Price has fallen too far from the local high");
+    const feeAndSlippageRoundTripPercent = (2 * FEE_RATE + 2 * SLIPPAGE_RATE) * 100;
+    if (TP1_PERCENT < feeAndSlippageRoundTripPercent * 3) reasons.push("First target does not clear the 3x round-trip cost hurdle");
     const accepted = reasons.length === 0;
-    const score = accepted ? dayChange*3 + hourChange*1.5 + Math.log10(Math.max(volumeUsd,1))*2 + Math.min(volumeRatio,3)*3 + (setup === "PULLBACK_RECLAIM" ? 4 : 2) : 0;
+    const score = accepted ? dayChange * 2 + hourChange + Math.min(relativeVolume15m, 6) * 3 +
+      (setup === "PULLBACK_RECLAIM" ? 4 : 2) + (last > vwap ? 2 : 0) : 0;
+    const atrBars = closed.slice(-15);
+    const atr = atrBars.length >= 15 ? atrBars.slice(1).reduce((sum, c, i) => {
+      const prev = atrBars[i].close;
+      return sum + Math.max(c.high - c.low, Math.abs(c.high - prev), Math.abs(c.low - prev));
+    }, 0) / 14 : 0;
+    const atrPercent = last > 0 ? atr / last * 100 : 0;
+    const riskPercent = Math.min(2.5, Math.max(1.5, atrPercent * 1.5));
     return { accepted, reasons, candidate:{ productId, symbol:productId.split("-")[0], priceUsd:last, volumeUsd,
       dayChangePercent:dayChange, hourChangePercent:hourChange, fiveMinChangePercent:fiveMinChange, pullbackPercent,
-      pullbackLow, volumeRatio, offHighPercent, entrySetup:setup, riskPercent:HARD_STOP_PERCENT, score, candles:recent } };
+      pullbackLow:Math.min(...hourlyBars.map(c => c.low)), volumeRatio:relativeVolume15m, relativeVolume15m,
+      offHighPercent, vwap, ema9, ema21, rsi5m, atrPercent, entrySetup:setup, riskPercent, score, candles:closed } };
   }
   function recordRejections(rows) {
     if (!rows.length) return;
@@ -165,7 +208,7 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     const next = structuredClone(state); rotateDay(next);
     if (!next.running) return {success:false,error:"Coinbase Bot is stopped"};
     if (next.pausedForDailyLoss) return {success:false,error:"Daily loss limit reached"};
-    if (next.openPositions.length >= MAX_OPEN_POSITIONS) return {success:false,error:"Six position limit reached"};
+    if (next.openPositions.length >= MAX_OPEN_POSITIONS) return {success:false,error:"Three position limit reached"};
     if (next.openPositions.some(p=>p.productId===candidate.productId)) return {success:false,error:"Coin already has an open position"};
     if (candidate.newsRisk) return {success:false,error:"Recent risk headline: "+candidate.newsRisk.title};
     const notional = Math.min(next.nextEntryUsd,MAX_SIZE_USD,next.cashUsd/(1+FEE_RATE));
@@ -176,7 +219,7 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
       entryPrice,marketEntryPrice:candidate.priceUsd,highestPrice:candidate.priceUsd,quantity,originalQuantity:quantity,
       notionalUsd:notional,costBasisUsd,initialCostBasisUsd:costBasisUsd,remainingCostBasisUsd:costBasisUsd,entryFeeUsd:fee,
       realizedPnlUsd:0,entryTime:new Date(now()).toISOString(),strategyVersion:STRATEGY_VERSION,
-      hardStopPercent:HARD_STOP_PERCENT,stopPriceUsd:entryPrice*(1-HARD_STOP_PERCENT/100),tp1Done:false,tp2Done:false,
+      hardStopPercent:Number(candidate.riskPercent)||HARD_STOP_PERCENT,stopPriceUsd:entryPrice*(1-(Number(candidate.riskPercent)||HARD_STOP_PERCENT)/100),tp1Done:false,tp2Done:false,
       runnerTrailActive:false,markPriceUsd:candidate.priceUsd,
       strategy:"Coinbase Bot · daily top gainers · pullback/reclaim or volume breakout · 40% at +10% · 40% at +20% · final 20% trails 10% · hard stop -7.5% · 24h max",
       entryMetrics:{dayChangePercent:candidate.dayChangePercent,hourChangePercent:candidate.hourChangePercent,fiveMinChangePercent:candidate.fiveMinChangePercent,
@@ -273,7 +316,7 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     p.remainingCostBasisUsd=Number.isFinite(Number(p.remainingCostBasisUsd))?Number(p.remainingCostBasisUsd):Number(p.costBasisUsd);
     p.realizedPnlUsd=Number(p.realizedPnlUsd)||0;p.markPriceUsd=price;if(price>Number(p.highestPrice||0))p.highestPrice=price;commit(next);
     const pnlPercent=(price/p.entryPrice-1)*100;
-    if(pnlPercent<=-HARD_STOP_PERCENT){closePosition(p.id,price,"HARD STOP -2.0%");return;}
+    if(pnlPercent<=-(Number(p.hardStopPercent)||HARD_STOP_PERCENT)){closePosition(p.id,price,"ATR HARD STOP -"+(Number(p.hardStopPercent)||HARD_STOP_PERCENT)+"%");return;}
     current=state.openPositions.find(x=>x.id===snapshot.id);if(!current)return;
     if(!current.tp1Done&&pnlPercent>=TP1_PERCENT){
       sellQuantity(current.id,price,(Number(current.originalQuantity)||current.quantity)*TP1_SELL_FRACTION,"TAKE PROFIT +10% (40%)",{tp1Done:true,stopPriceUsd:current.entryPrice*(1+0.014)});
