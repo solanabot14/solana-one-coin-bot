@@ -101,7 +101,7 @@
   function duration(ms) { var x = n(ms); if (x === null || x < 0) return 'Not recorded'; var m = Math.floor(x / 60000), h = Math.floor(m / 60), d = Math.floor(h / 24); return d ? d + 'd ' + (h % 24) + 'h' : h ? h + 'h ' + (m % 60) + 'm' : m + 'm'; }
   function metric(value, format) { return value === null || value === undefined ? 'Not recorded' : format(value); }
   function request(url, options) {
-    return fetch(url, Object.assign({ cache:'no-store', credentials:'same-origin' }, options || {})).then(function (response) {
+    return fetch(url, Object.assign({ cache:'no-store', credentials:'same-origin', signal:AbortSignal.timeout(25000) }, options || {})).then(function (response) {
       if (!response.ok) {
         return response.json().catch(function () { return {}; }).then(function (payload) {
           throw new Error(payload.error || payload.message || (url + ' returned ' + response.status));
@@ -632,15 +632,18 @@
     else {$('view').innerHTML=pageHead('Page not found','Choose a workspace from the sidebar.');}
   }
 
+  var refreshInFlight = null;
   function loadData() {
-    return Promise.allSettled([request('/api/data'),request('/api/swarm'),request('/api/status')]).then(function(results){
+    if (refreshInFlight) return refreshInFlight;
+    refreshInFlight = Promise.allSettled([request('/api/data'),request('/api/swarm'),request('/api/status')]).then(function(results){
       state.error=null;
       if(results[0].status==='fulfilled')state.api=results[0].value;else state.error='Bot history feed unavailable.';
       if(results[1].status==='fulfilled')state.swarm=results[1].value;else state.error=(state.error?state.error+' ':'')+'Swarm feed unavailable.';
       if(results[2].status==='fulfilled')state.status=results[2].value;else state.error=(state.error?state.error+' ':'')+'V3.1 status unavailable.';
       $('lastUpdated').textContent='Updated '+new Intl.DateTimeFormat('en-US',{timeZone:'America/Puerto_Rico',hour:'2-digit',minute:'2-digit'}).format(new Date());
       render();
-    });
+    }).finally(function () { refreshInFlight = null; });
+    return refreshInFlight;
   }
 
   function openTransaction(index) {
@@ -752,7 +755,9 @@
   $('menuToggle').addEventListener('click',function(){$('sidebar').classList.toggle('open');});
   $('drawerBackdrop').addEventListener('click',closeDrawer);
   loadData();
-  setInterval(function(){if(state.autoRefresh!==false)loadData();},30000);
+  document.addEventListener('visibilitychange',function(){if(!document.hidden && state.autoRefresh!==false)loadData();});
+  window.addEventListener('online',function(){if(state.autoRefresh!==false)loadData();});
+  setInterval(function(){if(!document.hidden && state.autoRefresh!==false)loadData();},30000);
 })();
 
 
