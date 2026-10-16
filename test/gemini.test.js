@@ -72,7 +72,7 @@ test("Gemini dashboard values an open position from an alternate active pool", a
   assert.equal(mark.pnl, 2);
   assert.equal(mark.pnlPercent, 20);
   assert.equal(mark.pairAddress, "ActivePool");
-  assert.match(mark.quoteWarning, /active pool/);
+  assert.match(mark.quoteWarning, /most active current pool/);
 });
 test("Gemini dashboard keeps equity unavailable when no valid market quote exists", async () => {
   const mark = await getGeminiPositionMark({
