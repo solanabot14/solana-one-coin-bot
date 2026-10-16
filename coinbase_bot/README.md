@@ -1,29 +1,27 @@
 # Coinbase Bot
 
-Isolated Coinbase Advanced Trade spot momentum bot workspace. Default mode is paper. Do not enable live trading until fee tier, order protection, and seven-day paper results are reviewed.
+The existing Coinbase Bot runs as a paper simulator in `outcomeBot.js`. Its dashboard records simulated Coinbase spot positions. This branch changes only the Coinbase module, its dedicated tests, and this documentation/configuration folder.
 
-This folder is intentionally not wired into the shared dashboard or Railway service. No other bot or shared file is changed.
+## Current execution boundary
 
-## Account setup
+The bot uses Coinbase Exchange public REST market data. It does not use the Coinbase Advanced Trade SDK, private account endpoints, your fee tier, WebSocket feeds, authenticated orders, or exchange-side protective stops. The simulated entry/exit fills include configured fee and slippage estimates. Setting `LIVE=true` does not enable live orders; there is no live order path in this module.
 
-Create a dedicated Coinbase CDP key for this bot with trade/read permissions only and withdrawals disabled. Put credentials in environment variables, never in source:
+The YAML file documents the JavaScript runtime settings; it is not loaded by the bot. Environment overrides currently supported:
 
-    export COINBASE_API_KEY='organizations/.../apiKeys/...'
-    export COINBASE_API_SECRET='...'
-    export LIVE=false
+- `OUTCOME_PAPER_FEE_RATE` (default 0.006 per side)
+- `OUTCOME_PAPER_SLIPPAGE_RATE` (default 0.001 per side)
+- `DATA_DIR` or `RAILWAY_VOLUME_MOUNT_PATH` (paper state storage)
 
-The fee config contains low-volume estimates (0.40% maker, 0.60% taker). Before spread/slippage, round-trip estimates are 0.80% maker/maker and 1.20% taker/taker. A three-times-fee hurdle is 2.40% and 3.60%, respectively.
+## Changes in this branch
 
-## Implementation and safety status
+- Position size is constrained to 5%–10% of current estimated paper equity.
+- Daily realized-loss pause is 3% of start-of-day equity.
+- Breakout entries require a retest and confirmation candle; a simple resistance close no longer qualifies.
+- Coinbase public REST requests are paced to 5 per second with bounded 429 retries.
+- Previously open positions keep their legacy exit rules; V4 rules apply to new entries.
 
-This branch currently contains the paper-first strategy configuration and setup notes only. It does not place orders and does not affect the running dashboard bot. The implementation must use Coinbase's official Python package, coinbase-advanced-py, and a bot-local rate limiter. Verify spot protective stop behavior in the Coinbase sandbox before relying on exchange-side stops. If a protective stop cannot be safely attached, keep the bot paper-only.
+## Verification and rollout
 
-## Test gate
+Run the focused tests with `node --test test/outcome-bot.test.js`. This does not place orders.
 
-1. Verify the actual fee tier with the dedicated API key.
-2. Verify supported stop order behavior in Coinbase sandbox.
-3. Backtest on Coinbase 1m/5m candles with explicit fee/slippage.
-4. Paper trade continuously for at least seven days.
-5. Review net after-fee return, win rate, average win/loss, profit factor, and drawdown.
-
-Never set LIVE=true before review and explicit approval of results.
+Keep the running service unchanged during the seven-day paper review. Before any live implementation, verify the actual account fee tier, supported protective order behavior, API key permissions, backtest costs, and seven-day net results. Any integration or deployment must be reviewed separately before it goes live.
