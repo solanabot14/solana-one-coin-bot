@@ -18,8 +18,13 @@ def must_flatten(c,t,opening,close,heartbeat,kill,boot_elapsed):
         if heartbeat is None:
             if boot_elapsed>c['runtime']['bootstrap_grace_seconds']:
                 return 'missing_heartbeat'
-        elif (t-datetime.fromisoformat(heartbeat['time'])).total_seconds()>c['runtime']['heartbeat_stale_seconds'] or not heartbeat.get('healthy'):
-            return 'stale_or_unhealthy_heartbeat'
+        elif ((t-datetime.fromisoformat(heartbeat['time'])).total_seconds()>c['runtime']['heartbeat_stale_seconds'] or not heartbeat.get('healthy')):
+            # A deploy/restart begins with an intentionally unhealthy heartbeat.
+            # Give the engine its configured bootstrap window to reconcile the
+            # account and establish streams; KILL and the scheduled close remain
+            # immediate, and a missed bootstrap still forces flattening.
+            if boot_elapsed>c['runtime']['bootstrap_grace_seconds']:
+                return 'stale_or_unhealthy_heartbeat'
     return None
 
 def run(c):
