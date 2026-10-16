@@ -40,7 +40,10 @@ def run(c):
                 close = close.replace(tzinfo=ET) if close.tzinfo is None else close
             hbpath = path/'heartbeat.json'
             heartbeat = json.loads(hbpath.read_text()) if hbpath.exists() else None
-            kill = (path/'KILL').exists() or (path/('HALT-'+stamp(t))).exists()
+            # KILL is an operator latch. HALT-YYYY-MM-DD is a durable incident
+            # record used to block entries, but must not itself retrigger
+            # liquidation every poll after the account is already flat.
+            kill = (path/'KILL').exists()
             reason = must_flatten(c,t,opening,close,heartbeat,kill,time.monotonic()-boot)
             # Positions outside regular hours are always an incident, never accepted.
             if not reason and (not cal or t<opening or t>=close):
