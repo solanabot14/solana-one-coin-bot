@@ -1,6 +1,6 @@
 "use strict";
 
-const { createOutcomeBot } = require("../outcomeBot");
+const { createOutcomeBot } = require("./outcomeBot");
 
 const bot = createOutcomeBot();
 const seen = new Set();
