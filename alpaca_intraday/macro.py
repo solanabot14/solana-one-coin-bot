@@ -13,7 +13,7 @@ from common import ET, atomic_json
 def parse_fed(html, year):
     soup = BeautifulSoup(html, 'html.parser')
     heading = next((h for h in soup.find_all(re.compile('^h[1-6]$'))
-                    if re.search(rf'\\b{year}\\s+FOMC Meetings', h.get_text(' ', strip=True))), None)
+                    if re.search(rf'\b{year}\s+FOMC Meetings', h.get_text(' ', strip=True))), None)
     if heading is None:
         raise ValueError('FOMC year coverage missing')
     container = heading.find_parent(class_='panel')
@@ -33,7 +33,7 @@ def parse_fed(html, year):
             if len(match) != 1:
                 raise ValueError('Unknown FOMC month ' + name)
             month_numbers.append(match[0])
-        ds = [int(x) for x in re.findall(r'\\d+', day_node.get_text())]
+        ds = [int(x) for x in re.findall(r'\d+', day_node.get_text())]
         if not 1 <= len(ds) <= 2:
             raise ValueError('Unknown FOMC date')
         first = date(year, month_numbers[0], ds[0])
@@ -65,7 +65,7 @@ def parse_cpi_schedule(html, year):
     soup = BeautifulSoup(html, 'html.parser')
     dates = set()
     month_names = '|'.join(calendar.month_abbr[1:])
-    pattern = re.compile(rf'\\b(?:{month_names})\\.?\\s+\\d{{1,2}},?\\s+\\d{{4}}\\b', re.I)
+    pattern = re.compile(rf'\b(?:{month_names})\.?\s+\d{{1,2}},?\s+\d{{4}}\b', re.I)
     for table in soup.find_all('table'):
         rows = table.find_all('tr')
         header = [cell.get_text(' ', strip=True).lower()
@@ -81,7 +81,7 @@ def parse_cpi_schedule(html, year):
             match = pattern.search(cells[release_idx])
             if not match:
                 continue
-            text = re.sub(r'\\s+', ' ', match.group(0)).replace('.', '')
+            text = re.sub(r'\s+', ' ', match.group(0)).replace('.', '')
             for fmt in ('%b %d, %Y', '%b %d %Y'):
                 try:
                     parsed = datetime.strptime(text, fmt).date()
