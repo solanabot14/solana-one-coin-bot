@@ -79,12 +79,18 @@ function createMomentumTracker() {
     const afterLow = samples.slice(lowIndex);
     const recoverySteps = afterLow.slice(1).filter((item,index)=>item.price>afterLow[index].price).length;
     const notFalling = previous && price>=previous.price;
-    const continuation = freshWindow && notFalling && price>samples[0].price && risingSteps>=2;
+    const ordinaryContinuation = freshWindow && notFalling && price>samples[0].price && risingSteps>=2;
     const recovery = freshWindow && notFalling && price>low && recoverySteps>=2;
     const transactions = buys5m+sells5m;
     const currentBuyShare = transactions>0 ? buys5m/transactions : 0;
     const volumeIncreasing = samples.length>=3 && Number.isFinite(volume5m) && volume5m>samples[0].volume5m;
     const highVolume = volume5m>=CONFIG.HIGH_VOLUME_5M_USD && transactions>=CONFIG.HIGH_TRANSACTIONS_5M;
+    // A cached flat snapshot should not demand a second uptick after a genuine
+    // upward move. Keep the full window, net upward direction and strong flow.
+    const strongActivityContinuation = freshWindow && !!previous && price>previous.price &&
+      price>samples[0].price && risingSteps>=1 && highVolume &&
+      currentBuyShare>=CONFIG.STRONG_ACTIVITY_MIN_BUY_SHARE;
+    const continuation = ordinaryContinuation || strongActivityContinuation;
     const activitySufficient = volume5m>=CONFIG.MIN_VOLUME_5M_USD && transactions>=CONFIG.MIN_TRANSACTIONS_5M &&
       (volumeIncreasing || highVolume);
     // Price patterns are opportunities, not security attestations. Recent pool
@@ -118,7 +124,7 @@ function createMomentumTracker() {
       pumpPercent: state.basePrice > 0 ? (state.peakPrice / state.basePrice - 1) * 100 : null,
       peakPrice: state.peakPrice, troughPrice: state.troughPrice, retracePercent, reboundFromLowPercent, recovering, flowBuys, flowSells,
       flowSpanMs, pullbackObserved: !!state.pullbackObserved, currentBuyShare, liquidityRetained, volumeIncreasing,
-      confirmationSpanMs, risingSteps, activitySufficient, highVolume, observedAt:now,
+      confirmationSpanMs, risingSteps, activitySufficient, highVolume, strongActivityContinuation, observedAt:now,
       volumeBasis: highVolume ? "high_absolute_5m" : volumeIncreasing ? "growing_rolling_5m" : "insufficient",
       flowMeasurement: "rolling_5m_counts_not_new_trades", flowIsApproximation: true };
   }
@@ -133,4 +139,5 @@ function createMomentumTracker() {
 }
 
 module.exports = { createMomentumTracker };
+
 

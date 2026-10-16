@@ -143,3 +143,24 @@ test("market cache age plus latency cannot bypass the 35-second bound",async()=>
     return {data:{pairs:[pair()]},headers:{age:'27'}};}});
   assert.equal((await guard.prepareEntry(coin)).allowed,false);
 });
+
+
+test("mature-holder exception is reevaluated on the final market snapshot",async()=>{
+  let time=now,quotes=0;
+  const mature={...coin,pairCreatedAt:now-3600000,liquidityUsd:30000,volume5m:6000,buys5m:60,sells5m:40};
+  const concentrated=report();concentrated.topHolders=Array.from({length:10},(_,i)=>({address:'h-'+i,pct:4.5}));
+  let executionCalls=0;
+  const guard=createEntryGuard({clock:()=>time,wait:async ms=>{time+=ms;},
+    verifyExecution:async()=>{executionCalls++;return {allowed:true,lossPercent:1};},
+    httpGet:async url=>{
+      if(url.includes('rugcheck')) return {data:concentrated,headers:{}};
+      const p=pair();p.pairCreatedAt=mature.pairCreatedAt;p.volume.m5=6000;p.txns.m5={buys:60,sells:40};
+      if(quotes++)p.volume.m5=4900;
+      return {data:{pairs:[p]},headers:{}};
+    }});
+  const result=await guard.prepareEntry(mature);
+  assert.equal(result.allowed,false);assert.match(result.reason,/40%/);
+  assert.equal(executionCalls,0);
+  assert.equal(guard.getStatus().lastCheck.holderSecurity.top10Percent,45);
+  assert.equal(guard.getStatus().lastCheck.holderSecurity.policy,'standard');
+});

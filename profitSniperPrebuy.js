@@ -1,7 +1,7 @@
 const { setTimeout: sleep } = require("node:timers/promises");
 const { constants, getMomentumFailureReasons, getBuySizing } = require("./profitSniperStrategy");
 const CONFIG = require("./profitSniperConfig");
-const { evaluatePoolReport, isLiquidityBurned } = require("./profitSniperEntryGuard");
+const { evaluatePoolReport, isLiquidityBurned, holderConcentration, holderPolicy } = require("./profitSniperEntryGuard");
 const CONFIRMATION_MS = 7500;
 const MAX_SAMPLE_AGE_MS = CONFIG.MAX_EXECUTION_QUOTE_AGE_MS;
 const MAX_MARKET_DATA_AGE_MS = CONFIG.MAX_MARKET_DATA_AGE_MS;
@@ -12,7 +12,7 @@ function number(value) {
   return value === null || value === undefined || value === "" ? NaN : Number(value);
 }
 
-function poolLock(report, coin) {
+function poolLock(report, coin, now = Date.now()) {
   if (!report || report.mint !== coin.tokenAddress) return { allowed: false, reason: "REPORT_MINT_MISMATCH" };
   const markets = (report.markets || []).filter(m => m.pubkey === coin.pairAddress &&
     [m.mintA, m.mintB].includes(coin.tokenAddress));
@@ -24,7 +24,7 @@ function poolLock(report, coin) {
   if (!(baseUsd > 0) || !(quoteUsd > 0) || !Number.isFinite(liquidityUsd) ||
       liquidityUsd < CONFIG.MIN_LIQUIDITY_USD)
     return { allowed: false, lockedPercent, reason: "EXACT_POOL_RESERVES_TOO_LOW" };
-  const safetyFailure = evaluatePoolReport(report, coin, Number(coin.liquidityUsd) || liquidityUsd);
+  const safetyFailure = evaluatePoolReport(report, coin, Number(coin.liquidityUsd) || liquidityUsd, now);
   if (safetyFailure) return { allowed: false, lockedPercent, liquidityUsd, reason: safetyFailure };
   const burned = isLiquidityBurned(report, markets[0]);
   if (!burned && (!Number.isFinite(lockedPercent) || lockedPercent < MIN_LOCK_PERCENT || lockedPercent > 100))
@@ -68,13 +68,15 @@ function createEntryGuard({
   }
   async function readLock(coin, signal) {
     const response = await reportClient.getReport(coin.tokenAddress, signal);
-    return { ...poolLock(response.data, coin), sampledAt: response.sampledAt };
+    return { ...poolLock(response.data, coin, clock()), sampledAt: response.sampledAt,
+      holderSecurity: { ...holderConcentration(response.data), ...holderPolicy(coin, clock()) },
+      report: response.data };
   }
   async function checkLiquidityLock(tokenAddress, { coin, signal } = {}) {
     if (!coin || coin.tokenAddress !== tokenAddress) return { allowed: false, reason: "MISSING_POOL_IDENTITY" };
     try {
       const lock = await readLock(coin, signal);
-      if (!lock.allowed) reject(coin, lock.reason);
+      if (!lock.allowed) reject(coin, lock.reason, { holderSecurity: lock.holderSecurity });
       return lock;
     } catch (error) {
       reject(coin, error.message);
@@ -116,10 +118,13 @@ function createEntryGuard({
       const first = await quote(coin, signal);
       // Wait only in the scanner: the separate position monitor keeps running.
       await wait(CONFIRMATION_MS, signal);
-      const lock = await readLock(coin, signal);
-      if (!lock.allowed) return reject(coin, lock.reason);
+      const lock = await readLock({ ...coin, ...first }, signal);
+      if (!lock.allowed) return reject(coin, lock.reason, { holderSecurity: lock.holderSecurity });
       const amountUsd = getBuySizing(portfolio || {cashBalance:100,positions:[],history:[]}).amountInvested;
       const final = await quote(coin, signal);
+      const finalSecurityFailure = evaluatePoolReport(lock.report, final, final.liquidityUsd, clock());
+      if (finalSecurityFailure) return reject(coin, finalSecurityFailure,
+        { holderSecurity: { ...holderConcentration(lock.report), ...holderPolicy(final, clock()) } });
       // Cached market statistics are a screening source. The final network
       // operations are fresh executable buy/sell quotes at the actual size.
       const execution = await verifyExecution(coin, {amountUsd,signal});
@@ -140,12 +145,18 @@ function createEntryGuard({
         allowed: true, reason: "VERIFIED", firstLiquidityUsd: first.liquidityUsd,
         finalLiquidityUsd: final.liquidityUsd, reportLiquidityUsd: lock.liquidityUsd,
         lockedPercent: lock.lockedPercent, executionQuote:execution,
+        holderSecurity: { ...holderConcentration(lock.report), ...holderPolicy(final, clock()) },
         marketDataAgeMs:clock()-final.sampledAt,marketCacheAgeSeconds:final.cacheAgeSeconds,
         marketAgeBasis:final.ageBasis,
         marketCacheAdvanced:final.sampledAt>first.sampledAt,
         checkedAt: new Date(clock()).toISOString() };
       return { allowed: true, coin: { ...coin, ...final, reasons: [...(coin.reasons || []),
         "Exact pool lock " + lock.lockedPercent + "%; reserves $" + lock.liquidityUsd.toFixed(2),
+        "Holder policy " + lastCheck.holderSecurity.policy + ": top 10 " +
+          lastCheck.holderSecurity.top10Percent.toFixed(2) + "% / cap " +
+          lastCheck.holderSecurity.top10LimitPercent + "%; largest " +
+          lastCheck.holderSecurity.largestPercent.toFixed(2) + "% / cap " +
+          lastCheck.holderSecurity.singleHolderLimitPercent + "%",
         "Buy/sell route quoted for $" + amountUsd.toFixed(2) + "; estimated round-trip cost " + execution.lossPercent.toFixed(2) + "%",
         "Fresh pre-buy checks with 7.5s confirmation wait: liquidity $" + first.liquidityUsd.toFixed(2) +
           " -> $" + final.liquidityUsd.toFixed(2) + "; compounded paper sizing"] } };
@@ -163,3 +174,4 @@ function createEntryGuard({
 }
 
 module.exports = { createEntryGuard, poolLock, CONFIRMATION_MS };
+

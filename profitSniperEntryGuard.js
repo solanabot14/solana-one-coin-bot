@@ -69,7 +69,21 @@ function tokenAuthoritiesRenounced(report) {
   return { mintRenounced: renounced(mintAuthority), freezeRenounced: renounced(freezeAuthority) };
 }
 
-function evaluatePoolReport(report, coin, liquidityUsd) {
+function holderPolicy(coin, now = Date.now()) {
+  const age = now - Number(coin?.pairCreatedAt);
+  const transactions = Number(coin?.buys5m) + Number(coin?.sells5m);
+  const buyShare = transactions > 0 ? Number(coin?.buys5m) / transactions : 0;
+  const matureActive = Number(coin?.pairCreatedAt) > 0 && Number.isFinite(age) &&
+    age >= CONFIG.MATURE_MIN_PAIR_AGE_MS && age <= CONFIG.MAX_PAIR_AGE_MS &&
+    Number(coin?.liquidityUsd) >= CONFIG.MATURE_MIN_LIQUIDITY_USD &&
+    Number(coin?.volume5m) >= CONFIG.HIGH_VOLUME_5M_USD &&
+    transactions >= CONFIG.HIGH_TRANSACTIONS_5M && buyShare >= CONFIG.STRONG_ACTIVITY_MIN_BUY_SHARE;
+  return { top10LimitPercent: matureActive ? CONFIG.MATURE_MAX_TOP10_HOLDER_PERCENT : CONFIG.MAX_TOP10_HOLDER_PERCENT,
+    singleHolderLimitPercent: CONFIG.MAX_SINGLE_HOLDER_PERCENT,
+    policy: matureActive ? "mature_active_pool" : "standard" };
+}
+
+function evaluatePoolReport(report, coin, liquidityUsd, now = Date.now()) {
   if (!report || report.mint !== coin.tokenAddress || report.rugged === true) return "RugCheck report unavailable or flagged";
   const market = (Array.isArray(report.markets) ? report.markets : [])
     .find(item => item.pubkey === coin.pairAddress);
@@ -79,10 +93,11 @@ function evaluatePoolReport(report, coin, liquidityUsd) {
   if (!authorities.freezeRenounced) return "Freeze authority is active or unverified";
   const holders = holderConcentration(report);
   if (!holders.verified) return "Top-holder concentration is unavailable";
-  if (holders.top10Percent > CONFIG.MAX_TOP10_HOLDER_PERCENT)
-    return "Top 10 holders exceed " + CONFIG.MAX_TOP10_HOLDER_PERCENT + "%";
-  if (holders.largestPercent > CONFIG.MAX_SINGLE_HOLDER_PERCENT)
-    return "A holder exceeds " + CONFIG.MAX_SINGLE_HOLDER_PERCENT + "%";
+  const policy = holderPolicy(coin, now);
+  if (holders.largestPercent > policy.singleHolderLimitPercent)
+    return "A holder exceeds " + policy.singleHolderLimitPercent + "%";
+  if (holders.top10Percent > policy.top10LimitPercent)
+    return "Top 10 holders exceed " + policy.top10LimitPercent + "%";
   const lp = market.lp || {};
   const reserveUsd = Number(lp.baseUSD) + Number(lp.quoteUSD);
   const burned = isLiquidityBurned(report, market);
@@ -221,10 +236,11 @@ function createSniperEntryGuard({
       top10HoldersPercent: holders.top10Percent,
       largestHolderPercent: holders.largestPercent,
       holderConcentrationVerified: holders.verified,
+      holderPolicy: holderPolicy(fresh, clock()),
       mintAuthorityRenounced: authorities.mintRenounced,
       freezeAuthorityRenounced: authorities.freezeRenounced
     };
-    const poolRisk = evaluatePoolReport(report, coin, liquidity);
+    const poolRisk = evaluatePoolReport(report, fresh, liquidity, clock());
     if (poolRisk) return { allowed: false, reason: poolRisk };
     return { allowed: true, coin: { ...fresh,
       reasons: [...(coin.reasons || []), "Fresh exact-pool quote and RugCheck pool reserve verified immediately before paper entry"] } };
@@ -233,6 +249,7 @@ function createSniperEntryGuard({
   return { observe, validate, getStatus, getSecurityDiagnostics: () => lastSecurityDiagnostics };
 }
 
-module.exports = { createSniperEntryGuard, hasCatastrophicLoss, evaluatePoolReport, holderConcentration, tokenAuthoritiesRenounced, isLiquidityBurned };
+module.exports = { createSniperEntryGuard, hasCatastrophicLoss, evaluatePoolReport, holderConcentration, holderPolicy, tokenAuthoritiesRenounced, isLiquidityBurned };
+
 
 

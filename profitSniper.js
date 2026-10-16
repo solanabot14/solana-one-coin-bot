@@ -210,6 +210,7 @@ async function discoverCandidates(options = {}) {
         entryRoute: pattern.entryRoute || null,
         confirmationSpanMs: pattern.confirmationSpanMs ?? null,
         risingSteps: pattern.risingSteps ?? null,
+        strongActivityContinuation: !!pattern.strongActivityContinuation,
         liquidityRetained: pattern.liquidityRetained ?? null,
         volumeIncreasing: pattern.volumeIncreasing ?? null,
         pullbackObserved: !!pattern.pullbackObserved,
@@ -456,12 +457,19 @@ module.exports = {
     watchlistMaximumLiquidityDropPercent: CONFIG.WATCHLIST_MAX_LIQUIDITY_DROP * 100,
     maximumTokenAttempts: CONFIG.MAX_TOKEN_ATTEMPTS,
     maximumTop10HolderPercent: CONFIG.MAX_TOP10_HOLDER_PERCENT,
+    matureActiveHolderPolicy: { maximumTop10HolderPercent: CONFIG.MATURE_MAX_TOP10_HOLDER_PERCENT,
+      minimumPairAgeMinutes: CONFIG.MATURE_MIN_PAIR_AGE_MS / 60000,
+      minimumLiquidityUsd: CONFIG.MATURE_MIN_LIQUIDITY_USD,
+      minimumVolume5mUsd: CONFIG.HIGH_VOLUME_5M_USD,
+      minimumTransactions5m: CONFIG.HIGH_TRANSACTIONS_5M,
+      minimumBuyShare: CONFIG.STRONG_ACTIVITY_MIN_BUY_SHARE },
     maximumIndividualHolderPercent: CONFIG.MAX_SINGLE_HOLDER_PERCENT,
     minimumLiquidityLockPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT,
     maximumOpenPositions: MAX_OPEN_POSITIONS,
     minimumTradeUsd: MINIMUM_TRADE_USD
   }
 };
+
 
 
 

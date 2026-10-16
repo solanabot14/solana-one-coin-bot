@@ -26,6 +26,12 @@ module.exports = Object.freeze({
   MIN_LP_LOCK_PERCENT: 30,
   MAX_TOP10_HOLDER_PERCENT: 40,
   MAX_SINGLE_HOLDER_PERCENT: 15,
+  // Paper experiment: mature, liquid, active pools may tolerate more distributed ownership.
+  MATURE_MAX_TOP10_HOLDER_PERCENT: 50,
+  MATURE_MIN_PAIR_AGE_MS: 60 * 60 * 1000,
+  MATURE_MIN_LIQUIDITY_USD: 25000,
+  STRONG_ACTIVITY_MIN_BUY_SHARE: 0.60,
   MAX_TOKEN_ATTEMPTS: 2
 });
+
 

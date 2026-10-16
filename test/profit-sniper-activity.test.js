@@ -46,3 +46,20 @@ test("weak buying, insufficient liquidity and stale signals still fail",()=>{
   const coin={...base,priceUsd:1,pairCreatedAt:0,momentumPattern:{ready:true,observedAt:1000}};
   assert.ok(getMomentumFailureReasons(coin,100000).includes("staleMomentumConfirmation"));
 });
+
+
+test("strong activity permits a single upward step across a full flat-cache window",()=>{
+  assert.equal(sequence([1,1,1.01]).ready,true);
+  assert.equal(sequence([1,1,1.01]).strongActivityContinuation,true);
+  assert.equal(sequence([1,1,1.01],{buys5m:59,sells5m:41}).ready,false);
+  assert.equal(sequence([1,1,1.01],{volume5m:4999}).ready,false);
+  assert.equal(sequence([1,1,1.01],{buys5m:29,sells5m:20}).ready,false);
+  assert.equal(sequence([1,0.5,0.51]).ready,false);
+  assert.equal(sequence([1,1.01,1.005]).ready,false);
+  assert.equal(sequence([1,1,1]).ready,false);
+  const tracker=createMomentumTracker();
+  tracker.observe({...base,priceUsd:1},0);
+  tracker.observe({...base,priceUsd:1},20000);
+  assert.equal(tracker.observe({...base,priceUsd:1.01},40000).ready,false);
+  assert.equal(tracker.observe({...base,priceUsd:1.02},120000).ready,false);
+});

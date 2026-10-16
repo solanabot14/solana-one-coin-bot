@@ -205,3 +205,23 @@ test("top-ten cap is 40%, while individual-holder protection remains 15%",()=>{
   assert.match(evaluatePoolReport({...report,topHolders:holders(4.1)},candidate,25000),/40%/);
   assert.match(evaluatePoolReport({...report,topHolders:[{address:'whale',pct:15.1}]},candidate,25000),/15%/);
 });
+
+
+test("mature active pools can reach 50% top-ten ownership with every eligibility condition enforced", () => {
+  const { holderPolicy } = require('../profitSniperEntryGuard');
+  const mature = { ...candidate, pairCreatedAt:start-3600000, liquidityUsd:25000,
+    volume5m:5000, buys5m:30, sells5m:20 };
+  const distributed = { ...report, topHolders:Array.from({length:10},(_,i)=>({address:'h-'+i,pct:5})) };
+  assert.equal(holderPolicy(mature,start).top10LimitPercent,50);
+  assert.equal(evaluatePoolReport(distributed,mature,25000,start),null);
+  assert.match(evaluatePoolReport({...distributed,topHolders:distributed.topHolders.map(h=>({...h,pct:5.01}))},mature,25000,start),/50%/);
+  for(const patch of [{pairCreatedAt:start-3599999},{pairCreatedAt:null},{pairCreatedAt:start+1},
+    {pairCreatedAt:start-86400001},{liquidityUsd:24999},{volume5m:4999},{buys5m:29,sells5m:20},
+    {buys5m:30,sells5m:21}]) {
+    assert.equal(holderPolicy({...mature,...patch},start).top10LimitPercent,40);
+    assert.match(evaluatePoolReport(distributed,{...mature,...patch},25000,start),/40%/);
+  }
+  assert.match(evaluatePoolReport({...distributed,topHolders:[{address:'whale',pct:15.01}]},mature,25000,start),/15%/);
+  assert.match(evaluatePoolReport({...distributed,token:{mintAuthority:'active',freezeAuthority:null}},mature,25000,start),/Mint authority/);
+  assert.match(evaluatePoolReport({...distributed,markets:[{...report.markets[0],lp:{...report.markets[0].lp,lpLockedPct:0}}]},mature,25000,start),/lock/);
+});
