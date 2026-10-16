@@ -302,7 +302,7 @@
     var unrealizedSubtitle=missingUnrealized.length?'Known open-position P&L; current quote/data missing for: '+missingUnrealized.join(', '):'Open positions';
     var pnlValues=portfolioSystems.map(function(s){return currentQuoteAvailable(s)?n(s.totalPnl):null;});
     var totalPnl=sumKnown(pnlValues);
-    var missingPnl=portfolioSystems.filter(function(s){return currentQuoteAvailable(s)?n(s.totalPnl)===null:!!(s.positions&&s.positions.length);}).map(function(s){return (s.label||s.name)+' ('+(currentQuoteAvailable(s)?'P&L unavailable':health(s).label.toLowerCase())+')';});
+    var missingPnl=portfolioSystems.filter(function(s){return !currentQuoteAvailable(s)||n(s.totalPnl)===null;}).map(function(s){return (s.label||s.name)+' ('+(currentQuoteAvailable(s)?'P&L unavailable':health(s).label==='FEED ERROR'?'feed error':'no current quote')+')';});
     var totalPnlValue=missingPnl.length?(sumAvailable(pnlValues)===null?'Not recorded':money(sumAvailable(pnlValues))+' partial'):money(totalPnl);
     var totalPnlSubtitle=missingPnl.length?'Known current P&L; missing quote/data for: '+missingPnl.join(', '):'Current equity less starting balance';
     var starting=sumKnown(portfolioSystems.map(function(s){return n(s.account.startingBalance)||null;}));
