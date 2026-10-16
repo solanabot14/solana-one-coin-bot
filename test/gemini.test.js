@@ -114,7 +114,7 @@ test("Gemini dashboard uses GeckoTerminal when DexScreener has no quote", async 
     fallbackToken = tokenAddress;
     return {
       pairAddress: "GeckoPool", priceUsd: 7.5, quoteProvider: "GeckoTerminal",
-      quoteWarning: "DexScreener has no quote for this token; price is from GeckoTerminal's top active pool."
+      quoteWarning: "DexScreener has no quote for this token; price is from GeckoTerminal's highest-liquidity pool."
     };
   });
 
