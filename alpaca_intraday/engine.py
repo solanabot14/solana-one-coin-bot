@@ -23,7 +23,8 @@ TERMINAL = {'filled','canceled','expired','rejected','replaced'}
 def recoverable_paper_watchdog_halt(day, positions, orders, manual_kill, paper):
     """Only clear an automated dated latch after a flat, order-free paper restart."""
     return (paper and not manual_kill and not positions and not orders
-            and day.get('halted') and day.get('halt_reason')=='kill_switch_or_watchdog')
+            and day.get('halted')
+            and day.get('halt_reason') in ('kill_switch_or_watchdog','shutdown'))
 
 def research_job(config,t,opening):
     log = Store(config['runtime']['state_dir'])
