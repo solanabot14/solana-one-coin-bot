@@ -218,6 +218,7 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     if (next.pausedForDailyLoss) return {success:false,error:"Daily loss limit reached"};
     if (next.openPositions.length >= MAX_OPEN_POSITIONS) return {success:false,error:"Three position limit reached"};
     if (next.openPositions.some(p=>p.productId===candidate.productId)) return {success:false,error:"Coin already has an open position"};
+    if (Number(next.coinCooldowns?.[candidate.productId]) > now()) return {success:false,error:"Coin re-entry cooldown active"};
     if (candidate.newsRisk) return {success:false,error:"Recent risk headline: "+candidate.newsRisk.title};
     const notional = Math.min(next.nextEntryUsd,MAX_SIZE_USD,next.cashUsd/(1+FEE_RATE));
     if (!(candidate.priceUsd>0) || notional<1) return {success:false,error:"Insufficient paper cash or invalid quote"};
