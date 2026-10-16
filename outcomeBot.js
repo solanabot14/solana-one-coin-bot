@@ -331,16 +331,16 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     if(pnlPercent<=-(Number(p.hardStopPercent)||HARD_STOP_PERCENT)){closePosition(p.id,price,"ATR HARD STOP -"+(Number(p.hardStopPercent)||HARD_STOP_PERCENT)+"%");return;}
     current=state.openPositions.find(x=>x.id===snapshot.id);if(!current)return;
     if(!current.tp1Done&&pnlPercent>=TP1_PERCENT){
-      sellQuantity(current.id,price,(Number(current.originalQuantity)||current.quantity)*TP1_SELL_FRACTION,"TAKE PROFIT +10% (40%)",{tp1Done:true,stopPriceUsd:current.entryPrice*(1+0.014)});
+      sellQuantity(current.id,price,(Number(current.originalQuantity)||current.quantity)*TP1_SELL_FRACTION,"TAKE PROFIT +4.5% (40%)",{tp1Done:true,stopPriceUsd:current.entryPrice*(1+0.014)});
     }
     current=state.openPositions.find(x=>x.id===snapshot.id);if(!current)return;
     if(!current.tp2Done&&pnlPercent>=TP2_PERCENT){
-      sellQuantity(current.id,price,(Number(current.originalQuantity)||current.quantity)*TP2_SELL_FRACTION,"TAKE PROFIT +20% (40%)",{tp1Done:true,tp2Done:true,runnerTrailActive:true,stopPriceUsd:current.entryPrice*(1+0.014)});
+      sellQuantity(current.id,price,(Number(current.originalQuantity)||current.quantity)*TP2_SELL_FRACTION,"TAKE PROFIT +7% (30%)",{tp1Done:true,tp2Done:true,runnerTrailActive:true,stopPriceUsd:current.entryPrice*(1+0.014)});
     }
     current=state.openPositions.find(x=>x.id===snapshot.id);if(!current)return;
     next=structuredClone(state);p=next.openPositions.find(x=>x.id===snapshot.id);p.markPriceUsd=price;if(price>Number(p.highestPrice||0))p.highestPrice=price;
     let stop=p.entryPrice*(1-HARD_STOP_PERCENT/100);if(p.tp1Done)stop=Math.max(stop,p.entryPrice*1.014);if(p.tp2Done||p.runnerTrailActive)stop=Math.max(stop,p.entryPrice*1.014,p.highestPrice*(1-RUNNER_TRAIL_PERCENT/100));p.stopPriceUsd=stop;commit(next);
-    if(price<=stop){closePosition(p.id,price,p.tp2Done?"RUNNER TRAILING STOP 10%":"BREAKEVEN STOP");return;}
+    if(price<=stop){closePosition(p.id,price,p.tp2Done?"RUNNER TRAILING STOP 1.75%":"BREAKEVEN STOP");return;}
     if(now()-Date.parse(p.entryTime)>=MAX_HOLD_MS && pnlPercent<1)closePosition(p.id,price,"TIME STOP 45M UNDER +1%");
   }
   async function closeAllForReason(reason){const results=[];for(const p of structuredClone(state.openPositions)){try{const ticker=await getTicker(p.productId);results.push(closePosition(p.id,Number(ticker.price),reason));}catch(error){results.push({success:false,symbol:p.symbol,error:error.message});}}return results;}
