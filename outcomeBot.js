@@ -26,6 +26,9 @@ const MAX_SCAN_PRODUCTS = 180;
 const MAX_MOVER_CANDLES = 30;
 const PRODUCT_CACHE_MS = 15 * 60 * 1000;
 const MAX_SPREAD_PERCENT = 0.30;
+const MAX_EXIT_SPREAD_PERCENT = 0.60;
+const COIN_COOLDOWN_MS = 60 * 60 * 1000;
+const END_OF_DAY_PR = "23:45";
 const FEE_RATE = Math.min(0.01, Math.max(0, Number(process.env.OUTCOME_PAPER_FEE_RATE ?? 0.006)));
 const SLIPPAGE_RATE = Math.min(0.005, Math.max(0, Number(process.env.OUTCOME_PAPER_SLIPPAGE_RATE ?? 0.001)));
 const SCAN_INTERVAL_MS = 45_000;
@@ -40,7 +43,7 @@ function defaultFile() {
 }
 function freshState() {
   return {
-    schemaVersion: 1, startingBalanceUsd: STARTING_BALANCE_USD, cashUsd: STARTING_BALANCE_USD,
+    schemaVersion: 1, startingBalanceUsd: STARTING_BALANCE_USD, cashUsd: STARTING_BALANCE_USD, coinCooldowns: {},
     openPositions: [], history: [], rejections: [], lastScanAt: null, lastError: null,
     running: false, nextEntryUsd: START_SIZE_USD, dailyPnlUsd: 0,
     dailyPnlDate: new Date().toISOString().slice(0, 10), pausedForDailyLoss: false
@@ -70,10 +73,13 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     } finally { if (io.existsSync(tmp)) io.unlinkSync(tmp); }
     state = next;
   }
+  function localDayKey(timestamp) { return new Intl.DateTimeFormat("en-CA", {timeZone:"America/Puerto_Rico",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(timestamp)); }
+  function localClock(timestamp) { return new Intl.DateTimeFormat("en-GB", {timeZone:"America/Puerto_Rico",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).format(new Date(timestamp)); }
+  function isEndOfDay(timestamp = now()) { return localClock(timestamp) >= END_OF_DAY_PR; }
   function rotateDay(next) {
-    const today = new Date(now()).toISOString().slice(0, 10);
+    const today = localDayKey(now());
     if (next.dailyPnlDate !== today) {
-      next.dailyPnlDate = today; next.dailyPnlUsd = 0; next.pausedForDailyLoss = false;
+      next.dailyPnlDate = today; next.dailyPnlUsd = 0; next.pausedForDailyLoss = false; next.coinCooldowns = {};
     }
   }
   async function requestJson(url, signal) {
@@ -97,13 +103,15 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
       requestJson(BASE_URL + "/products"), requestJson(BASE_URL + "/products/volume-summary")
     ]);
     const volumeById = new Map(flattenRows(volumeSummary)
-      .filter(row => row.quote_currency === "USD" && Array.isArray(row.market_types) && row.market_types.includes("spot"))
+      .filter(row => ["USD","USDC"].includes(row.quote_currency) && Array.isArray(row.market_types) && row.market_types.includes("spot"))
       .map(row => [row.id, Number(row.spot_volume_24hour) || 0]));
     const stable = new Set(["USDC","USDT","DAI","PYUSD","GUSD","USDP","USDS"]);
+    const wrapped = new Set(["WBTC","WETH","WSTETH","CBBTC","CBETH","WETH.E"]);
     const eligible = (Array.isArray(products) ? products : []).filter(product =>
-      product && product.id && product.quote_currency === "USD" && product.status === "online" &&
+      product && product.id && ["USD","USDC"].includes(product.quote_currency) && product.status === "online" &&
       !product.trading_disabled && !product.cancel_only && !product.post_only && !product.limit_only &&
-      !product.auction_mode && !product.fx_stablecoin && !stable.has(product.base_currency) &&
+      !product.auction_mode && !product.fx_stablecoin && !stable.has(product.base_currency) && !wrapped.has(product.base_currency) &&
+      (!product.trading_start || (now() - Date.parse(product.trading_start) >= 48 * 60 * 60 * 1000)) &&
       (volumeById.get(product.id) || 0) >= MIN_DAILY_VOLUME_USD)
       .sort((a,b) => (volumeById.get(b.id)||0) - (volumeById.get(a.id)||0))
       .slice(0, MAX_SCAN_PRODUCTS).map(product => product.id);
@@ -265,16 +273,19 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
   }
   function closePosition(positionId, markPrice, reason) {
     const p=state.openPositions.find(x=>x.id===positionId); if(!p)return {success:false,error:"Position not found"};
-    return sellQuantity(positionId,markPrice,p.quantity,reason);
+    const result=sellQuantity(positionId,markPrice,p.quantity,reason);
+    if(result.success && result.final && /STOP|SPREAD EXIT/i.test(reason)){const next=structuredClone(state);next.coinCooldowns=next.coinCooldowns||{};next.coinCooldowns[p.productId]=now()+COIN_COOLDOWN_MS;commit(next);}
+    return result;
   }
   async function scanOnce() {
-    if(!state.running||scanning||state.openPositions.length>=MAX_OPEN_POSITIONS||state.pausedForDailyLoss)return;
+    if(!state.running||scanning||state.openPositions.length>=MAX_OPEN_POSITIONS||state.pausedForDailyLoss||isEndOfDay())return;
     scanning=true;
     try {
       const rejectionRows=[];let products;
+      if (await btcMarketSelloff()) { const next=structuredClone(state); next.lastScanAt=new Date(now()).toISOString(); next.lastError=null; commit(next); recordRejections([{productId:"BTC-USD",reasons:["New entries paused: BTC fell more than 2% in one hour or is selling off sharply"]}]); return; }
       try{products=await getScanProducts();}catch(error){products=PRODUCTS.slice();rejectionRows.push({productId:"COINBASE-USD-UNIVERSE",reasons:[error.message]});}
       await news.refresh();
-      const marketRows=await mapLimit(products.filter(id=>!state.openPositions.some(p=>p.productId===id)),4,async productId=>{
+      const marketRows=await mapLimit(products.filter(id=>!state.openPositions.some(p=>p.productId===id) && !(Number(state.coinCooldowns?.[id]) > now())),4,async productId=>{
         try{const stats=await getStats(productId);const last=Number(stats.last),open=Number(stats.open),volumeUsd=last*Number(stats.volume),dayChange=open>0?(last/open-1)*100:0;
           if(!(last>0&&open>0)||!Number.isFinite(volumeUsd)||dayChange<MIN_DAILY_GAIN_PERCENT||dayChange>MAX_DAILY_GAIN_PERCENT||volumeUsd<MIN_DAILY_VOLUME_USD)return null;
           return {productId,stats,last,dayChange,volumeUsd};}catch(error){rejectionRows.push({productId,reasons:[error.message]});return null;}
@@ -331,9 +342,11 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     if(price<=stop){closePosition(p.id,price,p.tp2Done?"RUNNER TRAILING STOP 10%":"BREAKEVEN STOP");return;}
     if(now()-Date.parse(p.entryTime)>=MAX_HOLD_MS && pnlPercent<1)closePosition(p.id,price,"TIME STOP 45M UNDER +1%");
   }
+  async function closeAllForReason(reason){const results=[];for(const p of structuredClone(state.openPositions)){try{const ticker=await getTicker(p.productId);results.push(closePosition(p.id,Number(ticker.price),reason));}catch(error){results.push({success:false,symbol:p.symbol,error:error.message});}}return results;}
+  async function btcMarketSelloff(){try{const bars=await getCandles("BTC-USD");const closed=bars.filter(c=>c.time<Math.floor(now()/300_000)*300).slice(-13);if(closed.length<13)return false;const first=closed[0].close,last=closed[closed.length-1].close;const drop=first>0?(last/first-1)*100:0;const red=closed.slice(-4).filter(c=>c.close<c.open).length;return drop<=-2||(drop<=-1.5&&red>=3);}catch{return false;}}
   async function monitorOnce() {
     if(!state.running||monitoring||state.openPositions.length===0)return;monitoring=true;
-    try{for(const snapshot of structuredClone(state.openPositions)){if(!state.running)break;try{const ticker=await getTicker(snapshot.productId),price=Number(ticker.price);if(!(price>0))continue;
+    try{if(isEndOfDay()){await closeAllForReason("END OF DAY FLAT");return;} for(const snapshot of structuredClone(state.openPositions)){if(!state.running)break;try{const ticker=await getTicker(snapshot.productId),price=Number(ticker.price),bid=Number(ticker.bid),ask=Number(ticker.ask);if(!(price>0))continue;const mid=bid>0&&ask>0?(bid+ask)/2:0,spread=mid>0?(ask-bid)/mid*100:0;if(spread>MAX_EXIT_SPREAD_PERCENT){closePosition(snapshot.id,price,"LIQUIDITY SPREAD EXIT >0.6%");continue;}
       if(snapshot.strategyVersion===STRATEGY_VERSION)await monitorV2Position(snapshot,price);else await monitorLegacyPosition(snapshot,price);
     }catch(error){const next=structuredClone(state);next.lastError=error.message;commit(next);}}}finally{monitoring=false;}
   }
