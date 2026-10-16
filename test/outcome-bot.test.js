@@ -79,6 +79,19 @@ test("new positions use 40-30-30 exits and a fee-cushioned 1.75% runner trail",a
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
+test("stop exits block same-coin re-entry for 60 minutes",()=>{
+  const {bot,dir}=fixture();
+  try{
+    bot.start();
+    assert.equal(bot.buy(candidate()).success,true);
+    const p=bot.getState().openPositions[0];
+    assert.equal(bot.closePosition(p.id,p.entryPrice*0.98,"HARD STOP TEST").success,true);
+    const retry=bot.buy(candidate());
+    assert.equal(retry.success,false);
+    assert.match(retry.error,/cooldown/);
+  }finally{bot.stop();fs.rmSync(dir,{recursive:true,force:true});}
+});
+
 test("winner compounds only after the whole trade closes",()=>{
   const {bot,dir}=fixture();
   try{
