@@ -1,7 +1,9 @@
 [broker]
 paper = true
 feed = "iex"
-allow_iex_entries = false
+# Paper-only exploration. The bot always logs a warning; use SIP for meaningful
+# consolidated-volume/RVOL measurements. Live mode rejects IEX entries in code.
+allow_iex_entries = true
 live_confirmation = ""
 http_timeout_seconds = 10
 api_attempts = 3
