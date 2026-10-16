@@ -1,21 +1,28 @@
-# Coinbase Bot isolated paper-trading configuration
+# Runtime constants for the Coinbase Bot JavaScript paper simulator.
+# This YAML documents outcomeBot.js; that module does not load YAML at runtime.
 mode: paper
-strategy_version: coinbase-momentum-v1
+strategy_version: COINBASE_INTRADAY_MOMENTUM_V4
 timezone: America/Puerto_Rico
 end_of_day_flat_time: "23:45"
 scan_interval_seconds: 45
-reconcile_interval_seconds: 60
+monitor_interval_seconds: 5
 max_open_positions: 3
-position_equity_fraction: 0.07
-max_daily_loss_fraction: 0.03
+position_equity_fraction_min: 0.05
+position_equity_fraction_max: 0.10
+starting_position_usd: 10
+winner_compound_rate: 0.10
+max_daily_loss_fraction_of_day_start_equity: 0.03
 reentry_cooldown_minutes: 60
 universe:
+  data_source: Coinbase Exchange public REST
   quote_currencies: [USD, USDC]
   min_24h_volume_usd: 5000000
-  max_spread_percent: 0.30
-  skip_listing_hours: 48
+  max_entry_spread_percent: 0.30
+  max_exit_spread_percent: 0.60
+  min_history_hours: 24
+  min_listing_hours: 48
   stablecoins: [USDC, USDT, DAI, PYUSD, GUSD, USDP, USDS]
-  wrapped_symbols: [WBTC, WETH, WSTETH, CBBTC]
+  wrapped_symbols: [WBTC, WETH, WSTETH, CBBTC, CBETH, WETH.E]
 momentum:
   min_24h_change_percent: 4
   max_24h_change_percent: 25
@@ -27,22 +34,26 @@ momentum:
 entry:
   pullback_min_percent: 1.0
   pullback_max_percent: 2.5
-  limit_wait_seconds: 25
-  expected_move_fee_multiple: 3.0
+  breakout_requires_retest: true
 risk:
   stop_min_percent: 1.5
   atr_multiple: 1.5
   stop_max_percent: 2.5
-  take_profit_1_percent: 2.5
+  take_profit_1_percent: 4.5
   take_profit_1_fraction: 0.40
-  take_profit_2_percent: 5.0
+  take_profit_2_percent: 7.0
   take_profit_2_fraction: 0.30
   runner_fraction: 0.30
   runner_trail_percent: 1.75
   time_stop_minutes: 45
   time_stop_min_gain_percent: 1.0
 fees:
-  # Estimates only; replace after authenticated transaction-summary lookup.
-  maker_rate: 0.004
-  taker_rate: 0.006
-  paper_slippage_bps: 10
+  paper_taker_rate_per_side: 0.006
+  paper_slippage_rate_per_side: 0.001
+  rate_limit_requests_per_second: 5
+  max_429_retries: 3
+execution_status:
+  websocket_market_data: false
+  authenticated_fee_lookup: false
+  exchange_orders: false
+  exchange_side_stops: false

@@ -61,6 +61,7 @@ test("new positions use 40-30-30 exits and a fee-cushioned 1.75% runner trail",a
     bot.start();
     assert.equal(bot.buy(candidate()).success,true);
     let p=bot.getState().openPositions[0];
+    assert.ok(p.notionalUsd >= 200 * 0.05 && p.notionalUsd <= 200 * 0.10);
     assert.equal(p.hardStopPercent,2.0);
     const prices=[p.entryPrice*1.05,p.entryPrice*1.08];
     bot.stop();
@@ -100,6 +101,17 @@ test("winner compounds only after the whole trade closes",()=>{
     assert.equal(bot.closePosition(p.id,p.entryPrice*1.2,"MANUAL TEST").success,true);
     assert.equal(bot.getState().nextEntryUsd,11);
   }finally{bot.stop();fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test("daily loss guard scales with start-of-day equity",()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),"cb-dynamic-loss-"));
+  try{
+    const at=Date.parse("2026-10-16T12:00:00Z"),file=path.join(dir,"state.json");
+    fs.writeFileSync(file,JSON.stringify({schemaVersion:1,startingBalanceUsd:1000,cashUsd:1000,openPositions:[],history:[{type:"SELL",pnl:-20,exitTime:new Date(at-3600000).toISOString()}],rejections:[],lastScanAt:null,lastError:null,running:false,nextEntryUsd:10,dailyPnlUsd:-20,dailyPnlDate:"2026-10-16",pausedForDailyLoss:false}));
+    const bot=createOutcomeBot({file,now:()=>at,timers:{setInterval:()=>null,clearInterval:()=>{}},fetchImpl:()=>new Promise(()=>{})});
+    assert.equal(bot.getState().dailyStartingEquityUsd,1000);
+    assert.equal(bot.getState().pausedForDailyLoss,false);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
 test("old Coinbase positions keep their previous exit rules",async()=>{
