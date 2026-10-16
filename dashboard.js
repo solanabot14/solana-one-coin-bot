@@ -12,6 +12,7 @@ const profitSniper = require("./profitSniper");
 const geminiBot = require("./geminiBot");
 const geminiTrader = require("./geminiTrader");
 const { buildGeminiAnalytics } = require("./geminiAnalytics");
+const { getGeminiPositionMark } = require("./geminiDashboard");
 const outcomeBot = require("./outcomeBot");
 const stockBot = require("./stockBot");
 require("./retiredBotCleanup").purgeLocalData();
@@ -299,16 +300,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const geminiData = await (async () => {
           let live = null;
           const position = geminiState.position;
-          if (position) {
-            const quote = await sharedMarketData(position.tokenAddress, { pairAddress: position.pairAddress || undefined });
-            const priceUsd = Number(quote?.priceUsd);
-            if (priceUsd > 0 && Number.isFinite(priceUsd)) {
-              const currentValueUsd = position.quantity * priceUsd;
-              live = { priceUsd, currentValueUsd, pnl: currentValueUsd - position.amountInvestedUsd,
-                pnlPercent: position.amountInvestedUsd > 0 ? (currentValueUsd - position.amountInvestedUsd) / position.amountInvestedUsd * 100 : 0,
-                holdTimeMs: Math.max(0, Date.now() - Date.parse(position.entryTime)), pairAddress: position.pairAddress };
-            }
-          }
+          if (position) live = await getGeminiPositionMark(position, sharedMarketData);
           const geminiAnalytics = buildGeminiAnalytics(geminiState, live);
           const completedTrades = geminiAnalytics.completedTrades.map(t => ({
             ...t, pnl: t.pnlUsd, amountInvested: t.investedUsd, pnlPercent: t.returnPercent,
