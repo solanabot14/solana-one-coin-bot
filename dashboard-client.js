@@ -287,16 +287,17 @@
   function renderHome() {
     var rangeTrades=tradesForRange(), m=metrics(rangeTrades);
     var portfolioSystems=comparisonSystems();
-    var equityValues=portfolioSystems.map(function(s){return n(s.equity);});
+    function currentQuoteAvailable(system) { var label=health(system).label;return n(system.equity)!==null&&label!=='FEED ERROR'&&label!=='STOPPED'; }
+    var equityValues=portfolioSystems.map(function(s){return currentQuoteAvailable(s)?n(s.equity):null;});
     var equity=sumKnown(equityValues);
-    var missingEquity=portfolioSystems.filter(function(s){return n(s.equity)===null;}).map(function(s){return s.label||s.name;});
+    var missingEquity=portfolioSystems.filter(function(s){return !currentQuoteAvailable(s);}).map(function(s){var quote=n(s.equity)!==null;return (s.label||s.name)+(quote?' ('+health(s).label.toLowerCase()+')':' (no current quote)');});
     var equityPartial=sumAvailable(equityValues);
     var equityValue=missingEquity.length?(equityPartial===null?'Not recorded':money(equityPartial)+' partial'):money(equity);
     var equitySubtitle=missingEquity.length?'Known marked value; current quote/data missing for: '+missingEquity.join(', '):'Current marked value across connected accounts';
     var realized=realizedTotal(allRealizedEvents);
-    var unrealizedValues=portfolioSystems.map(positionPnl);
+    var unrealizedValues=portfolioSystems.map(function(s){return currentQuoteAvailable(s)?positionPnl(s):(s.positions&&s.positions.length?null:0);});
     var unrealized=sumKnown(unrealizedValues);
-    var missingUnrealized=portfolioSystems.filter(function(s){return positionPnl(s)===null;}).map(function(s){return s.label||s.name;});
+    var missingUnrealized=portfolioSystems.filter(function(s){return currentQuoteAvailable(s)?positionPnl(s)===null:!!(s.positions&&s.positions.length);}).map(function(s){return (s.label||s.name)+' ('+health(s).label.toLowerCase()+')';});
     var unrealizedValue=missingUnrealized.length?(sumAvailable(unrealizedValues)===null?'Not recorded':money(sumAvailable(unrealizedValues))+' partial'):money(unrealized);
     var unrealizedSubtitle=missingUnrealized.length?'Known open-position P&L; current quote/data missing for: '+missingUnrealized.join(', '):'Open positions';
     var totalPnl=sumKnown(portfolioSystems.map(function(s){return s.totalPnl;}));
