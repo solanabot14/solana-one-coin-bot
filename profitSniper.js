@@ -143,11 +143,9 @@ async function discoverCandidates(options = {}) {
 
   const portfolio = trader.getPortfolio();
   const history = Array.isArray(portfolio?.history) ? portfolio.history : [];
-  const buysByMint = new Map();
   const stoppedMints = new Set();
   for (const row of history) {
     if (!row?.tokenAddress) continue;
-    if (row.type === "BUY") buysByMint.set(row.tokenAddress, (buysByMint.get(row.tokenAddress) || 0) + 1);
     if (row.type === "SELL" && /HARD STOP|STOP LOSS/i.test(String(row.reason || "")))
       stoppedMints.add(row.tokenAddress);
   }
@@ -177,7 +175,6 @@ async function discoverCandidates(options = {}) {
       }
     }
     if (stoppedMints.has(coin.tokenAddress)) failures.push("stopLossReentryBlocked");
-    if ((buysByMint.get(coin.tokenAddress) || 0) >= CONFIG.MAX_TOKEN_ATTEMPTS) failures.push("maxTokenAttempts");
     if (!failures.length) {
       if (!poolStability.ready) failures.push("poolStability");
     }
@@ -327,7 +324,7 @@ const bot = createBot({
   acceptedSignals: ["ORDER FLOW BUY"],
   requireLiquidityLock: true,
   allowUnknownLiquidityLock: false,
-  // Sniper already enforces fresh momentum, max attempts and stop-loss bans.
+  // Sniper already enforces fresh momentum and stop-loss bans; completed buys have no lifetime cap.
   // The inherited V3.1 reentry filter imposes a conflicting <4% 5m cap and
   // another two observations with 25% rolling-volume acceleration.
   useReentryGuards: false,
@@ -409,7 +406,7 @@ function getStatus() {
       rejectionCounts: { ...cumulativeRejectionCounts },
       finalEntryCounts: { ...finalEntryCounts },
       lastEntryDecision,
-      reentryPolicy: { inheritedV31FilterEnabled: false, maximumTokenAttempts: CONFIG.MAX_TOKEN_ATTEMPTS,
+      reentryPolicy: { inheritedV31FilterEnabled: false, maximumTokenAttempts: null, tokenAttemptLimitEnabled: false,
         stopLossReentryBlocked: true, openMintDuplicatesBlocked: true },
       poolStability: entryGuard.getStatus(),
       ageWatchlistPending: ageWatchlist.size,
@@ -475,7 +472,7 @@ module.exports = {
     watchlistRecheckMs: CONFIG.WATCHLIST_RECHECK_MS,
     watchlistMaximumAgeMs: CONFIG.WATCHLIST_MAX_AGE_MS,
     watchlistMaximumLiquidityDropPercent: CONFIG.WATCHLIST_MAX_LIQUIDITY_DROP * 100,
-    maximumTokenAttempts: CONFIG.MAX_TOKEN_ATTEMPTS,
+    maximumTokenAttempts: null, tokenAttemptLimitEnabled: false,
     maximumTop10HolderPercent: CONFIG.MAX_TOP10_HOLDER_PERCENT,
     matureActiveHolderPolicy: { maximumTop10HolderPercent: CONFIG.MATURE_MAX_TOP10_HOLDER_PERCENT,
       minimumPairAgeMinutes: CONFIG.MATURE_MIN_PAIR_AGE_MS / 60000,
