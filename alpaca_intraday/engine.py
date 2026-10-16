@@ -11,7 +11,7 @@ from pathlib import Path
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
 from alpaca.trading.requests import (LimitOrderRequest, TakeProfitRequest, StopLossRequest,
     ReplaceOrderRequest, GetOrdersRequest, GetCalendarRequest, GetOrderByIdRequest)
-from common import ET, now, stamp, load, Store, atomic_json, statistics
+from common import ET, now, stamp, load, Store, atomic_json, statistics, entries_feed_allowed
 from broker import Broker, walk_orders
 from scanner import Scanner, fetch_minutes, histories
 from macro import Macro
@@ -387,7 +387,7 @@ class Engine:
             r = self.c['risk']
             can_enter = (t<close-timedelta(minutes=r['no_new_entries_minutes_before_close'])
                          and self.research and self.research['allowed']
-                         and (self.c['broker']['feed']=='sip' or self.c['broker']['allow_iex_entries'])
+                         and entries_feed_allowed(self.c['broker'])
                          and self.day['trades']<r['max_trades_day']
                          and (not self.day['cooldown_until'] or t>=datetime.fromisoformat(self.day['cooldown_until'])))
             if can_enter:
