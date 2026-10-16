@@ -57,6 +57,56 @@ async function getHolderConcentration(tokenAddress, signal) {
   return { verified: concentration != null, top10Percent: concentration };
 }
 
+const geckoTokenQuoteCache = new Map();
+const GECKO_TOKEN_QUOTE_CACHE_MS = 30_000;
+
+async function getGeckoTokenQuote(tokenAddress, signal) {
+  if (!tokenAddress) return null;
+  const key = String(tokenAddress);
+  const cached = geckoTokenQuoteCache.get(key);
+  if (cached && Date.now() - cached.at < GECKO_TOKEN_QUOTE_CACHE_MS) return cached.quote;
+
+  let quote = null;
+  try {
+    const { data } = await retry(() => axios.get(
+      GT_BASE + "/networks/solana/tokens/" + encodeURIComponent(key) + "/pools",
+      {
+        timeout: 12000, signal,
+        headers: { accept: "application/json;version=20230203" },
+        params: { page: 1, include: "base_token,quote_token" }
+      }
+    ));
+    const rows = Array.isArray(data?.data) ? data.data : [];
+    const normalized = rows.map(row => {
+      const attributes = row.attributes || {};
+      const relationships = row.relationships || {};
+      const baseAddress = relationships.base_token?.data?.id?.split("_").at(-1);
+      const quoteAddress = relationships.quote_token?.data?.id?.split("_").at(-1);
+      const priceUsd = baseAddress === key
+        ? Number(attributes.base_token_price_usd)
+        : quoteAddress === key ? Number(attributes.quote_token_price_usd) : NaN;
+      return {
+        priceUsd,
+        liquidityUsd: Number(attributes.reserve_in_usd) || 0,
+        volume24hUsd: Number(attributes.volume_usd?.h24) || 0,
+        pairAddress: attributes.address || row.id?.split("_").at(-1) || null
+      };
+    }).filter(pool => Number.isFinite(pool.priceUsd) && pool.priceUsd > 0 && pool.liquidityUsd > 0)
+      .sort((a, b) => b.liquidityUsd - a.liquidityUsd || b.volume24hUsd - a.volume24hUsd);
+
+    if (normalized[0]) quote = {
+      ...normalized[0],
+      quoteProvider: "GeckoTerminal",
+      quoteWarning: "DexScreener has no quote for this token; price is from GeckoTerminal's top active pool."
+    };
+  } catch (error) {
+    console.warn("Gemini GeckoTerminal fallback quote unavailable:", error.message);
+  }
+
+  geckoTokenQuoteCache.set(key, { at: Date.now(), quote });
+  return quote;
+}
+
 async function getGeckoPools(signal) {
   const { data } = await retry(() => axios.get(
     GT_BASE + "/networks/solana/new_pools",
@@ -110,4 +160,4 @@ async function getPairDetails(pairAddress, signal) {
   return Array.isArray(data?.pairs) ? data.pairs[0] || null : null;
 }
 
-module.exports = { getMintSafety, getHolderConcentration, extractTop10Concentration, getGeckoPools, getDexProfiles, getDexPairs, getPairDetails };
+module.exports = { getMintSafety, getHolderConcentration, extractTop10Concentration, getGeckoPools, getGeckoTokenQuote, getDexProfiles, getDexPairs, getPairDetails };
