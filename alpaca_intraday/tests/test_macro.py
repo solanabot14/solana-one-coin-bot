@@ -7,6 +7,7 @@ def test_parse_official_cpi_release_dates():
     html = """
     <table>
       <tr><th>Reference Month</th><th>Release Date</th><th>Release Time</th></tr>
+      <tr><td>June 2026</td><td>July 14, 2026</td><td>08:30 AM</td></tr>
       <tr><td>July 2026</td><td>Aug. 12, 2026</td><td>08:30 AM</td></tr>
       <tr><td>August 2026</td><td>Sep. 11, 2026</td><td>08:30 AM</td></tr>
       <tr><td>September 2026</td><td>Oct. 14, 2026</td><td>08:30 AM</td></tr>
@@ -16,7 +17,7 @@ def test_parse_official_cpi_release_dates():
     </table>
     """
     assert parse_cpi_schedule(html, 2026) == {
-        "2026-08-12", "2026-09-11", "2026-10-14", "2026-11-10", "2026-12-10"
+        "2026-07-14", "2026-08-12", "2026-09-11", "2026-10-14", "2026-11-10", "2026-12-10"
     }
 
 
