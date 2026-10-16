@@ -7,6 +7,7 @@ const { evaluateCandidate } = require("../geminiFilter");
 const { extractTop10Concentration } = require("../geminiSources");
 const { createGeminiTrader } = require("../geminiTrader");
 const { buildGeminiAnalytics } = require("../geminiAnalytics");
+const { getGeminiPositionMark } = require("../geminiDashboard");
 
 function candidate(overrides = {}) {
   return {
@@ -48,6 +49,37 @@ test("Gemini analytics count partial fills as one completed position", () => {
   assert.equal(result.stats.winners, 1);
   assert.equal(result.completedTrades[0].pnlUsd, 2.5);
   assert.equal(result.completedTrades[0].returnPercent, 25);
+});
+test("Gemini dashboard values an open position from an alternate active pool", async () => {
+  const entryTime = new Date("2026-10-16T16:00:00.000Z").toISOString();
+  let request;
+  const mark = await getGeminiPositionMark({
+    tokenAddress: "Mint", pairAddress: "SavedPool", quantity: 2,
+    amountInvestedUsd: 10, entryTime
+  }, async (address, options) => {
+    request = { address, options };
+    return {
+      pairAddress: "ActivePool", priceUsd: "6",
+      quoteWarning: "Saved pool unavailable; price uses the most active current pool for this token."
+    };
+  }, Date.parse(entryTime) + 60_000);
+
+  assert.equal(request.address, "Mint");
+  assert.equal(request.options.pairAddress, "SavedPool");
+  assert.equal(request.options.allowAlternatePairQuote, true);
+  assert.equal(mark.priceUsd, 6);
+  assert.equal(mark.currentValueUsd, 12);
+  assert.equal(mark.pnl, 2);
+  assert.equal(mark.pnlPercent, 20);
+  assert.equal(mark.pairAddress, "ActivePool");
+  assert.match(mark.quoteWarning, /active pool/);
+});
+test("Gemini dashboard keeps equity unavailable when no valid market quote exists", async () => {
+  const mark = await getGeminiPositionMark({
+    tokenAddress: "Mint", pairAddress: "SavedPool", quantity: 2,
+    amountInvestedUsd: 10, entryTime: new Date().toISOString()
+  }, async () => ({ priceUsd: null }));
+  assert.equal(mark, null);
 });
 test("RugCheck pool accounts are excluded before summing top holder concentration", () => {
   const topHolders = [{ address: "pool-account", owner: "pool-account", pct: 40 }];
