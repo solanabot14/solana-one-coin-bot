@@ -1,0 +1,48 @@
+# Coinbase Bot isolated paper-trading configuration
+mode: paper
+strategy_version: coinbase-momentum-v1
+timezone: America/Puerto_Rico
+end_of_day_flat_time: "23:45"
+scan_interval_seconds: 45
+reconcile_interval_seconds: 60
+max_open_positions: 3
+position_equity_fraction: 0.07
+max_daily_loss_fraction: 0.03
+reentry_cooldown_minutes: 60
+universe:
+  quote_currencies: [USD, USDC]
+  min_24h_volume_usd: 5000000
+  max_spread_percent: 0.30
+  skip_listing_hours: 48
+  stablecoins: [USDC, USDT, DAI, PYUSD, GUSD, USDP, USDS]
+  wrapped_symbols: [WBTC, WETH, WSTETH, CBBTC]
+momentum:
+  min_24h_change_percent: 4
+  max_24h_change_percent: 25
+  relative_volume_15m: 3.0
+  rsi_5m_max: 80
+  ema_fast: 9
+  ema_slow: 21
+  btc_drop_pause_1h_percent: -2
+entry:
+  pullback_min_percent: 1.0
+  pullback_max_percent: 2.5
+  limit_wait_seconds: 25
+  expected_move_fee_multiple: 3.0
+risk:
+  stop_min_percent: 1.5
+  atr_multiple: 1.5
+  stop_max_percent: 2.5
+  take_profit_1_percent: 2.5
+  take_profit_1_fraction: 0.40
+  take_profit_2_percent: 5.0
+  take_profit_2_fraction: 0.30
+  runner_fraction: 0.30
+  runner_trail_percent: 1.75
+  time_stop_minutes: 45
+  time_stop_min_gain_percent: 1.0
+fees:
+  # Estimates only; replace after authenticated transaction-summary lookup.
+  maker_rate: 0.004
+  taker_rate: 0.006
+  paper_slippage_bps: 10
