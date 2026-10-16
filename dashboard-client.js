@@ -300,7 +300,11 @@
     var missingUnrealized=portfolioSystems.filter(function(s){return currentQuoteAvailable(s)?positionPnl(s)===null:!!(s.positions&&s.positions.length);}).map(function(s){return (s.label||s.name)+' ('+health(s).label.toLowerCase()+')';});
     var unrealizedValue=missingUnrealized.length?(sumAvailable(unrealizedValues)===null?'Not recorded':money(sumAvailable(unrealizedValues))+' partial'):money(unrealized);
     var unrealizedSubtitle=missingUnrealized.length?'Known open-position P&L; current quote/data missing for: '+missingUnrealized.join(', '):'Open positions';
-    var totalPnl=sumKnown(portfolioSystems.map(function(s){return s.totalPnl;}));
+    var pnlValues=portfolioSystems.map(function(s){return currentQuoteAvailable(s)?n(s.totalPnl):null;});
+    var totalPnl=sumKnown(pnlValues);
+    var missingPnl=portfolioSystems.filter(function(s){return currentQuoteAvailable(s)?n(s.totalPnl)===null:!!(s.positions&&s.positions.length);}).map(function(s){return (s.label||s.name)+' ('+(currentQuoteAvailable(s)?'P&L unavailable':health(s).label.toLowerCase())+')';});
+    var totalPnlValue=missingPnl.length?(sumAvailable(pnlValues)===null?'Not recorded':money(sumAvailable(pnlValues))+' partial'):money(totalPnl);
+    var totalPnlSubtitle=missingPnl.length?'Known current P&L; missing quote/data for: '+missingPnl.join(', '):'Current equity less starting balance';
     var starting=sumKnown(portfolioSystems.map(function(s){return n(s.account.startingBalance)||null;}));
     var ret=starting&&totalPnl!==null?totalPnl/starting*100:null;
     var activeBots=systems.filter(function(s){return s.running;}).length;
@@ -316,7 +320,7 @@
       kpi("TODAY'S P&L",money(todayPnl(allRealizedEvents)),'Realized sale events, Puerto Rico time',signClass(todayPnl(allRealizedEvents))),
       kpi('TOTAL REALIZED P&L',money(realized),'Recorded sale events, including partial exits',signClass(realized)),
       kpi('UNREALIZED P&L',unrealizedValue,unrealizedSubtitle,signClass(unrealized)),
-      kpi('ALL-TIME P&L',money(totalPnl),'Current equity less starting balance',signClass(totalPnl)),
+      kpi('ALL-TIME P&L',totalPnlValue,totalPnlSubtitle,signClass(totalPnl)),
       kpi('UNRECONCILED',money(totalPnl!==null&&realized!==null&&unrealized!==null?totalPnl-realized-unrealized:null),'All-time P&L minus realized and open P&L',signClass(totalPnl!==null&&realized!==null&&unrealized!==null?totalPnl-realized-unrealized:null)),
       kpi('RETURN',pct(ret),'Across connected accounts',signClass(ret)),
       kpi('WIN RATE',metric(m.winRate,function(x){return x.toFixed(1)+'%';}),'Selected period'),
