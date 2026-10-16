@@ -62,6 +62,12 @@ function validateState(s) {
   }
   return s;
 }
+function estimatePortfolioEquity(s) {
+  return (Number(s.cashUsd) || 0) + (Array.isArray(s.openPositions) ? s.openPositions.reduce((sum, p) => {
+    const mark = Number(p.markPriceUsd || p.marketEntryPrice || p.entryPrice) || 0;
+    return sum + (Number(p.quantity) || 0) * mark * (1 - FEE_RATE - SLIPPAGE_RATE);
+  }, 0) : 0);
+}
 function migrateState(s, timestamp = Date.now()) {
   validateState(s);
   const today = localDayKey(timestamp);
@@ -75,6 +81,8 @@ function migrateState(s, timestamp = Date.now()) {
   }, 0);
   const dailyPnlUsd = s.dailyPnlDate === today && Number.isFinite(s.dailyPnlUsd)
     ? s.dailyPnlUsd : realizedToday;
+  const dailyStartingEquityUsd = s.dailyPnlDate === today && Number.isFinite(Number(s.dailyStartingEquityUsd)) && Number(s.dailyStartingEquityUsd) > 0
+    ? Number(s.dailyStartingEquityUsd) : (estimatePortfolioEquity(s) || Number(s.startingBalanceUsd) || STARTING_BALANCE_USD);
   return validateState({
     ...s,
     coinCooldowns: s.coinCooldowns && typeof s.coinCooldowns === "object" ? s.coinCooldowns : {},
@@ -82,8 +90,7 @@ function migrateState(s, timestamp = Date.now()) {
       ? s.nextEntryUsd : START_SIZE_USD,
     dailyPnlDate: today,
     dailyPnlUsd,
-    dailyStartingEquityUsd: Number.isFinite(Number(s.dailyStartingEquityUsd)) && Number(s.dailyStartingEquityUsd) > 0
-      ? Number(s.dailyStartingEquityUsd) : Number(s.startingBalanceUsd) || STARTING_BALANCE_USD,
+    dailyStartingEquityUsd,
     pausedForDailyLoss: s.pausedForDailyLoss === true || dailyPnlUsd <= -((Number(s.dailyStartingEquityUsd) || Number(s.startingBalanceUsd) || STARTING_BALANCE_USD) * DAILY_LOSS_FRACTION)
   });
 }
