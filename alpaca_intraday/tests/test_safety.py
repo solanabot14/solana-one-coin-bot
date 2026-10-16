@@ -5,6 +5,7 @@ import pytest
 from common import ET,Store,entries_feed_allowed
 from broker import Broker,credentials
 from watchdog import must_flatten
+from engine import recoverable_paper_watchdog_halt
 from macro import parse_cpi,parse_fed
 
 @pytest.mark.parametrize('hour,minute',[(12,45),(12,55),(13,1)])
@@ -18,6 +19,12 @@ def test_heartbeat(c,heartbeat,expected):
     t=datetime(2026,10,15,10,tzinfo=ET)
     h=None if heartbeat is None else dict(time=(t-timedelta(seconds=60 if heartbeat=='old' else 0)).isoformat(),healthy=True)
     assert must_flatten(c,t,t.replace(hour=9,minute=30),t.replace(hour=16),h,False,100)==expected
+
+def test_heartbeat_restart_grace(c):
+    t=datetime(2026,10,15,10,tzinfo=ET)
+    h=dict(time=(t-timedelta(seconds=60)).isoformat(),healthy=False)
+    assert must_flatten(c,t,t.replace(hour=9,minute=30),t.replace(hour=16),h,False,10) is None
+    assert must_flatten(c,t,t.replace(hour=9,minute=30),t.replace(hour=16),h,False,100)=='stale_or_unhealthy_heartbeat'
 
 def test_kill(c): assert must_flatten(c,datetime.now(ET),None,None,None,True,0)=='kill_switch'
 
@@ -39,6 +46,14 @@ def test_iex_entry_gate_is_paper_only(c):
     assert not entries_feed_allowed(b)
     b.update(feed='sip',paper=False)
     assert entries_feed_allowed(b)
+
+def test_watchdog_halt_recovery_requires_flat_paper_no_manual_kill():
+    day={'halted':True,'halt_reason':'kill_switch_or_watchdog'}
+    assert recoverable_paper_watchdog_halt(day,[],[],False,True)
+    assert not recoverable_paper_watchdog_halt(day,['AAPL'],[],False,True)
+    assert not recoverable_paper_watchdog_halt(day,[],['open'],False,True)
+    assert not recoverable_paper_watchdog_halt(day,[],[],True,True)
+    assert not recoverable_paper_watchdog_halt(day,[],[],False,False)
 
 def test_missing_keys(c,monkeypatch):
     monkeypatch.delenv('ALPACA_PAPER_API_KEY',raising=False)
