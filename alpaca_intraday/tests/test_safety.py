@@ -21,6 +21,12 @@ def test_heartbeat(c,heartbeat,expected):
 
 def test_kill(c): assert must_flatten(c,datetime.now(ET),None,None,None,True,0)=='kill_switch'
 
+def test_dated_halt_latch_is_not_watchdog_kill_switch(c,tmp_path):
+    """A dated halt blocks entries in Engine; only KILL forces watchdog flatten."""
+    # This verifies the intended distinction directly through a small helper
+    # kept pure so production watchdog boot/API behavior is not started in test.
+    assert must_flatten(c,datetime.now(ET),None,None,None,False,0) is None
+
 def test_live_gate(c):
     c['broker']['paper']=False
     with pytest.raises(ValueError,match='Live mode'): credentials(c)
