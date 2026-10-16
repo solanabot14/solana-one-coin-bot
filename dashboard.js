@@ -47,8 +47,6 @@ function authorized(req, config) {
 const page = fs.readFileSync(path.join(__dirname, "terminal.html"), "utf8");
 
 const CANDLE_BREAKOUT_DASHBOARD_API = "https://pubx-fast-momentum-production.up.railway.app/api/data";
-const PROFITABILITY_LAB_API = "https://b31-profitability-lab-production.up.railway.app/api/lab-summary";
-
 async function fetchCandleBreakoutDashboard() {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
@@ -63,23 +61,6 @@ async function fetchCandleBreakoutDashboard() {
   } catch (error) {
     console.error("Pullback + Reclaim Momentum dashboard feed unavailable:", error.message);
     return { data: null, status: null, error: "Pullback + Reclaim Momentum data is temporarily unavailable." };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function fetchProfitabilityLabDashboard() {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-  try {
-    const response = await fetch(PROFITABILITY_LAB_API, { signal: controller.signal });
-    if (!response.ok) return { data: null, error: "Profitability Lab feed unavailable (" + response.status + ")." };
-    const body = await response.json();
-    if (!body || body.paperOnly !== true) return { data: null, error: "Profitability Lab did not return paper account data." };
-    return { data: body, error: null };
-  } catch (error) {
-    console.error("Profitability Lab dashboard feed unavailable:", error.message);
-    return { data: null, error: "Profitability Lab data is temporarily unavailable." };
   } finally {
     clearTimeout(timeout);
   }
@@ -352,14 +333,13 @@ function createDashboardServer({ config = getConfig(), controls = bot,
             running: geminiBot.getStatus(), lastScanAt: geminiState.lastScanAt
           };
         })();
-        const [v31, candleBreakout, profitabilityLab, profitSniperData] = await Promise.all([
+        const [v31, candleBreakout, profitSniperData] = await Promise.all([
           buildDashboardData(baseAccount, sharedMarketData),
           fetchCandleBreakoutDashboard(),
-          fetchProfitabilityLabDashboard(),
           buildDashboardData(profitSniperAccount, sharedMarketData, { allowAlternatePairQuote: true }),
         ]);
         const outcomeData = outcomeBot.getDashboardData(), stockData = stockBot.getDashboardData();
-        const equities = {v31:v31.equity,candle:candleBreakout.data?.equity,lab:profitabilityLab.data?.equity,'profit-sniper':profitSniperData.equity,gemini:geminiData.equity,outcome:outcomeData.equity,stock:stockData.equity,swarm:swarm.getDashboardState().totalCapital};
+        const equities = {v31:v31.equity,candle:candleBreakout.data?.equity,'profit-sniper':profitSniperData.equity,gemini:geminiData.equity,outcome:outcomeData.equity,stock:stockData.equity,swarm:swarm.getDashboardState().totalCapital};
         if (Object.values(equities).every(v => typeof v === 'number' && Number.isFinite(v))) equities.total = Object.values(equities).reduce((s,v) => s+v,0);
         let equityRows = equityHistory.getRows();
         try { equityRows = equityHistory.record(equities); } catch (error) { console.error('Equity history persistence:', error.message); }
@@ -369,8 +349,6 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           candleBreakout: candleBreakout.data,
           candleBreakoutStatus: candleBreakout.status,
           candleBreakoutError: candleBreakout.error,
-          profitabilityLab: profitabilityLab.data,
-          profitabilityLabError: profitabilityLab.error,
           profitSniper: profitSniperData,
           profitSniperStatus: profitSniper.getStatus(),
           gemini: geminiData,
