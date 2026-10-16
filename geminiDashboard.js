@@ -1,13 +1,29 @@
 "use strict";
 
-async function getGeminiPositionMark(position, marketData, now = Date.now()) {
-  if (!position || typeof marketData !== "function") return null;
+async function getGeminiPositionMark(position, marketData, now = Date.now(), fallbackMarketData = null) {
+  if (!position) return null;
 
-  const quote = await marketData(position.tokenAddress, {
-    pairAddress: position.pairAddress || undefined,
-    allowAlternatePairQuote: true
-  });
-  const priceUsd = Number(quote?.priceUsd);
+  let quote = null;
+  if (typeof marketData === "function") {
+    try {
+      quote = await marketData(position.tokenAddress, {
+        pairAddress: position.pairAddress || undefined,
+        allowAlternatePairQuote: true
+      });
+    } catch (_) {}
+  }
+
+  let priceUsd = Number(quote?.priceUsd);
+  if (!(priceUsd > 0) || !Number.isFinite(priceUsd)) {
+    try {
+      quote = typeof fallbackMarketData === "function"
+        ? await fallbackMarketData(position.tokenAddress)
+        : null;
+    } catch (_) {
+      quote = null;
+    }
+    priceUsd = Number(quote?.priceUsd);
+  }
   if (!(priceUsd > 0) || !Number.isFinite(priceUsd)) return null;
 
   const quantity = Number(position.quantity) || 0;
@@ -22,6 +38,7 @@ async function getGeminiPositionMark(position, marketData, now = Date.now()) {
     pnlPercent: investedUsd > 0 ? pnl / investedUsd * 100 : 0,
     holdTimeMs: Math.max(0, now - Date.parse(position.entryTime)),
     pairAddress: quote.pairAddress || position.pairAddress || null,
+    quoteProvider: quote.quoteProvider || "DexScreener",
     quoteWarning: quote.quoteWarning || null
   };
 }
