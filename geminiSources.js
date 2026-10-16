@@ -97,7 +97,7 @@ async function getGeckoTokenQuote(tokenAddress, signal) {
     if (normalized[0]) quote = {
       ...normalized[0],
       quoteProvider: "GeckoTerminal",
-      quoteWarning: "DexScreener has no quote for this token; price is from GeckoTerminal's top active pool."
+      quoteWarning: "DexScreener has no quote for this token; price is from GeckoTerminal's highest-liquidity pool."
     };
   } catch (error) {
     console.warn("Gemini GeckoTerminal fallback quote unavailable:", error.message);
