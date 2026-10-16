@@ -49,15 +49,42 @@ function freshState() {
     dailyPnlDate: new Date().toISOString().slice(0, 10), pausedForDailyLoss: false
   };
 }
+function localDayKey(timestamp) {
+  return new Intl.DateTimeFormat("en-CA", {timeZone:"America/Puerto_Rico",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(timestamp));
+}
 function validateState(s) {
   if (!s || s.schemaVersion !== 1 || !Number.isFinite(s.cashUsd) || !Array.isArray(s.openPositions) ||
-      !Array.isArray(s.history) || !Array.isArray(s.rejections) || s.openPositions.length > MAX_OPEN_POSITIONS ||
-      !Number.isFinite(s.nextEntryUsd)) throw new Error("Invalid Coinbase Bot paper state; refusing to reset it.");
+      !Array.isArray(s.history) || !Array.isArray(s.rejections)) {
+    throw new Error("Invalid Coinbase Bot paper state; refusing to reset it.");
+  }
   return s;
+}
+function migrateState(s, timestamp = Date.now()) {
+  validateState(s);
+  const today = localDayKey(timestamp);
+  const history = s.history;
+  const realizedToday = history.reduce((sum, row) => {
+    if (String(row.type || "").toUpperCase() !== "SELL") return sum;
+    const time = Date.parse(row.exitTime || row.time || row.timestamp || "");
+    if (!Number.isFinite(time) || localDayKey(time) !== today) return sum;
+    const pnl = Number(row.pnlUsd ?? row.pnl ?? row.realizedPnl);
+    return sum + (Number.isFinite(pnl) ? pnl : 0);
+  }, 0);
+  const dailyPnlUsd = s.dailyPnlDate === today && Number.isFinite(s.dailyPnlUsd)
+    ? s.dailyPnlUsd : realizedToday;
+  return validateState({
+    ...s,
+    coinCooldowns: s.coinCooldowns && typeof s.coinCooldowns === "object" ? s.coinCooldowns : {},
+    nextEntryUsd: Number.isFinite(s.nextEntryUsd) && s.nextEntryUsd > 0
+      ? Math.min(MAX_SIZE_USD, s.nextEntryUsd) : START_SIZE_USD,
+    dailyPnlDate: today,
+    dailyPnlUsd,
+    pausedForDailyLoss: s.pausedForDailyLoss === true || dailyPnlUsd <= -DAILY_LOSS_LIMIT_USD
+  });
 }
 function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThis.fetch, timers = globalThis, now = () => Date.now(), newsProvider = null } = {}) {
   let state = freshState();
-  if (io.existsSync(file)) state = validateState(JSON.parse(io.readFileSync(file, "utf8")));
+  if (io.existsSync(file)) state = migrateState(JSON.parse(io.readFileSync(file, "utf8")), now());
   let scanTimer = null, monitorTimer = null, scanning = false, monitoring = false;
   let lastMarketScan = [];
   let productCache = [], productCacheAt = 0;
