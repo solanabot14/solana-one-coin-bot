@@ -54,6 +54,8 @@ def test_watchdog_halt_recovery_requires_flat_paper_no_manual_kill():
     assert not recoverable_paper_watchdog_halt(day,[],['open'],False,True)
     assert not recoverable_paper_watchdog_halt(day,[],[],True,True)
     assert not recoverable_paper_watchdog_halt(day,[],[],False,False)
+    day['halt_reason']='shutdown'
+    assert recoverable_paper_watchdog_halt(day,[],[],False,True)
 
 def test_missing_keys(c,monkeypatch):
     monkeypatch.delenv('ALPACA_PAPER_API_KEY',raising=False)
