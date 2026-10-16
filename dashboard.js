@@ -10,6 +10,7 @@ const { buildDashboardData } = require("./dashboardData");
 const swarm = require("./janMvpBot");
 const profitSniper = require("./profitSniper");
 const geminiBot = require("./geminiBot");
+const { getGeckoTokenQuote } = require("./geminiSources");
 const geminiTrader = require("./geminiTrader");
 const { buildGeminiAnalytics } = require("./geminiAnalytics");
 const { getGeminiPositionMark } = require("./geminiDashboard");
@@ -300,7 +301,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         const geminiData = await (async () => {
           let live = null;
           const position = geminiState.position;
-          if (position) live = await getGeminiPositionMark(position, sharedMarketData);
+          if (position) live = await getGeminiPositionMark(position, sharedMarketData, Date.now(), getGeckoTokenQuote);
           const geminiAnalytics = buildGeminiAnalytics(geminiState, live);
           const completedTrades = geminiAnalytics.completedTrades.map(t => ({
             ...t, pnl: t.pnlUsd, amountInvested: t.investedUsd, pnlPercent: t.returnPercent,
