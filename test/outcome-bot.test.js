@@ -115,3 +115,22 @@ test("old Coinbase positions keep their previous exit rules",async()=>{
     assert.match(bot.getState().history[0].reason,/LEGACY TAKE PROFIT \+5%/);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+test("migrates older Coinbase state without dropping cash, history, or open positions",()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),"cb-migrate-"));
+  try{
+    const at=Date.parse("2026-10-16T12:00:00Z"),file=path.join(dir,"state.json");
+    const openPositions=Array.from({length:4},(_,i)=>({id:"open-"+i,productId:"COIN"+i+"-USD",quantity:1}));
+    const history=[{type:"SELL",positionId:"closed-today",pnl:-7,exitTime:new Date(at-3600000).toISOString()}];
+    fs.writeFileSync(file,JSON.stringify({schemaVersion:1,startingBalanceUsd:200,cashUsd:160,openPositions,history,rejections:[],lastScanAt:null,lastError:null,running:true,dailyPnlDate:"2026-10-15"}));
+    const bot=createOutcomeBot({file,now:()=>at,timers:{setInterval:()=>null,clearInterval:()=>{}},fetchImpl:()=>new Promise(()=>{})});
+    const state=bot.getState();
+    assert.equal(state.cashUsd,160);
+    assert.equal(state.openPositions.length,4);
+    assert.deepEqual(state.history,history);
+    assert.equal(state.nextEntryUsd,10);
+    assert.equal(state.dailyPnlUsd,-7);
+    assert.equal(state.pausedForDailyLoss,true);
+    assert.deepEqual(state.coinCooldowns,{});
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
