@@ -8,7 +8,6 @@ const { createCoinbaseNews } = require("./coinbaseNews");
 const STARTING_BALANCE_USD = 200;
 const MAX_OPEN_POSITIONS = 3;
 const START_SIZE_USD = 10;
-const MAX_SIZE_USD = 25;
 const COMPOUND_RATE = 0.10;
 const HARD_STOP_PERCENT = 2.0;
 const TP1_PERCENT = 4.5;
@@ -18,7 +17,7 @@ const TP2_SELL_FRACTION = 0.30;
 const RUNNER_TRAIL_PERCENT = 1.75;
 const MAX_HOLD_MS = 45 * 60 * 1000;
 const LEGACY_MAX_HOLD_MS = 24 * 60 * 60 * 1000;
-const DAILY_LOSS_LIMIT_USD = 6;
+const DAILY_LOSS_FRACTION = 0.03;
 const MIN_DAILY_GAIN_PERCENT = 4;
 const MAX_DAILY_GAIN_PERCENT = 25;
 const MIN_DAILY_VOLUME_USD = 5_000_000;
@@ -35,7 +34,11 @@ const SCAN_INTERVAL_MS = 45_000;
 const MONITOR_INTERVAL_MS = 5_000;
 const PRODUCTS = ["ETH-USD","SOL-USD","XRP-USD","ADA-USD","DOGE-USD","LINK-USD","AVAX-USD","DOT-USD","LTC-USD","BCH-USD","UNI-USD","XLM-USD"];
 const BASE_URL = "https://api.exchange.coinbase.com";
-const STRATEGY_VERSION = "COINBASE_INTRADAY_MOMENTUM_V3";
+const STRATEGY_VERSION = "COINBASE_INTRADAY_MOMENTUM_V4";
+const MIN_POSITION_EQUITY_FRACTION = 0.05;
+const MAX_POSITION_EQUITY_FRACTION = 0.10;
+const REQUEST_INTERVAL_MS = 200;
+const MAX_429_RETRIES = 3;
 
 function defaultFile() {
   const dir = process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DATA_DIR || __dirname;
@@ -45,8 +48,8 @@ function freshState() {
   return {
     schemaVersion: 1, startingBalanceUsd: STARTING_BALANCE_USD, cashUsd: STARTING_BALANCE_USD, coinCooldowns: {},
     openPositions: [], history: [], rejections: [], lastScanAt: null, lastError: null,
-    running: false, nextEntryUsd: START_SIZE_USD, dailyPnlUsd: 0,
-    dailyPnlDate: new Date().toISOString().slice(0, 10), pausedForDailyLoss: false
+    running: false, nextEntryUsd: START_SIZE_USD, dailyPnlUsd: 0, dailyStartingEquityUsd: STARTING_BALANCE_USD,
+    dailyPnlDate: localDayKey(Date.now()), pausedForDailyLoss: false
   };
 }
 function localDayKey(timestamp) {
@@ -76,10 +79,12 @@ function migrateState(s, timestamp = Date.now()) {
     ...s,
     coinCooldowns: s.coinCooldowns && typeof s.coinCooldowns === "object" ? s.coinCooldowns : {},
     nextEntryUsd: Number.isFinite(s.nextEntryUsd) && s.nextEntryUsd > 0
-      ? Math.min(MAX_SIZE_USD, s.nextEntryUsd) : START_SIZE_USD,
+      ? s.nextEntryUsd : START_SIZE_USD,
     dailyPnlDate: today,
     dailyPnlUsd,
-    pausedForDailyLoss: s.pausedForDailyLoss === true || dailyPnlUsd <= -DAILY_LOSS_LIMIT_USD
+    dailyStartingEquityUsd: Number.isFinite(Number(s.dailyStartingEquityUsd)) && Number(s.dailyStartingEquityUsd) > 0
+      ? Number(s.dailyStartingEquityUsd) : Number(s.startingBalanceUsd) || STARTING_BALANCE_USD,
+    pausedForDailyLoss: s.pausedForDailyLoss === true || dailyPnlUsd <= -((Number(s.dailyStartingEquityUsd) || Number(s.startingBalanceUsd) || STARTING_BALANCE_USD) * DAILY_LOSS_FRACTION)
   });
 }
 function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThis.fetch, timers = globalThis, now = () => Date.now(), newsProvider = null } = {}) {
@@ -88,6 +93,8 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
   let scanTimer = null, monitorTimer = null, scanning = false, monitoring = false;
   let lastMarketScan = [];
   let productCache = [], productCacheAt = 0;
+  let lastRequestAt = 0;
+  let requestQueue = Promise.resolve();
   const news = newsProvider || createCoinbaseNews({ fetchImpl, now });
 
   function commit(next) {
@@ -101,18 +108,47 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     state = next;
   }
   function localDayKey(timestamp) { return new Intl.DateTimeFormat("en-CA", {timeZone:"America/Puerto_Rico",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(timestamp)); }
+  function portfolioEquity(source = state) {
+    return source.cashUsd + source.openPositions.reduce((sum, p) => {
+      const mark = Number(p.markPriceUsd || p.marketEntryPrice || p.entryPrice) || 0;
+      return sum + (Number(p.quantity) || 0) * mark * (1 - FEE_RATE - SLIPPAGE_RATE);
+    }, 0);
+  }
+  function dailyLossLimitUsd(source = state) {
+    return Math.max(0, Number(source.dailyStartingEquityUsd) || Number(source.startingBalanceUsd) || STARTING_BALANCE_USD) * DAILY_LOSS_FRACTION;
+  }
   function localClock(timestamp) { return new Intl.DateTimeFormat("en-GB", {timeZone:"America/Puerto_Rico",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).format(new Date(timestamp)); }
   function isEndOfDay(timestamp = now()) { return localClock(timestamp) >= END_OF_DAY_PR; }
   function rotateDay(next) {
     const today = localDayKey(now());
     if (next.dailyPnlDate !== today) {
-      next.dailyPnlDate = today; next.dailyPnlUsd = 0; next.pausedForDailyLoss = false; next.coinCooldowns = {};
+      next.dailyPnlDate = today; next.dailyPnlUsd = 0; next.dailyStartingEquityUsd = portfolioEquity(next); next.pausedForDailyLoss = false; next.coinCooldowns = {};
     }
   }
+  async function waitForRequestSlot() {
+    const previous = requestQueue;
+    let release;
+    requestQueue = new Promise(resolve => { release = resolve; });
+    await previous;
+    try {
+      const delay = Math.max(0, REQUEST_INTERVAL_MS - (now() - lastRequestAt));
+      if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+      lastRequestAt = now();
+    } finally { release(); }
+  }
   async function requestJson(url, signal) {
-    const response = await fetchImpl(url, { signal: signal || AbortSignal.timeout(8000), headers: { "Accept": "application/json", "User-Agent": "CoinbaseTopGainerBot-Paper/2.0" } });
-    if (!response.ok) throw new Error("Coinbase market data HTTP " + response.status);
-    return response.json();
+    for (let attempt = 0; ; attempt++) {
+      await waitForRequestSlot();
+      const response = await fetchImpl(url, { signal: signal || AbortSignal.timeout(8000), headers: { "Accept": "application/json", "User-Agent": "CoinbaseTopGainerBot-Paper/2.0" } });
+      if (response.status === 429 && attempt < MAX_429_RETRIES) {
+        const retryAfter = Number(response.headers?.get?.("Retry-After"));
+        const delay = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 10_000) : 250 * (2 ** attempt);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      if (!response.ok) throw new Error("Coinbase market data HTTP " + response.status);
+      return response.json();
+    }
   }
   async function getStats(productId, signal) { return requestJson(BASE_URL + "/products/" + encodeURIComponent(productId) + "/stats", signal); }
   async function getTicker(productId, signal) { return requestJson(BASE_URL + "/products/" + encodeURIComponent(productId) + "/ticker", signal); }
@@ -197,8 +233,10 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     const pullbackSetup = !!(closed.length >= 21 && pullbackPercent >= 1 && pullbackPercent <= 2.5 &&
       current && previous && current.close > previous.high && current.close > current.open &&
       current.volume <= (average15mVolume / 3 || current.volume));
-    const breakoutSetup = !!(closed.length >= 21 && current && priorResistance > 0 &&
-      current.close > priorResistance && current.close > current.open);
+    const retest = previous && priorResistance > 0 && previous.low <= priorResistance * 1.003 &&
+      previous.close >= priorResistance * 0.997;
+    const breakoutSetup = !!(closed.length >= 21 && current && retest &&
+      current.close > Math.max(previous.high, priorResistance) && current.close > current.open);
     const setup = pullbackSetup ? "PULLBACK_RECLAIM" : (breakoutSetup ? "BREAKOUT_RETEST" : null);
     const recentHigh = closed.length ? Math.max(...closed.slice(-12).map(c => c.high)) : 0;
     const offHighPercent = recentHigh > 0 ? Math.max(0, (recentHigh - last) / recentHigh * 100) : 0;
@@ -247,7 +285,9 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     if (next.openPositions.some(p=>p.productId===candidate.productId)) return {success:false,error:"Coin already has an open position"};
     if (Number(next.coinCooldowns?.[candidate.productId]) > now()) return {success:false,error:"Coin re-entry cooldown active"};
     if (candidate.newsRisk) return {success:false,error:"Recent risk headline: "+candidate.newsRisk.title};
-    const notional = Math.min(next.nextEntryUsd,MAX_SIZE_USD,next.cashUsd/(1+FEE_RATE));
+    const equityUsd = portfolioEquity(next);
+    const notional = Math.min(Math.max(next.nextEntryUsd, equityUsd * MIN_POSITION_EQUITY_FRACTION),
+      equityUsd * MAX_POSITION_EQUITY_FRACTION, next.cashUsd/(1+FEE_RATE));
     if (!(candidate.priceUsd>0) || notional<1) return {success:false,error:"Insufficient paper cash or invalid quote"};
     const entryPrice = candidate.priceUsd*(1+SLIPPAGE_RATE), quantity=notional/entryPrice, fee=notional*FEE_RATE;
     const costBasisUsd=notional+fee;
@@ -281,6 +321,7 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     const remainingQty=Math.max(0,quantityBefore-qty);
     const final=remainingQty<=Math.max(1e-12,originalQty*1e-8);
     next.cashUsd += proceeds; next.dailyPnlUsd += pnlUsd;
+    if (next.dailyPnlUsd <= -dailyLossLimitUsd(next)) next.pausedForDailyLoss = true;
     const totalRealized=(Number(p.realizedPnlUsd)||0)+pnlUsd;
     next.history.unshift({type:"SELL",id:randomUUID(),positionId:p.id,productId:p.productId,tokenAddress:p.productId,symbol:p.symbol,
       entryPrice:p.entryPrice,exitPrice,quantity:qty,amountUsd:proceeds,saleValueUsd:proceeds,costBasisUsd:allocatedCost,amountInvested:allocatedCost,
@@ -290,13 +331,13 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
       reason,exitReason:reason,partial:!final,mode:"PAPER",strategy:p.strategy});
     if(final){
       next.openPositions.splice(index,1);
-      if(totalRealized>0)next.nextEntryUsd=Math.min(MAX_SIZE_USD,Math.round(next.nextEntryUsd*(1+COMPOUND_RATE)*100)/100); else next.nextEntryUsd=START_SIZE_USD;
+      if(totalRealized>0)next.nextEntryUsd=Math.round(next.nextEntryUsd*(1+COMPOUND_RATE)*100)/100; else next.nextEntryUsd=START_SIZE_USD;
     } else {
       p.quantity=remainingQty;p.remainingCostBasisUsd=Math.max(0,remainingCost-allocatedCost);p.costBasisUsd=p.remainingCostBasisUsd;p.realizedPnlUsd=totalRealized;
       Object.assign(p,patch);
       next.openPositions[index]=p;
     }
-    if(next.dailyPnlUsd<=-DAILY_LOSS_LIMIT_USD)next.pausedForDailyLoss=true;
+    if(next.dailyPnlUsd<=-dailyLossLimitUsd(next))next.pausedForDailyLoss=true;
     commit(next); return {success:true,trade:structuredClone(next.history[0]),final};
   }
   function closePosition(positionId, markPrice, reason) {
@@ -397,9 +438,9 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     const equity=state.cashUsd+livePositions.reduce((sum,row)=>sum+Number(row.live.currentValue||0),0),totalPnl=equity-state.startingBalanceUsd;
     return {label:"Coinbase Bot",paperOnly:true,mode:"PAPER",exchange:"Coinbase",strategyVersion:STRATEGY_VERSION,
       strategy:"Paper-only Coinbase spot momentum. Universe: liquid USD/USDC pairs; +4% to +25% daily gain; 24h volume at least $5M; 15m relative volume at least 3x; above session VWAP, EMA9>EMA21, RSI<80; confirmed pullback reclaim or breakout. BTC sell-off, spread, news, daily loss, cooldown and PR end-of-day guards. Exit 40% at +4.5%, 30% at +7%, trail 30% by 1.75%; ATR stop 1.5%-2.5%; 45m time stop. No live order execution.",
-      startingBalance:state.startingBalanceUsd,startingBalanceUsd:state.startingBalanceUsd,cashBalance:state.cashUsd,equity,totalPnl,totalPnlPercent:state.startingBalanceUsd>0?totalPnl/state.startingBalanceUsd*100:0,nextTradeSizeUsd:state.nextEntryUsd,compoundIncrementPercent:COMPOUND_RATE*100,maxOpenPositions:MAX_OPEN_POSITIONS,estimatedFeePercentPerSide:FEE_RATE*100,estimatedSlippagePercentPerSide:SLIPPAGE_RATE*100,completedTrades,history:state.history,livePositions,openPositions:livePositions,rejections:state.rejections.slice(0,30),lastScanAt:state.lastScanAt,lastError:state.lastError,running:state.running,pausedForDailyLoss:state.pausedForDailyLoss,dailyPnlUsd:state.dailyPnlUsd,candidates:lastMarketScan.slice(0,15),news:news.getState(),dailyMoverUniverseSize:productCache.length};
+      startingBalance:state.startingBalanceUsd,startingBalanceUsd:state.startingBalanceUsd,cashBalance:state.cashUsd,equity,totalPnl,totalPnlPercent:state.startingBalanceUsd>0?totalPnl/state.startingBalanceUsd*100:0,nextTradeSizeUsd:state.nextEntryUsd,compoundIncrementPercent:COMPOUND_RATE*100,positionEquityFractionMin:MIN_POSITION_EQUITY_FRACTION,positionEquityFractionMax:MAX_POSITION_EQUITY_FRACTION,dailyLossLimitUsd:dailyLossLimitUsd(state),maxOpenPositions:MAX_OPEN_POSITIONS,estimatedFeePercentPerSide:FEE_RATE*100,estimatedSlippagePercentPerSide:SLIPPAGE_RATE*100,completedTrades,history:state.history,livePositions,openPositions:livePositions,rejections:state.rejections.slice(0,30),lastScanAt:state.lastScanAt,lastError:state.lastError,running:state.running,pausedForDailyLoss:state.pausedForDailyLoss,dailyPnlUsd:state.dailyPnlUsd,candidates:lastMarketScan.slice(0,15),news:news.getState(),dailyMoverUniverseSize:productCache.length};
   }
   return {start,stop,scanOnce,monitorOnce,buy,closePosition,closeAll,getStatus,getDashboardData,getState:()=>structuredClone(state),assessCandidate,file};
 }
 const instance=createOutcomeBot();
-module.exports={createOutcomeBot,assessCandidate:(...a)=>instance.assessCandidate(...a),PRODUCTS,constants:{MAX_OPEN_POSITIONS,START_SIZE_USD,MAX_SIZE_USD,COMPOUND_RATE,HARD_STOP_PERCENT,TP1_PERCENT,TP2_PERCENT,RUNNER_TRAIL_PERCENT,MAX_HOLD_MS,DAILY_LOSS_LIMIT_USD,MIN_DAILY_GAIN_PERCENT,MAX_DAILY_GAIN_PERCENT,MIN_DAILY_VOLUME_USD,MAX_SCAN_PRODUCTS,FEE_RATE,SLIPPAGE_RATE},...instance};
+module.exports={createOutcomeBot,assessCandidate:(...a)=>instance.assessCandidate(...a),PRODUCTS,constants:{MAX_OPEN_POSITIONS,START_SIZE_USD,COMPOUND_RATE,HARD_STOP_PERCENT,TP1_PERCENT,TP2_PERCENT,RUNNER_TRAIL_PERCENT,MAX_HOLD_MS,DAILY_LOSS_FRACTION,MIN_POSITION_EQUITY_FRACTION,MAX_POSITION_EQUITY_FRACTION,MIN_DAILY_GAIN_PERCENT,MAX_DAILY_GAIN_PERCENT,MIN_DAILY_VOLUME_USD,MAX_SCAN_PRODUCTS,FEE_RATE,SLIPPAGE_RATE},...instance};
