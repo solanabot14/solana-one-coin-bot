@@ -1,5 +1,6 @@
 "use strict";
 
+const http = require("node:http");
 const { createOutcomeBot } = require("./outcomeBot");
 
 const bot = createOutcomeBot();
@@ -37,6 +38,31 @@ function report() {
   }
 }
 
+const server = http.createServer((req, res) => {
+  if (req.method !== "GET") {
+    res.writeHead(405, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "GET only" }));
+    return;
+  }
+  if (req.url === "/health") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true, mode: "PAPER" }));
+    return;
+  }
+  let data;
+  if (req.url === "/api/outcome/data") data = bot.getDashboardData();
+  else if (req.url === "/api/outcome/status") data = bot.getStatus();
+  else {
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "Not found" }));
+    return;
+  }
+  res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+  res.end(JSON.stringify(data));
+});
+server.listen(Number(process.env.PORT || 3000), "0.0.0.0", () => {
+  console.log("COINBASE_PAPER_API_READY", JSON.stringify({ port: Number(process.env.PORT || 3000) }));
+});
 bot.start();
 report();
 const reportTimer = setInterval(report, 60_000);
@@ -44,6 +70,7 @@ const reportTimer = setInterval(report, 60_000);
 function shutdown() {
   clearInterval(reportTimer);
   bot.stop();
+  server.close();
   console.log("COINBASE_PAPER_STOPPED", new Date().toISOString());
   process.exit(0);
 }
