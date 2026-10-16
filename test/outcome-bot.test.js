@@ -28,7 +28,7 @@ function candles(at){
     const open= i===287 ? 110.1 : close-0.08;
     const high= i===276 ? 113 : (i===286 ? 110.35 : (i===287 ? 110.7 : close+0.12));
     const low= i===278 ? 109.1 : close-0.14;
-    rows.push({time:first+i*300,open,high,low,close,volume:i>=285?5000:1000});
+    rows.push({time:first+i*300,open,high,low,close,volume:i>=285&&i<287?5000:1000});
   }
   return rows;
 }
@@ -44,7 +44,7 @@ test("accepts a strong top-gainer pullback reclaim",()=>{
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
-test("80%+ gainers require pullback instead of a raw breakout",()=>{
+test("rejects movers beyond the 25% chase cap",()=>{
   const {bot,dir}=fixture();
   try{
     const at=1_800_000_000_000,first=Math.floor(at/300_000)*300-13*300;
