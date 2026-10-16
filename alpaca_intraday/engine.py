@@ -20,6 +20,11 @@ from streams import Streams
 
 TERMINAL = {'filled','canceled','expired','rejected','replaced'}
 
+def recoverable_paper_watchdog_halt(day, positions, orders, manual_kill, paper):
+    """Only clear an automated dated latch after a flat, order-free paper restart."""
+    return (paper and not manual_kill and not positions and not orders
+            and day.get('halted') and day.get('halt_reason')=='kill_switch_or_watchdog')
+
 def research_job(config,t,opening):
     log = Store(config['runtime']['state_dir'])
     try:
@@ -72,8 +77,18 @@ class Engine:
         account = self.b.read(self.b.trade.get_account)
         if self.day.get('date') != stamp(now()):
             self.reset_day(account)
+        positions = self.b.read(self.b.trade.get_all_positions)
+        open_orders = self.b.orders()
+        if recoverable_paper_watchdog_halt(self.day,positions,open_orders,
+                (self.path/'KILL').exists(),self.c['broker']['paper']):
+            marker=self.path/('HALT-'+stamp(now()))
+            marker.unlink(missing_ok=True)
+            self.day['halted']=False
+            self.day['halt_reason']=None
+            self.persist()
+            self.log.event('paper_watchdog_halt_recovered',reason='flat_no_orders_no_manual_kill')
         # Never infer orphan cost basis or keep inherited exposure overnight.
-        if self.b.read(self.b.trade.get_all_positions) or self.b.orders() or self.meta:
+        if positions or open_orders or self.meta:
             self.halt('restart_with_exposure_or_unreconciled_state')
             self.b.flatten_step('restart_recovery')
         self.stream.start(['SPY'])
