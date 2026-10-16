@@ -354,7 +354,14 @@ class Engine:
         else:
             flatten = False
         if self.day['halted']:
-            flat = self.b.flatten_step(self.day.get('halt_reason','halt'))
+            # A latched halt prevents new entries for the session. Once the
+            # account is flat, let the independent watchdog continue monitoring
+            # the close without repeatedly issuing account-wide cancel/close
+            # requests on every engine tick.
+            if positions or self.b.orders() or self.meta:
+                flat = self.b.flatten_step(self.day.get('halt_reason','halt'))
+            else:
+                flat = True
             self.heartbeat(self.stream.healthy())
             if flat and not self.meta:
                 self.report()
