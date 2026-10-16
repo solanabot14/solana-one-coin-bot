@@ -16,9 +16,21 @@ function candidate(productId="SOL-USD",priceUsd=100){
   return {productId,symbol:productId.split("-")[0],priceUsd,dayChangePercent:25,hourChangePercent:3,fiveMinChangePercent:1,volumeUsd:5_000_000,pullbackPercent:3,volumeRatio:1.5,entrySetup:"PULLBACK_RECLAIM",score:100};
 }
 function candles(at){
-  const first=Math.floor(at/300_000)*300-13*300;
-  const closes=[100,102,104,106,108,110,109,108,107.5,108,108.5,108.8,110.5];
-  return closes.map((close,i)=>({time:first+i*300,open:i===12?109.5:close-0.2,low:i===8?106.5:close-0.4,high:i===11?109.2:(i===12?110.7:close+0.3),close,volume:i===12?1300:1000}));
+  const end=Math.floor(at/300_000)*300;
+  const first=end-288*300;
+  const rows=[];
+  for(let i=0;i<288;i++){
+    let close=90+i*(20/287)+Math.sin(i*0.9)*0.18;
+    if(i>=276&&i<280) close=112.5-(i-276)*0.7;
+    if(i>=280&&i<287) close=109.7+(i-280)*0.10;
+    if(i===286) close=110.0;
+    if(i===287) close=110.5;
+    const open= i===287 ? 110.1 : close-0.08;
+    const high= i===276 ? 113 : (i===286 ? 110.35 : (i===287 ? 110.7 : close+0.12));
+    const low= i===278 ? 109.1 : close-0.14;
+    rows.push({time:first+i*300,open,high,low,close,volume:i>=285?5000:1000});
+  }
+  return rows;
 }
 
 test("accepts a strong top-gainer pullback reclaim",()=>{
