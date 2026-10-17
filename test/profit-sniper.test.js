@@ -4,7 +4,7 @@ const { constants, qualifiesMomentumCandidate, getMomentumFailureReasons, getBuy
 function candidate(overrides = {}) {
   return { tokenAddress: "Token111", pairAddress: "Pool111", chainId: "solana",
     pairCreatedAt: Date.now() - 15 * 60 * 1000, liquidityUsd: 25000, volume24h: 0,
-    volume5m: 2000, buys5m: 20, sells5m: 10, priceChange5m: 2,
+    volume5m: 2000, buys5m: 20, sells5m: 10, priceChange5m: 2, priceChange1h: 3,
     momentumPattern: { ready: true }, signal: "AVOID", ...overrides };
 }
 test("Sniper uses 5m-24h age, activity, liquidity and rebound gates", () => {
@@ -27,6 +27,8 @@ test("Sniper uses 5m-24h age, activity, liquidity and rebound gates", () => {
   assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 29, sells5m: 0 })), false);
   assert.equal(qualifiesMomentumCandidate(candidate({ buys5m: 30, sells5m: 0 })), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 36 })), true);
+  assert.equal(qualifiesMomentumCandidate(candidate({ priceChange1h: -0.01 })), false);
+  assert.equal(getMomentumFailureReasons(candidate({ priceChange1h: -0.01 })).includes("momentum1hDowntrend"), true);
   assert.equal(qualifiesMomentumCandidate(candidate({ priceChange5m: 80,
     momentumPattern: { ready: true, pullbackObserved: true,
       entryRoute: "confirmed_pullback_recovery" } })), true);
@@ -61,14 +63,13 @@ test("trade sizing uses 10% of equity on every trade with a $20 minimum", () => 
   assert.equal(getBuySizing({ cashBalance: 250, positions: [], history: [{type: "BUY"}] }).amountInvested, 25);
   assert.equal(getBuySizing({ cashBalance: 400, positions: [], history: [] }).amountInvested, 40);
 });
-test("Sniper locks earlier gains with 8%/15% targets and a protected runner", () => {
+test("Sniper uses 15%/25% exits, 40%/40% sells, and a 12% runner", () => {
   const position = { entryPrice: 100, highestPrice: 100 };
-  assert.equal(constants.TAKE_PROFIT_1_PERCENT, 8);
-  assert.equal(constants.TAKE_PROFIT_1_SELL_PERCENT, 50);
-  assert.equal(constants.TAKE_PROFIT_2_PERCENT, 15);
+  assert.equal(constants.TAKE_PROFIT_1_PERCENT, 15);
+  assert.equal(constants.TAKE_PROFIT_1_SELL_PERCENT, 40);
+  assert.equal(constants.TAKE_PROFIT_2_PERCENT, 25);
   assert.equal(constants.TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT, 80);
-  assert.equal(constants.TRAILING_STOP_PERCENT, 8);
-  assert.equal(constants.PROFIT_FLOOR_AFTER_TP1_PERCENT, 4);
+  assert.equal(constants.TRAILING_STOP_PERCENT, 12);
   assert.deepEqual(chooseExit({ position: { entryPrice: 100, entryLiquidityUsd: 20000 },
     currentPrice: 105, freshData: { liquidityUsd: 14999 } }), { percent: 100, reason: "EMERGENCY EXIT: POOL LIQUIDITY DOWN 25%" });
   assert.deepEqual(chooseExit({ position: { entryPrice: 1, quantity: 100 }, currentPrice: 100,
@@ -76,39 +77,18 @@ test("Sniper locks earlier gains with 8%/15% targets and a protected runner", ()
   assert.deepEqual(chooseExit({ position: { entryPrice: 100 }, currentPrice: 1, freshData: { liquidityUsd: 1 } }),
     { percent: 100, writeOff: true, reason: "EMERGENCY WRITE-OFF: NO EXECUTABLE LIQUIDITY" });
   assert.deepEqual(chooseExit({ position, currentPrice: 92, exitProgress: { soldPercent: 0 } }),
-    { percent: 100, reason: "HARD STOP -8%" });
-  assert.deepEqual(chooseExit({ position, currentPrice: 108, exitProgress: { soldPercent: 0 } }),
-    { targetOriginalPositionPercent: 50, reason: "TAKE PROFIT 1 - SELL 50% OF ORIGINAL POSITION AT +8%", takeProfit: "firstTakeProfitDone" });
-  assert.deepEqual(chooseExit({ position, currentPrice: 115, exitProgress: { soldPercent: 50 } }),
-    { targetOriginalPositionPercent: 80, reason: "TAKE PROFIT 2 - SELL ANOTHER 30% OF ORIGINAL POSITION AT +15%", takeProfit: "secondTakeProfitDone" });
-  assert.deepEqual(chooseExit({ position: { ...position, highestPrice: 160 }, currentPrice: 147.2, exitProgress: { soldPercent: 80 } }),
-    { percent: 100, reason: "TRAILING STOP -8% FROM HIGH" });
-});
-test("post-TP1 floor protects a +4% whole-trade net result before the hard stop", () => {
-  const position = { id: "p1", entryPrice: 100, quantity: 0.5, amountInvested: 50,
-    entryLiquidityUsd: 20_000, remainingEntryCosts: { feesUsd: 0, slippageUsd: 0 }, highestPrice: 115 };
-  const history = [
-    { type: "BUY", positionId: "p1", amountInvested: 100, quantity: 1,
-      entryExecutionCosts: { feesUsd: 0, slippageUsd: 0 } },
-    { type: "SELL", positionId: "p1", amountInvested: 50, netPnl: 4, percentSold: 50 }
-  ];
-  const noCosts = () => ({ feesUsd: 0, slippageUsd: 0 });
-  assert.equal(chooseExit({ position, currentPrice: 104, history, exitProgress: { soldPercent: 50 },
-    estimateExecutionCosts: noCosts }), null);
-  assert.equal(chooseExit({ position, currentPrice: 100, history, exitProgress: { soldPercent: 50 },
-    estimateExecutionCosts: noCosts }).reason, "PROFIT FLOOR +4% WHOLE-TRADE NET AFTER TP1");
-  const belowHardStop = chooseExit({ position, currentPrice: 92, history,
-    exitProgress: { soldPercent: 50 }, estimateExecutionCosts: noCosts });
-  assert.equal(belowHardStop.reason, "PROFIT FLOOR +4% WHOLE-TRADE NET AFTER TP1");
-  assert.equal(belowHardStop.projectedNetPnlUsd, 0);
-  const estimatedCosts = () => ({ feesUsd: 0.5, slippageUsd: 0.5 });
-  assert.equal(chooseExit({ position, currentPrice: 102, history, exitProgress: { soldPercent: 50 },
-    estimateExecutionCosts: estimatedCosts }).reason, "PROFIT FLOOR +4% WHOLE-TRADE NET AFTER TP1");
-});
-test("post-TP1 floor falls back to the +4% entry-price threshold when ledger data is incomplete", () => {
-  const result = chooseExit({ position: { entryPrice: 100 }, currentPrice: 104,
-    exitProgress: { soldPercent: 50 } });
-  assert.equal(result.reason, "PROFIT FLOOR +4% PRICE FALLBACK AFTER TP1");
+    { percent: 100, triggerPrice: 92, reason: "HARD STOP -8%" });
+  const tp1 = chooseExit({ position, currentPrice: 115, exitProgress: { soldPercent: 0 } });
+  assert.equal(tp1.targetOriginalPositionPercent, 40);
+  assert.equal(tp1.takeProfit, "firstTakeProfitDone");
+  assert.ok(Math.abs(tp1.triggerPrice - 115) < 1e-10);
+  const tp2 = chooseExit({ position, currentPrice: 125, exitProgress: { soldPercent: 40 } });
+  assert.equal(tp2.targetOriginalPositionPercent, 80);
+  assert.equal(tp2.takeProfit, "secondTakeProfitDone");
+  assert.ok(Math.abs(tp2.triggerPrice - 125) < 1e-10);
+  const trail = chooseExit({ position: { ...position, highestPrice: 160 }, currentPrice: 140.7, exitProgress: { soldPercent: 80 } });
+  assert.equal(trail.reason, "TRAILING STOP -12% FROM HIGH");
+  assert.ok(Math.abs(trail.triggerPrice - 140.8) < 1e-10);
 });
 test("age rejection is distinguishable for watchlist tracking", () => {
   assert.ok(getMomentumFailureReasons(candidate({ tokenAddress: "EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J" })).includes("blockedTokenAddress"));

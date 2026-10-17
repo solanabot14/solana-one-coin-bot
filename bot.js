@@ -474,6 +474,8 @@ function createBot({
             expectedPosition,
             reason: action.reason,
             takeProfit: action.takeProfit,
+            triggerPrice: action.triggerPrice,
+            observedPrice: currentPrice,
             liquidityUsd: freshData.liquidityUsd
           }) : { success: false, message: "Exit target is already satisfied." };
           if (result.success) {

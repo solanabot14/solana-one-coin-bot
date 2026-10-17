@@ -7,7 +7,7 @@ const start = 1_800_000_000_000;
 const candidate = {
   chainId: "solana", tokenAddress: "mint-A", pairAddress: "pool-A", symbol: "A", signal: "BUY",
   pairCreatedAt: start - 15 * 60_000, priceUsd: 1, liquidityUsd: 25_000,
-  volume24h: 0, volume5m: 2_000, priceChange5m: 2, buys5m: 40, sells5m: 10,
+  volume24h: 0, volume5m: 2_000, priceChange5m: 2, priceChange1h: 3, buys5m: 40, sells5m: 10,
   momentumPattern: { ready: true }, reasons: []
 };
 const pair = {

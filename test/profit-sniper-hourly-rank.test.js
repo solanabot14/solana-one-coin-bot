@@ -28,7 +28,7 @@ test("strong hourly activity cannot override failed five-minute or security entr
   const {getMomentumFailureReasons}=require("../profitSniperStrategy");
   const coin={...base,volume1h:1000000,chainId:"solana",tokenAddress:"hour-mint",
     pairAddress:"hour-pool",pairCreatedAt:Date.now()-600000,priceUsd:1,liquidityUsd:25000,
-    volume5m:100,buys5m:40,sells5m:10,priceChange5m:2,momentumPattern:{ready:true}};
+    volume5m:100,buys5m:40,sells5m:10,priceChange5m:2,priceChange1h:10,momentumPattern:{ready:true}};
   assert.equal(hourlyRank(coin).verified,true);
   assert.ok(getMomentumFailureReasons(coin).includes("volume5m"));
 });

@@ -15,6 +15,7 @@ const { WINDOW_MS, buildProfitSniper48h } = require("./profitSniperAnalytics");
 const { constants } = strategy;
 const { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_5M_USD,
   MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M,
+  MIN_ENTRY_PRICE_CHANGE_1H_PERCENT,
   HARD_STOP_PERCENT,
   TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
   TAKE_PROFIT_2_SELL_PERCENT, TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT,
@@ -485,6 +486,7 @@ module.exports = {
     recoveryMinimumLiquidityRetentionPercent: null,
     recentPoolLiquidityRetentionPercent: 90,
     minimumBuyShare5m: CONFIG.MIN_BUY_SHARE_5M,
+      minimumEntryPriceChange1hPercent: MIN_ENTRY_PRICE_CHANGE_1H_PERCENT,
     minimumBuySellRatio5m: null,
     watchlistRecheckMs: CONFIG.WATCHLIST_RECHECK_MS,
     watchlistMaximumAgeMs: CONFIG.WATCHLIST_MAX_AGE_MS,

@@ -318,6 +318,12 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, {
 				p.highestPrice || p.entryPrice,
 
 			exitPrice: currentPrice,
+			triggerPrice: Number.isFinite(Number(options.triggerPrice)) ? Number(options.triggerPrice) : null,
+			observedPrice: Number.isFinite(Number(options.observedPrice)) ? Number(options.observedPrice) : currentPrice,
+			simulatedFillPrice: currentPrice,
+			fillVsTriggerPercent: Number.isFinite(Number(options.triggerPrice)) && Number(options.triggerPrice) > 0
+				? (currentPrice / Number(options.triggerPrice) - 1) * 100
+				: null,
 
 			percentSold: percentToSell,
 			targetOriginalPositionPercent: Number.isFinite(Number(options.targetOriginalPositionPercent))

@@ -39,3 +39,21 @@ test("write-off refuses an already-closed position without changing the ledger",
   assert.equal(trader.getPortfolio().positions.length, 0);
   assert.equal(trader.getPortfolio().history.length, 0);
 });
+
+test("paper sell records the trigger separately from the observed simulated fill", t => {
+	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "paper-exit-audit-"));
+	t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+	const trader = createPaperTrader(path.join(directory, "account.json"), fs, {
+		startingBalance: 100,
+		estimateExecutionCosts: () => ({ feesUsd: 0, slippageUsd: 0 })
+	});
+	const bought = trader.buy({ tokenAddress: "Token111", symbol: "AUDIT", priceUsd: 1, liquidityUsd: 20_000 });
+	assert.equal(bought.success, true);
+	const sold = trader.sell(0.88, 100, { expectedPosition: trader.positionKey(bought.trade),
+		reason: "HARD STOP -8%", triggerPrice: 0.92, observedPrice: 0.88, liquidityUsd: 20_000 });
+	assert.equal(sold.success, true);
+	assert.equal(sold.trade.triggerPrice, 0.92);
+	assert.equal(sold.trade.observedPrice, 0.88);
+	assert.equal(sold.trade.simulatedFillPrice, 0.88);
+	assert.ok(Math.abs(sold.trade.fillVsTriggerPercent - ((0.88 / 0.92 - 1) * 100)) < 1e-10);
+});

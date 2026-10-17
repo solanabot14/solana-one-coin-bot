@@ -5,6 +5,10 @@ const MIN_LIQUIDITY_USD = CONFIG.MIN_LIQUIDITY_USD;
 const MIN_VOLUME_5M_USD = CONFIG.MIN_VOLUME_5M_USD;
 const MIN_TRANSACTIONS_5M = CONFIG.MIN_TRANSACTIONS_5M;
 const MIN_BUY_RATIO_5M = CONFIG.MIN_BUY_SHARE_5M;
+// Paper-test trend context gate. Historical Sniper entries with a negative
+// 1h change were materially loss-making; do not infer a 5m trend filter from
+// the same sample because negative-5m recovery entries also produced winners.
+const MIN_ENTRY_PRICE_CHANGE_1H_PERCENT = 0;
 const HARD_STOP_PERCENT = -8;
 const MIN_EXIT_LIQUIDITY_USD = 1000;
 const MAX_EXIT_LIQUIDITY_DRAWDOWN = 0.25;
@@ -31,6 +35,7 @@ function getMomentumFailureReasons(coin, now = Date.now()) {
   const transactions5m = buys5m + sells5m;
   const buyRatio = transactions5m > 0 ? buys5m / transactions5m : 0;
   const momentum5m = Number(coin.priceChange5m);
+  const momentum1h = Number(coin.priceChange1h);
 
   const ageValid = Number.isFinite(createdAt) && ageMs >= MIN_PAIR_AGE_MS && ageMs <= MAX_PAIR_AGE_MS;
   if (!ageValid) failures.push("age");
@@ -39,6 +44,8 @@ function getMomentumFailureReasons(coin, now = Date.now()) {
   if (!Number.isFinite(transactions5m) || transactions5m < MIN_TRANSACTIONS_5M) failures.push("transactions5m");
   if (buyRatio < MIN_BUY_RATIO_5M) failures.push("buyRatio5m");
   if (!Number.isFinite(momentum5m)) failures.push("momentum5m");
+  if (Number.isFinite(momentum1h) && momentum1h < MIN_ENTRY_PRICE_CHANGE_1H_PERCENT)
+    failures.push("momentum1hDowntrend");
   if (ageValid && coin.momentumPattern?.ready !== true)
     failures.push("momentumPattern");
   if (coin.momentumPattern?.observedAt !== undefined &&
@@ -139,24 +146,24 @@ function chooseExit({ position, currentPrice, freshData, exitProgress, history, 
   const soldPercent = Number.isFinite(Number(exitProgress?.soldPercent))
     ? Number(exitProgress.soldPercent)
     : (position.secondTakeProfitDone ? 80 : position.firstTakeProfitDone ? 50 : 0);
-  if (profitPercent <= HARD_STOP_PERCENT) return { percent: 100, reason: "HARD STOP -8%" };
+  if (profitPercent <= HARD_STOP_PERCENT) return { percent: 100, triggerPrice: entryPrice * (1 + HARD_STOP_PERCENT / 100), reason: "HARD STOP -8%" };
   if (soldPercent + 1e-6 >= TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT) {
     const high = Number(position.highestPrice);
     const pullback = high > 0 ? (high - price) / high * 100 : 0;
     return pullback >= TRAILING_STOP_PERCENT
-      ? { percent: 100, reason: "TRAILING STOP -12% FROM HIGH" } : null;
+      ? { percent: 100, triggerPrice: high * (1 - TRAILING_STOP_PERCENT / 100), reason: "TRAILING STOP -12% FROM HIGH" } : null;
   }
   if (soldPercent + 1e-6 < TAKE_PROFIT_1_SELL_PERCENT && profitPercent + 1e-9 >= TAKE_PROFIT_1_PERCENT)
-    return { targetOriginalPositionPercent: 40, reason: "TAKE PROFIT 1 - SELL 40% OF ORIGINAL POSITION AT +15%", takeProfit: "firstTakeProfitDone" };
+    return { targetOriginalPositionPercent: 40, triggerPrice: entryPrice * (1 + TAKE_PROFIT_1_PERCENT / 100), reason: "TAKE PROFIT 1 - SELL 40% OF ORIGINAL POSITION AT +15%", takeProfit: "firstTakeProfitDone" };
   if (soldPercent + 1e-6 < TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT && profitPercent + 1e-9 >= TAKE_PROFIT_2_PERCENT)
-    return { targetOriginalPositionPercent: 80, reason: "TAKE PROFIT 2 - SELL ANOTHER 40% OF ORIGINAL POSITION AT +25%", takeProfit: "secondTakeProfitDone" };
+    return { targetOriginalPositionPercent: 80, triggerPrice: entryPrice * (1 + TAKE_PROFIT_2_PERCENT / 100), reason: "TAKE PROFIT 2 - SELL ANOTHER 40% OF ORIGINAL POSITION AT +25%", takeProfit: "secondTakeProfitDone" };
   return null;
 }
 
 module.exports = {
   constants: { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_5M_USD,
     MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M,
-    HARD_STOP_PERCENT, MIN_EXIT_LIQUIDITY_USD,
+    HARD_STOP_PERCENT, MIN_EXIT_LIQUIDITY_USD, MIN_ENTRY_PRICE_CHANGE_1H_PERCENT,
     MAX_EXIT_LIQUIDITY_DRAWDOWN,
     TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
     TAKE_PROFIT_2_SELL_PERCENT, TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT, TRAILING_STOP_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD },
