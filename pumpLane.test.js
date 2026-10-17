@@ -51,38 +51,46 @@ test('live flag is explicit and execution unimplemented', () => {
   try { delete process.env.PUMP_LANE_LIVE; assert.equal(liveEnabled(), false); assert.throws(executeLive, /disabled/); process.env.PUMP_LANE_LIVE = 'true'; assert.equal(liveEnabled(), true); assert.throws(executeLive, /not implemented/); }
   finally { if (old === undefined) delete process.env.PUMP_LANE_LIVE; else process.env.PUMP_LANE_LIVE = old; }
 });
-test('socket never buys creation; preserves paper isolation and resumes watched position', t => {
-  const { dir } = account(t), oldDir = process.env.DATA_DIR, oldWs = global.WebSocket, oldVolume = process.env.RAILWAY_VOLUME_MOUNT_PATH;
-  delete process.env.RAILWAY_VOLUME_MOUNT_PATH; process.env.DATA_DIR = dir;
+test('free feed never buys creation or subscribes to paid PumpPortal trades', async t => {
+  const { dir } = account(t), oldDir = process.env.DATA_DIR, oldWs = global.WebSocket, oldVolume = process.env.RAILWAY_VOLUME_MOUNT_PATH, oldFetch = global.fetch, oldHelius = process.env.HELIUS_API_KEY;
+  delete process.env.RAILWAY_VOLUME_MOUNT_PATH; process.env.DATA_DIR = dir; process.env.HELIUS_API_KEY = 'test-key';
+  global.fetch = async (url, options = {}) => {
+    if (String(url).includes('/coins-v2/')) return { ok: true, json: async () => ({ bonding_curve: 'curve', creator: 'creator' }) };
+    if (options.method === 'POST') return { ok: true, json: async () => ({ result: {
+      transaction: { message: { accountKeys: [{ pubkey: 'trader', signer: true }] } },
+      meta: { err: null, preTokenBalances: [], postTokenBalances: [{ mint: 'mint', owner: 'trader', uiTokenAmount: { amount: '1000000', decimals: 6 } }] }
+    } }) };
+    throw new Error('Unexpected test request');
+  };
   const instances = [];
   class FakeSocket {
-    constructor() { this.handlers = {}; this.sent = []; instances.push(this); }
+    constructor(url) { this.url = url; this.readyState = 0; this.handlers = {}; this.sent = []; instances.push(this); }
     addEventListener(k, cb) { this.handlers[k] = cb; }
     send(s) { this.sent.push(JSON.parse(s)); }
-    close() { this.handlers.close?.(); }
+    close() { this.readyState = 3; this.handlers.close?.(); }
     event(obj) { this.handlers.message({ data: JSON.stringify(obj) }); }
+    open() { this.readyState = 1; this.handlers.open(); }
   }
   global.WebSocket = FakeSocket;
   delete require.cache[require.resolve('./pumpLaneTrader')]; delete require.cache[require.resolve('./pumpLaneBot')];
   const bot = require('./pumpLaneBot'), trader = require('./pumpLaneTrader');
   try {
-    bot.start(); const ws = instances[0]; ws.handlers.open();
-    assert.deepEqual(ws.sent[0], { method: 'subscribeNewToken' });
-    ws.event({ txType: 'create', mint: 'mint', symbol: 'TEST', traderPublicKey: 'creator', tokenAmount: 100 });
+    bot.start(); const helius = instances[0], portal = instances[1]; helius.open(); portal.open();
+    assert.deepEqual(portal.sent[0], { method: 'subscribeNewToken' });
+    portal.event({ txType: 'create', mint: 'mint', symbol: 'TEST', traderPublicKey: 'creator', tokenAmount: 100 });
     assert.equal(trader.getState().position, null); assert.equal(bot.getStatus().watched, 1);
-    assert.deepEqual(ws.sent[1], { method: 'subscribeTokenTrade', keys: ['mint'] });
-    trader.buy({ mint: 'mint', symbol: 'TEST', priceUsd: 1 });
-    ws.event({ txType: 'buy', mint: 'mint', solAmount: 0.01, tokenAmount: 1, traderPublicKey: 'trader' });
-    assert.equal(trader.getState().position.tp1Done, true);
-    assert.deepEqual(bot.getStatus(), { running: true, error: null, watched: 1, live: false, mode: 'PAPER' });
-    for (let i = 0; i < 85; i++) ws.event({ txType: 'create', mint: 'm' + i, symbol: 'TEST' });
-    assert.equal(bot.getStatus().watched, 80);
-    assert.ok(!ws.sent.some(x => x.method === 'unsubscribeTokenTrade' && x.keys.includes('mint')));
-    bot.stop(); bot.start(); instances[1].handlers.open();
-    assert.ok(instances[1].sent.some(x => x.method === 'subscribeTokenTrade' && x.keys.includes('mint')));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(helius.sent.some(x => x.method === 'logsSubscribe'));
+    assert.ok(helius.sent.some(x => x.method === 'accountSubscribe'));
+    assert.ok(!portal.sent.some(x => x.method === 'subscribeTokenTrade'));
+    assert.equal(bot.getStatus().newTokens, 1);
+    assert.equal(bot.getStatus().tradeEvents, 0);
+    assert.equal(bot.getStatus().mode, 'PAPER');
+    assert.equal(bot.getStatus().provider, 'Helius free RPC + Pump.fun public coin data');
     assert.deepEqual(fs.readdirSync(dir), ['pump-lane-state.json']);
   } finally {
-    bot.stop(); global.WebSocket = oldWs;
+    bot.stop(); global.WebSocket = oldWs; global.fetch = oldFetch;
+    if (oldHelius === undefined) delete process.env.HELIUS_API_KEY; else process.env.HELIUS_API_KEY = oldHelius;
     if (oldDir === undefined) delete process.env.DATA_DIR; else process.env.DATA_DIR = oldDir;
     if (oldVolume === undefined) delete process.env.RAILWAY_VOLUME_MOUNT_PATH; else process.env.RAILWAY_VOLUME_MOUNT_PATH = oldVolume;
     delete require.cache[require.resolve('./pumpLaneTrader')]; delete require.cache[require.resolve('./pumpLaneBot')];
