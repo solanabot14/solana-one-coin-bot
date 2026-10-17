@@ -18,7 +18,7 @@ const { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_5M_USD,
   HARD_STOP_PERCENT,
   TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
   TAKE_PROFIT_2_SELL_PERCENT, TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT,
-  TRAILING_STOP_PERCENT, PROFIT_FLOOR_AFTER_TP1_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD } = constants;
+  TRAILING_STOP_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD } = constants;
 const MAX_OPEN_POSITIONS = 3;
 const SCAN_INTERVAL_MS = CONFIG.WATCHLIST_RECHECK_MS;
 const POSITION_MONITOR_MS = 2000;
@@ -406,8 +406,8 @@ function getStatus() {
       tp2Percent: TAKE_PROFIT_2_PERCENT, tp2OriginalPositionSellPercent: TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT - TAKE_PROFIT_1_SELL_PERCENT,
       tp2SellRemainingPercent: TAKE_PROFIT_2_SELL_PERCENT, runnerOriginalPositionPercent: 20,
       trailingStopPercent: TRAILING_STOP_PERCENT,
-      postTp1FloorPercent: PROFIT_FLOOR_AFTER_TP1_PERCENT,
-      postTp1FloorBasis: "whole-trade net P&L after modeled entry and exit costs",
+      postTp1FloorPercent: null,
+      postTp1FloorBasis: "disabled",
       compoundRates: COMPOUND_RATES, nextTradeCompoundRate: nextSizing.compoundRate,
       nextTradeSizeUsd: nextSizing.amountInvested, nextTradeNumber: completedEntries + 1,
       maxOpenPositions: MAX_OPEN_POSITIONS, minimumTradeUsd: MINIMUM_TRADE_USD,
