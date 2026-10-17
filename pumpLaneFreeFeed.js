@@ -1,12 +1,43 @@
 'use strict';
+const { createHash } = require('node:crypto');
 
 // Free Pump Lane market data: PumpPortal's free create stream plus Helius' standard
 // Solana WebSocket/RPC methods. No transaction API, wallet, or signing is used.
 const PUMP_COIN_API = 'https://frontend-api-v3.pump.fun/coins-v2/';
-const HELIUS_RPC = 'https://mainnet.helius-rpc.com/';
 const HELIUS_WS = 'wss://mainnet.helius-rpc.com/';
-const PUBLIC_RPC = 'https://api.mainnet.solana.com';
 const PUBLIC_WS = 'wss://api.mainnet.solana.com';
+const TRADE_EVENT_DISCRIMINATOR = createHash('sha256').update('event:TradeEvent').digest().subarray(0, 8);
+
+function encodeBase58(bytes) {
+  const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  let value = BigInt(`0x${Buffer.from(bytes).toString('hex') || '0'}`), result = '';
+  while (value > 0n) { const remainder = Number(value % 58n); result = alphabet[remainder] + result; value /= 58n; }
+  for (const byte of bytes) { if (byte !== 0) break; result = `1${result}`; }
+  return result || '1';
+}
+
+// Pump.fun's official TradeEvent Borsh layout: discriminator, mint, SOL amount,
+// token amount, is_buy, user, timestamp, then reserve fields.
+function parsePumpTradeLogs(logs, expectedMint, signature) {
+  for (const line of logs || []) {
+    const match = /^Program data: ([A-Za-z0-9+/=]+)$/.exec(line);
+    if (!match) continue;
+    const data = Buffer.from(match[1], 'base64');
+    if (data.length < 113 || !data.subarray(0, 8).equals(TRADE_EVENT_DISCRIMINATOR)) continue;
+    const mint = encodeBase58(data.subarray(8, 40));
+    if (expectedMint && mint !== expectedMint) continue;
+    const rawTokens = Number(data.readBigUInt64LE(48));
+    const trader = encodeBase58(data.subarray(57, 89));
+    return {
+      mint, trader, type: data[56] === 1 ? 'buy' : 'sell',
+      tokenAmount: rawTokens / 1e6, solAmount: Number(data.readBigUInt64LE(40)) / 1e9,
+      virtualSolReserves: Number(data.readBigUInt64LE(97)),
+      virtualTokenReserves: Number(data.readBigUInt64LE(105)),
+      signature
+    };
+  }
+  return null;
+}
 
 function decodeCurveAccount(encoded) {
   if (typeof encoded !== 'string') return null;
@@ -61,48 +92,13 @@ function parseTradeTransaction(tx, signature, expectedMint) {
 function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade = () => {}, onCurve = () => {}, onStatus = () => {}, fetchImpl = fetch, WebSocketImpl = globalThis.WebSocket } = {}) {
   let ws = null, running = false, sequence = 0, reconnectTimer = null, error = null;
   let wsProviderIndex = apiKey ? 0 : 1;
-  let rpcProviderIndex = 1;
-  let lastRpcAt = 0;
-  let heliusCooldownUntil = 0;
   const watched = new Map();
   const requestMap = new Map();
   const pendingRequests = new Map();
-  const seenSignatures = new Set();
-  const txQueue = [];
-  let txBusy = 0;
-
   const endpoints = [
-    { name: 'Helius free RPC', rpc: `${HELIUS_RPC}?api-key=${encodeURIComponent(apiKey || '')}`, ws: `${HELIUS_WS}?api-key=${encodeURIComponent(apiKey || '')}` },
-    { name: 'Solana public RPC', rpc: PUBLIC_RPC, ws: PUBLIC_WS }
+    { name: 'Helius free RPC', ws: `${HELIUS_WS}?api-key=${encodeURIComponent(apiKey || '')}` },
+    { name: 'Solana public RPC', ws: PUBLIC_WS }
   ];
-  const rpc = async (method, params) => {
-    const failures = [];
-    const order = [rpcProviderIndex, 1 - rpcProviderIndex].filter(index => (index !== 0 || (apiKey && Date.now() >= heliusCooldownUntil)));
-    for (const index of order) {
-      try {
-        const delay = 500 - (Date.now() - lastRpcAt);
-        if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
-        lastRpcAt = Date.now();
-        const response = await fetchImpl(endpoints[index].rpc, {
-          method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ jsonrpc: '2.0', id: ++sequence, method, params }),
-          signal: AbortSignal.timeout(12000)
-        });
-        if (!response.ok) throw new Error(`${endpoints[index].name} HTTP ${response.status}`);
-        const payload = await response.json();
-        if (payload.error) throw new Error(payload.error.message || `${endpoints[index].name} RPC error`);
-        rpcProviderIndex = index;
-        return payload.result;
-      } catch (e) {
-        failures.push(e.message);
-        if (/HTTP 429/.test(e.message) && index === 0) {
-          heliusCooldownUntil = Date.now() + 60_000;
-          rpcProviderIndex = 1;
-        }
-      }
-    }
-    throw new Error(failures.join('; ') || 'No free Solana RPC endpoint available');
-  };
   function sendSubscription(mint, pubkey, kind) {
     if (!ws || ws.readyState !== 1) { pendingRequests.set(`${kind}:${mint}`, { mint, pubkey, kind }); return; }
     const id = ++sequence;
@@ -169,38 +165,6 @@ function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade =
     for (const item of pendingRequests.values()) sendSubscription(item.mint, item.pubkey, item.kind);
     pendingRequests.clear();
   }
-  async function queueTransaction(mint, signature, slot) {
-    if (seenSignatures.has(signature)) return;
-    const candidate = watched.get(mint);
-    if (!candidate || signature === candidate.creationSignature || (slot != null && candidate.creationSlot != null && Number(slot) === candidate.creationSlot)) return;
-    seenSignatures.add(signature);
-    if (seenSignatures.size > 12000) seenSignatures.clear();
-    if (txQueue.length >= 300) txQueue.shift();
-    txQueue.push({ mint, signature });
-    drainTransactions();
-  }
-  async function drainTransactions() {
-    while (running && txBusy < 1 && txQueue.length) {
-      const item = txQueue.shift(); txBusy++;
-      void (async () => {
-        try {
-          let tx = null;
-          for (let attempt = 0; attempt < 2 && !tx; attempt++) {
-            tx = await rpc('getTransaction', [item.signature, { encoding: 'jsonParsed', commitment: 'confirmed', maxSupportedTransactionVersion: 0 }]);
-            if (!tx && attempt < 1) await new Promise(resolve => setTimeout(resolve, 700));
-          }
-          const trade = parseTradeTransaction(tx, item.signature, item.mint);
-          const c = watched.get(item.mint);
-          if (!trade || !c || trade.mint !== item.mint) return;
-          c[trade.type === 'buy' ? 'buyCount' : 'sellCount']++;
-          c.uniqueTraders.add(trade.trader);
-          if (c.creator && trade.trader === c.creator) c[trade.type === 'buy' ? 'creatorBuyTokens' : 'creatorSellTokens'] += trade.tokenAmount;
-          onTrade({ candidate: c, trade });
-        } catch (e) { error = `Free trade lookup: ${e.message}`; onStatus({ error, watched: watched.size }); }
-        finally { txBusy--; drainTransactions(); }
-      })();
-    }
-  }
   function handleMessage(raw) {
     let msg;
     try { msg = JSON.parse(String(raw)); } catch { return; }
@@ -224,7 +188,23 @@ function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade =
       const id = msg.params?.subscription;
       const c = [...watched.values()].find(x => x.subscriptions?.trades === id);
       const value = msg.params?.result?.value;
-      if (c && value?.err == null && value.signature) void queueTransaction(c.mint, value.signature, msg.params?.result?.context?.slot);
+      if (!c || value?.err != null || !value?.signature) return;
+      const trade = parsePumpTradeLogs(value.logs, c.mint, value.signature);
+      if (!trade) return;
+      c[trade.type === 'buy' ? 'buyCount' : 'sellCount']++;
+      c.uniqueTraders.add(trade.trader);
+      if (c.creator && trade.trader === c.creator) {
+        c[trade.type === 'buy' ? 'creatorBuyTokens' : 'creatorSellTokens'] += trade.tokenAmount;
+      }
+      if (trade.virtualSolReserves > 0 && trade.virtualTokenReserves > 0) {
+        c.virtualSolReserves = trade.virtualSolReserves;
+        c.virtualTokenReserves = trade.virtualTokenReserves;
+        c.bondingProgress = Math.max(0, Math.min(100, (trade.virtualSolReserves / 1e9 - 30) / 85 * 100));
+        c.marketCapSol = trade.virtualSolReserves / trade.virtualTokenReserves * 1e6;
+        c.priceSol = trade.virtualSolReserves / trade.virtualTokenReserves * 1e-3;
+        c.lastPriceUsd = c.priceSol * Number(process.env.SOL_USD_PRICE || 150);
+      }
+      onTrade({ candidate: c, trade });
     }
   }
   function connect() {
@@ -256,8 +236,8 @@ function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade =
   }
   function start() { if (running) return status(); running = true; connect(); return status(); }
   function stop() { running = false; clearTimeout(reconnectTimer); reconnectTimer = null; const old = ws; ws = null; if (old) old.close(); return status(); }
-  function status() { return { running, connected: !!ws && ws.readyState === 1, error, watched: watched.size, queuedTransactions: txQueue.length, provider: `${endpoints[wsProviderIndex].name} + Pump.fun public coin data`, live: false }; }
+  function status() { return { running, connected: !!ws && ws.readyState === 1, error, watched: watched.size, queuedTransactions: 0, provider: `${endpoints[wsProviderIndex].name} + Pump.fun public coin data`, live: false }; }
   return { start, stop, status, addMint, removeMint, getCandidate: mint => watched.get(mint), watched };
 }
 
-module.exports = { createPumpLaneFreeFeed, decodeCurveAccount, parseTradeTransaction };
+module.exports = { createPumpLaneFreeFeed, decodeCurveAccount, parsePumpTradeLogs, parseTradeTransaction };
