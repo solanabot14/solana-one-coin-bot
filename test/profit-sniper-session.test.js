@@ -27,18 +27,23 @@ test('reset preserves every old event and open snapshot, persists archive, and n
  assert.equal(reopened.cashBalance,180); assert.equal(reopened.history.length,1);
  assert.equal(reopened.archivedSessions.length,1);
 });
-test('actual paper fills sell 40 original tokens at +15% and another 40 at +25%',t=>{
+test('paper fills sell 50% at +8%, another 30% original at +15%, and trail the final 20%',t=>{
  const trader=createPaperTrader(account(t),fs,{startingBalance:1000,getBuySizing:()=>({amountInvested:100})});
  trader.buy({tokenAddress:'mint',pairAddress:'pool',priceUsd:1});
- for (const [price,remaining] of [[1.15,60],[1.25,20]]) {
+ for (const [price,remaining] of [[1.08,50],[1.15,20]]) {
    let position=trader.getPortfolio().position;
-   const action=chooseExit({position,currentPrice:price});
+   const portfolio=trader.getPortfolio();
+   const history=portfolio.history;
+   const progress={soldPercent:history.filter(row=>row.type==='SELL').reduce((sum,row)=>sum+(row.percentSold||0),0)};
+   const action=chooseExit({position,currentPrice:price,history,exitProgress:progress,
+     estimateExecutionCosts:()=>({totalUsd:0,feesUsd:0,slippageUsd:0})});
    assert.ok(action);
    const percent=percentOfRemainingToReachOriginalTarget(position,trader.getPortfolio().history,action.targetOriginalPositionPercent);
    assert.equal(trader.sell(price,percent,{expectedPosition:position.id,...action}).success,true);
    assert.ok(Math.abs((trader.getPortfolio().position?.quantity||0)-remaining)<1e-9);
  }
  assert.equal(trader.getPortfolio().history.length,3);
+ assert.equal(trader.getPortfolio().position.quantity,20);
 });
 test('failed reset save leaves original persisted account intact',t=>{
  const file=account(t); const trader=createPaperTrader(file);

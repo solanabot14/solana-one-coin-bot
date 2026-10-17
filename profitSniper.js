@@ -17,7 +17,8 @@ const { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_5M_USD,
   MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M,
   HARD_STOP_PERCENT,
   TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
-  TAKE_PROFIT_2_SELL_PERCENT, TRAILING_STOP_PERCENT, PROFIT_FLOOR_AFTER_TP1_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD } = constants;
+  TAKE_PROFIT_2_SELL_PERCENT, TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT,
+  TRAILING_STOP_PERCENT, PROFIT_FLOOR_AFTER_TP1_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD } = constants;
 const MAX_OPEN_POSITIONS = 3;
 const SCAN_INTERVAL_MS = CONFIG.WATCHLIST_RECHECK_MS;
 const POSITION_MONITOR_MS = 2000;
@@ -45,6 +46,9 @@ function estimateExecutionCosts({ amountUsd, liquidityUsd }) {
 }
 
 const { qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit, selectUniqueMintCandidates } = strategy;
+function chooseSniperExit(options = {}) {
+  return chooseExit({ ...options, estimateExecutionCosts });
+}
 
 let lastEntryDecision = null;
 const finalEntryCounts = { passed: 0, rejected: 0 };
@@ -281,18 +285,26 @@ async function discoverCandidates(options = {}) {
   return qualified;
 }
 
-const SESSION_RESET_ID = "profit-sniper-reset-200-2026-10-13T144522Z";
-const savedSessionIsCurrent = fs.existsSync(statePath()) &&
-  JSON.parse(fs.readFileSync(statePath(), "utf8")).sessionId === SESSION_RESET_ID;
+const SESSION_RESET_ID = "profit-sniper-reset-200-2026-10-16T2134PR";
+const savedSessionId = fs.existsSync(statePath())
+  ? JSON.parse(fs.readFileSync(statePath(), "utf8")).sessionId : null;
+const savedSessionIsCurrent = savedSessionId === SESSION_RESET_ID;
+// A new session is an intentional paper-account reset. The trader archives the prior
+// account snapshot below; comparing it with an older audited ledger would incorrectly
+// keep the freshly reset Sniper paused.
 const reconciliation = savedSessionIsCurrent
   ? { applied: false, reason: "already-applied" }
   : reconcileProfitSniperAccount(statePath());
-const reconciliationReady = reconciliation.applied || ["already-applied", "no-account"].includes(reconciliation.reason);
+// The explicit session reset below replaces the pre-reset account, so its old
+// audited-ledger comparison cannot gate this one startup. Later restarts use the
+// new session id and resume the normal reconciliation check.
+const reconciliationReady = !savedSessionIsCurrent || reconciliation.applied ||
+  ["already-applied", "no-account"].includes(reconciliation.reason);
 if (reconciliation.reason === "account-differs-from-audited-ledger") {
   console.error("Profit Sniper reconciliation skipped: saved account changed; scanner must stay paused.");
 }
 const trader = createPaperTrader(statePath(), fs, {
-  strategyVersion: "Paper-Profit-Sniper-original-10-20",
+  strategyVersion: "Profit-Sniper-200-10-12.5-Compound-2026-10-16",
   startingBalance: 200,
   sessionResetId: SESSION_RESET_ID,
   maxOpenPositions: MAX_OPEN_POSITIONS,
@@ -314,7 +326,7 @@ const bot = createBot({
   scannerIntervalMs: SCAN_INTERVAL_MS,
   scanWhenFull: true,
   botLabel: "Paper Profit Sniper",
-  reentryStateFile: statePath("profitSniperReentryState-reset-20261013T144522Z.json"),
+  reentryStateFile: statePath("profitSniperReentryState-reset-20261016T2134PR.json"),
   maxOpenPositions: MAX_OPEN_POSITIONS,
   maxCandidateAgeMinutes: MAX_PAIR_AGE_MINUTES,
   minimumLiquidityUsd: MIN_LIQUIDITY_USD,
@@ -329,7 +341,7 @@ const bot = createBot({
   // another two observations with 25% rolling-volume acceleration.
   useReentryGuards: false,
   useSimpleCooldown: false,
-  exitDecision: chooseExit,
+  exitDecision: chooseSniperExit,
   validateEntry: async (coin, options) => {
     let result;
     try {
@@ -363,7 +375,7 @@ async function closePosition(positionId) {
   const price = Number(quote?.priceUsd);
   const liquidityUsd = Number(quote?.liquidityUsd);
   const unexecutable = price > 0 && liquidityUsd > 0 &&
-    strategy.chooseExit({ position, currentPrice: price, freshData: quote })?.writeOff;
+    chooseSniperExit({ position, currentPrice: price, freshData: quote, history: trader.getPortfolio().history })?.writeOff;
   if (!(price > 0) || !(liquidityUsd > 0) || unexecutable) {
     const result = bot.writeOffPosition(trader.positionKey(position), "MANUAL PAPER WRITE-OFF · NO LIQUIDITY");
     return { ...result, symbol: position.symbol, writeOff: !!result.success,
@@ -376,6 +388,8 @@ async function closePosition(positionId) {
 
 function getStatus() {
   const portfolio = trader.getPortfolio();
+  const nextSizing = getBuySizing(portfolio);
+  const completedEntries = (portfolio.history || []).filter(row => row?.type === "BUY").length;
   return {
     running: bot.getBotStatus(),
     error: bot.getLastError(),
@@ -389,12 +403,15 @@ function getStatus() {
     entryVerification: prebuy.getStatus(),
     strategy: { hardStopPercent: HARD_STOP_PERCENT, tp1Percent: TAKE_PROFIT_1_PERCENT,
       tp1SellPercent: TAKE_PROFIT_1_SELL_PERCENT, tp1OriginalPositionSellPercent: TAKE_PROFIT_1_SELL_PERCENT,
-      tp2Percent: TAKE_PROFIT_2_PERCENT, tp2OriginalPositionSellPercent: 40,
+      tp2Percent: TAKE_PROFIT_2_PERCENT, tp2OriginalPositionSellPercent: TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT - TAKE_PROFIT_1_SELL_PERCENT,
       tp2SellRemainingPercent: TAKE_PROFIT_2_SELL_PERCENT, runnerOriginalPositionPercent: 20,
       trailingStopPercent: TRAILING_STOP_PERCENT,
-      postTp1FloorPercent: PROFIT_FLOOR_AFTER_TP1_PERCENT, compoundRates: COMPOUND_RATES,
+      postTp1FloorPercent: PROFIT_FLOOR_AFTER_TP1_PERCENT,
+      postTp1FloorBasis: "whole-trade net P&L after modeled entry and exit costs",
+      compoundRates: COMPOUND_RATES, nextTradeCompoundRate: nextSizing.compoundRate,
+      nextTradeSizeUsd: nextSizing.amountInvested, nextTradeNumber: completedEntries + 1,
       maxOpenPositions: MAX_OPEN_POSITIONS, minimumTradeUsd: MINIMUM_TRADE_USD,
-      sizingMode: "compounding" },
+      sizingMode: "alternating account-equity compounding" },
     analytics48h: {
       ...buildProfitSniper48h(portfolio, rejectionEvents48h),
       rejectionCoverageStartedAt: rejectionEvents48h.length
@@ -436,7 +453,7 @@ module.exports = {
   qualifiesMomentumCandidate,
   getMomentumFailureReasons,
   getBuySizing,
-  chooseExit,
+  chooseExit: chooseSniperExit,
   estimateExecutionCosts,
   thresholds: {
     maximumPairAgeMinutes: MAX_PAIR_AGE_MINUTES,

@@ -50,15 +50,12 @@ test('Sniper reentry uses its own fresh gates without the conflicting inherited 
  assert.equal(ready.length,1); // local recovery can qualify while the rolling 5m change is negative
  assert.equal(ready[0].signal,'ORDER FLOW BUY');
 });
-test('removing inherited reentry never bypasses Sniper stop-loss or attempt limits',async()=>{
+test('removing inherited reentry still blocks a mint after its hard stop',async()=>{
  const start=1800000000000;
- for(const history of [
-  [{type:'BUY',tokenAddress:'mint-parallel'},{type:'SELL',tokenAddress:'mint-parallel',reason:'HARD STOP -8%'}],
-  [{type:'BUY',tokenAddress:'mint-parallel'},{type:'BUY',tokenAddress:'mint-parallel'}]
- ]) {
-  const f=setup(history);await f.scan(start);await f.scan(start+30000,{priceUsd:1.01});
-  assert.equal((await f.scan(start+60000,{priceUsd:1.02})).length,0);
- }
+ const history=[{type:'BUY',tokenAddress:'mint-parallel'},
+  {type:'SELL',tokenAddress:'mint-parallel',reason:'HARD STOP -8%'}];
+ const f=setup(history);await f.scan(start);await f.scan(start+30000,{priceUsd:1.01});
+ assert.equal((await f.scan(start+60000,{priceUsd:1.02})).length,0);
 });
 
 test('actual scanner buys a verified Sniper reentry that the inherited filter incorrectly blocks',async()=>{

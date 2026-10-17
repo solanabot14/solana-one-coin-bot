@@ -16,8 +16,8 @@ const TAKE_PROFIT_2_SELL_PERCENT = (30 / 50) * 100;
 const TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT = 80;
 const TRAILING_STOP_PERCENT = 8;
 const PROFIT_FLOOR_AFTER_TP1_PERCENT = CONFIG.MAX_ROUND_TRIP_LOSS_PERCENT; // 4% quoted-cost cap plus uncertainty reserve
-const COMPOUND_RATES = [0.10];
-const MINIMUM_TRADE_USD = 10;
+const COMPOUND_RATES = [0.10, 0.125];
+const MINIMUM_TRADE_USD = 20;
 
 function getMomentumFailureReasons(coin, now = Date.now()) {
   if (!coin || typeof coin !== "object") return ["missing_candidate"];
@@ -75,11 +75,52 @@ function getBuySizing(state = {}) {
   const positions = Array.isArray(state.positions) ? state.positions : (state.position ? [state.position] : []);
   const equity = Number(state.cashBalance || 0) +
     positions.reduce((sum, position) => sum + Number(position.amountInvested || 0), 0);
-  const compoundRate = COMPOUND_RATES[0];
-  return { amountInvested: Math.max(MINIMUM_TRADE_USD, equity * compoundRate), compoundRate };
+  const completedAndOpenBuys = Array.isArray(state.history)
+    ? state.history.filter(row => row?.type === "BUY").length
+    : 0;
+  const compoundRate = COMPOUND_RATES[completedAndOpenBuys % COMPOUND_RATES.length];
+  return {
+    amountInvested: Math.max(MINIMUM_TRADE_USD, equity * compoundRate),
+    compoundRate,
+    compoundStep: completedAndOpenBuys % COMPOUND_RATES.length
+  };
 }
 
-function chooseExit({ position, currentPrice, freshData, exitProgress }) {
+function wholeTradeNetPnlAtExit(position, history, currentPrice, liquidityUsd, estimateExecutionCosts) {
+  if (!position?.id || !Array.isArray(history) || typeof estimateExecutionCosts !== "function") return null;
+  const buys = history.filter(row => row?.type === "BUY" && row.positionId === position.id);
+  const sells = history.filter(row => row?.type === "SELL" && row.positionId === position.id);
+  const initialBuy = buys[0];
+  const originalCostBasis = Number(initialBuy?.amountInvested);
+  if (!(originalCostBasis > 0)) return null;
+
+  const realizedNetPnl = sells.reduce((sum, row) => sum + Number(row.netPnl ?? row.pnl ?? 0), 0);
+  const remainingQuantity = Number(position.quantity);
+  const remainingCostBasis = Number(position.amountInvested);
+  if (!(remainingQuantity > 0) || !(remainingCostBasis >= 0)) return null;
+
+  const remainingSaleValue = remainingQuantity * currentPrice;
+  const exitCosts = estimateExecutionCosts({
+    side: "SELL",
+    amountUsd: remainingSaleValue,
+    liquidityUsd: Number(liquidityUsd) || Number(position.entryLiquidityUsd),
+    priceUsd: currentPrice,
+    position
+  });
+  if (!exitCosts || !Number.isFinite(Number(exitCosts.feesUsd)) || !Number.isFinite(Number(exitCosts.slippageUsd))) return null;
+
+  const initialCosts = initialBuy.entryExecutionCosts || {};
+  const remainingCosts = position.remainingEntryCosts || {
+    feesUsd: Number(initialCosts.feesUsd) * remainingQuantity / Number(initialBuy.quantity || remainingQuantity),
+    slippageUsd: Number(initialCosts.slippageUsd) * remainingQuantity / Number(initialBuy.quantity || remainingQuantity)
+  };
+  const entryCosts = Number(remainingCosts.feesUsd || 0) + Number(remainingCosts.slippageUsd || 0);
+  const saleCosts = Number(exitCosts.feesUsd) + Number(exitCosts.slippageUsd);
+  const projectedNetPnl = realizedNetPnl + remainingSaleValue - remainingCostBasis - entryCosts - saleCosts;
+  return Number.isFinite(projectedNetPnl) ? { projectedNetPnl, originalCostBasis } : null;
+}
+
+function chooseExit({ position, currentPrice, freshData, exitProgress, history, estimateExecutionCosts }) {
   const liquidityRaw = freshData?.liquidityUsd;
   const currentLiquidity = Number(liquidityRaw);
   if (liquidityRaw !== null && liquidityRaw !== undefined &&
@@ -98,10 +139,18 @@ function chooseExit({ position, currentPrice, freshData, exitProgress }) {
   const soldPercent = Number.isFinite(Number(exitProgress?.soldPercent))
     ? Number(exitProgress.soldPercent)
     : (position.secondTakeProfitDone ? 80 : position.firstTakeProfitDone ? 50 : 0);
+  if (soldPercent + 1e-6 >= TAKE_PROFIT_1_SELL_PERCENT) {
+    const wholeTrade = wholeTradeNetPnlAtExit(position, history, price, currentLiquidity, estimateExecutionCosts);
+    const minimumNetPnl = wholeTrade ? wholeTrade.originalCostBasis * PROFIT_FLOOR_AFTER_TP1_PERCENT / 100 : null;
+    if (wholeTrade && wholeTrade.projectedNetPnl <= minimumNetPnl)
+      return { percent: 100, reason: "PROFIT FLOOR +4% WHOLE-TRADE NET AFTER TP1",
+        projectedNetPnlUsd: wholeTrade.projectedNetPnl, minimumNetPnlUsd: minimumNetPnl };
+    // Preserve the existing +4% entry-price safeguard if the ledger or cost estimate
+    // is incomplete; this fallback is explicitly less precise than the net floor.
+    if (!wholeTrade && profitPercent <= PROFIT_FLOOR_AFTER_TP1_PERCENT)
+      return { percent: 100, reason: "PROFIT FLOOR +4% PRICE FALLBACK AFTER TP1" };
+  }
   if (profitPercent <= HARD_STOP_PERCENT) return { percent: 100, reason: "HARD STOP -8%" };
-  if (soldPercent + 1e-6 >= TAKE_PROFIT_1_SELL_PERCENT &&
-      profitPercent <= PROFIT_FLOOR_AFTER_TP1_PERCENT)
-    return { percent: 100, reason: "PROFIT FLOOR +4% AFTER TP1" };
   if (soldPercent + 1e-6 >= TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT) {
     const high = Number(position.highestPrice);
     const pullback = high > 0 ? (high - price) / high * 100 : 0;
@@ -126,7 +175,8 @@ module.exports = {
   selectUniqueMintCandidates,
   getMomentumFailureReasons,
   getBuySizing,
-  chooseExit
+  chooseExit,
+  wholeTradeNetPnlAtExit
 };
 
 
