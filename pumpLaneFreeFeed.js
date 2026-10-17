@@ -5,6 +5,8 @@
 const PUMP_COIN_API = 'https://frontend-api-v3.pump.fun/coins-v2/';
 const HELIUS_RPC = 'https://mainnet.helius-rpc.com/';
 const HELIUS_WS = 'wss://mainnet.helius-rpc.com/';
+const PUBLIC_RPC = 'https://api.mainnet-beta.solana.com';
+const PUBLIC_WS = 'wss://api.mainnet-beta.solana.com';
 
 function decodeCurveAccount(encoded) {
   if (typeof encoded !== 'string') return null;
@@ -58,6 +60,7 @@ function parseTradeTransaction(tx, signature, expectedMint) {
 
 function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade = () => {}, onCurve = () => {}, onStatus = () => {}, fetchImpl = fetch, WebSocketImpl = globalThis.WebSocket } = {}) {
   let ws = null, running = false, sequence = 0, reconnectTimer = null, error = null;
+  let providerIndex = apiKey ? 0 : 1;
   const watched = new Map();
   const requestMap = new Map();
   const pendingRequests = new Map();
@@ -65,18 +68,27 @@ function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade =
   const txQueue = [];
   let txBusy = 0;
 
-  const wsUrl = () => `${HELIUS_WS}?api-key=${encodeURIComponent(apiKey || '')}`;
+  const endpoints = [
+    { name: 'Helius free RPC', rpc: `${HELIUS_RPC}?api-key=${encodeURIComponent(apiKey || '')}`, ws: `${HELIUS_WS}?api-key=${encodeURIComponent(apiKey || '')}` },
+    { name: 'Solana public RPC', rpc: PUBLIC_RPC, ws: PUBLIC_WS }
+  ];
   const rpc = async (method, params) => {
-    if (!apiKey) throw new Error('HELIUS_API_KEY missing; cannot use the free data feed.');
-    const response = await fetchImpl(`${HELIUS_RPC}?api-key=${encodeURIComponent(apiKey)}`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: ++sequence, method, params }),
-      signal: AbortSignal.timeout(12000)
-    });
-    if (!response.ok) throw new Error(`Helius RPC HTTP ${response.status}`);
-    const payload = await response.json();
-    if (payload.error) throw new Error(payload.error.message || 'Helius RPC error');
-    return payload.result;
+    let lastError;
+    for (const index of [providerIndex, 1 - providerIndex]) {
+      try {
+        const response = await fetchImpl(endpoints[index].rpc, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: ++sequence, method, params }),
+          signal: AbortSignal.timeout(12000)
+        });
+        if (!response.ok) throw new Error(`${endpoints[index].name} HTTP ${response.status}`);
+        const payload = await response.json();
+        if (payload.error) throw new Error(payload.error.message || `${endpoints[index].name} RPC error`);
+        providerIndex = index;
+        return payload.result;
+      } catch (e) { lastError = e; }
+    }
+    throw lastError || new Error('No free Solana RPC endpoint available');
   };
   function sendSubscription(mint, pubkey, kind) {
     if (!ws || ws.readyState !== 1) { pendingRequests.set(`${kind}:${mint}`, { mint, pubkey, kind }); return; }
@@ -199,24 +211,26 @@ function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade =
   }
   function connect() {
     if (!running) return;
-    if (!apiKey) { error = 'HELIUS_API_KEY missing; free feed is unavailable.'; onStatus({ error, watched: watched.size }); return; }
     try {
-      ws = new WebSocketImpl(wsUrl());
+      ws = new WebSocketImpl(endpoints[providerIndex].ws);
       ws.addEventListener('open', () => { if (!running) return ws.close(); error = null; drainPending(); onStatus({ connected: true, watched: watched.size }); });
       ws.addEventListener('message', e => handleMessage(e.data));
       ws.addEventListener('error', event => {
         // Browser-style WebSocket error events intentionally hide transport
         // details; Node runtimes may expose a useful message.
         const detail = event?.message || event?.error?.message;
-        error = detail ? `Helius WebSocket error: ${detail}` : 'Helius WebSocket error';
+        error = detail ? `${endpoints[providerIndex].name} WebSocket error: ${detail}` : `${endpoints[providerIndex].name} WebSocket error`;
         onStatus({ error, watched: watched.size });
       });
       ws.addEventListener('close', event => {
         if (!running) return;
         if (event?.code && event.code !== 1000) {
-          error = `Helius WebSocket closed (${event.code}${event.reason ? `: ${event.reason}` : ''})`;
+          error = `${endpoints[providerIndex].name} WebSocket closed (${event.code}${event.reason ? `: ${event.reason}` : ''})`;
           onStatus({ error, watched: watched.size });
         }
+        // A free public Solana endpoint is the no-cost fallback if Helius rejects
+        // or drops the standard WebSocket connection.
+        if (providerIndex === 0 && event?.code !== 1000) providerIndex = 1;
         ws = null;
         reconnectTimer = setTimeout(connect, 5000);
       });
@@ -224,7 +238,7 @@ function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade =
   }
   function start() { if (running) return status(); running = true; connect(); return status(); }
   function stop() { running = false; clearTimeout(reconnectTimer); reconnectTimer = null; const old = ws; ws = null; if (old) old.close(); return status(); }
-  function status() { return { running, connected: !!ws && ws.readyState === 1, error, watched: watched.size, queuedTransactions: txQueue.length, provider: 'Helius free RPC + Pump.fun public coin data', live: false }; }
+  function status() { return { running, connected: !!ws && ws.readyState === 1, error, watched: watched.size, queuedTransactions: txQueue.length, provider: `${endpoints[providerIndex].name} + Pump.fun public coin data`, live: false }; }
   return { start, stop, status, addMint, removeMint, getCandidate: mint => watched.get(mint), watched };
 }
 
