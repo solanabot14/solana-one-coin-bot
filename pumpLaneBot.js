@@ -6,7 +6,7 @@ const { createPumpLaneFreeFeed } = require('./pumpLaneFreeFeed');
 let running = false, error = null, portalSocket = null, reconnect = null;
 let newTokens = 0, tradeEvents = 0, acceptedCandidates = 0;
 const rejectionCounts = Object.create(null);
-const MAX_WATCHED = 80;
+const MAX_WATCHED = 30;
 let freeFeed;
 
 function tryCandidate(c) {
@@ -34,7 +34,10 @@ function tryCandidate(c) {
 freeFeed = createPumpLaneFreeFeed({
   onTrade: ({ candidate }) => { tradeEvents++; tryCandidate(candidate); },
   onCurve: candidate => tryCandidate(candidate),
-  onStatus: status => { if (status.error) { error = status.error; console.error('[Pump Lane free feed]', error); } else if (status.connected) error = null; }
+  onStatus: status => {
+    if (status.error) { error = status.error; console.error('[Pump Lane free feed]', error); }
+    else if (status.connected) { error = null; console.log('[Pump Lane] Connected to', status.provider); }
+  }
 });
 
 function getStatus() {
