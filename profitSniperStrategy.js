@@ -16,7 +16,7 @@ const TAKE_PROFIT_2_SELL_PERCENT = (30 / 50) * 100;
 const TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT = 80;
 const TRAILING_STOP_PERCENT = 8;
 const PROFIT_FLOOR_AFTER_TP1_PERCENT = CONFIG.MAX_ROUND_TRIP_LOSS_PERCENT; // 4% quoted-cost cap plus uncertainty reserve
-const COMPOUND_RATES = [0.10, 0.125];
+const COMPOUND_RATES = [0.10];
 const MINIMUM_TRADE_USD = 20;
 
 function getMomentumFailureReasons(coin, now = Date.now()) {

@@ -46,19 +46,19 @@ test("same ticker is distinguished by mint and duplicate pools collapse to the b
   assert.equal(selected.find(x => x.tokenAddress === "mint-A").pairAddress, "pool-A2");
   assert.equal(selected.find(x => x.tokenAddress === "mint-B").pairAddress, "pool-B");
 });
-test("trade sizing alternates 10% and 12.5% of equity with a $20 minimum", () => {
-  const expectedRates = [0.10, 0.125, 0.10, 0.125, 0.10, 0.125];
-  for (const [entries, expectedRate] of expectedRates.entries()) {
+test("trade sizing uses 10% of equity on every trade with a $20 minimum", () => {
+  for (let entries = 0; entries < 6; entries++) {
     const result = getBuySizing({ cashBalance: 200, positions: [],
       history: Array.from({length: entries}, () => ({type: "BUY"})) });
-    assert.equal(result.compoundRate, expectedRate);
-    assert.equal(result.compoundStep, entries % 2);
-    assert.equal(result.amountInvested, Math.max(20, 200 * expectedRate));
+    assert.equal(result.compoundRate, 0.10);
+    assert.equal(result.compoundStep, 0);
+    assert.equal(result.amountInvested, 20);
   }
   assert.deepEqual(getBuySizing({ cashBalance: 50, positions: [], history: [] }),
     { amountInvested: 20, compoundRate: 0.10, compoundStep: 0 });
   assert.equal(getBuySizing({ cashBalance: 150, positions: [{ amountInvested: 50 }],
-    history: [{type: "BUY"}] }).amountInvested, 25);
+    history: [{type: "BUY"}] }).amountInvested, 20);
+  assert.equal(getBuySizing({ cashBalance: 250, positions: [], history: [{type: "BUY"}] }).amountInvested, 25);
   assert.equal(getBuySizing({ cashBalance: 400, positions: [], history: [] }).amountInvested, 40);
 });
 test("Sniper locks earlier gains with 8%/15% targets and a protected runner", () => {

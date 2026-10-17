@@ -411,7 +411,7 @@ function getStatus() {
       compoundRates: COMPOUND_RATES, nextTradeCompoundRate: nextSizing.compoundRate,
       nextTradeSizeUsd: nextSizing.amountInvested, nextTradeNumber: completedEntries + 1,
       maxOpenPositions: MAX_OPEN_POSITIONS, minimumTradeUsd: MINIMUM_TRADE_USD,
-      sizingMode: "alternating account-equity compounding" },
+      sizingMode: "10% account-equity compounding per trade" },
     analytics48h: {
       ...buildProfitSniper48h(portfolio, rejectionEvents48h),
       rejectionCoverageStartedAt: rejectionEvents48h.length
