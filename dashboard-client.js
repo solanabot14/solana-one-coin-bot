@@ -117,6 +117,25 @@
       entryReason:normalized.entryReason||'Not recorded',exitReason:normalized.exitReason||'Not recorded'});
   }
 
+  function exitProfitBreakdown(record) {
+    record=record||{};
+    var sells=Array.isArray(record.sells)?record.sells:[];
+    if(!sells.length&&String(record.type||'').toUpperCase()==='SELL')sells=[record];
+    if(!sells.length)return '';
+    var totals={tp1:0,tp2:0,trailing:0,other:0},counts={tp1:0,tp2:0,trailing:0,other:0},unknown={tp1:false,tp2:false,trailing:false,other:false};
+    sells.forEach(function(sell){
+      var reason=String(sell.reason||sell.exitReason||'').toUpperCase(),key=/\b(?:TAKE PROFIT\s*1|TP\s*1)\b/.test(reason)?'tp1':/\b(?:TAKE PROFIT\s*2|TP\s*2)\b/.test(reason)?'tp2':/TRAIL(?:ING)?\s*STOP|TRAILING/.test(reason)?'trailing':'other';
+      var profit=n(sell.netPnl??sell.pnl);
+      counts[key]++;
+      if(profit===null)unknown[key]=true;else totals[key]+=profit;
+    });
+    var rows=[['TP1', 'tp1'],['TP2','tp2'],['Trailing','trailing'],['Other exits','other']].map(function(item){
+      var key=item[1],value=counts[key]===0?'—':unknown[key]?'Not recorded':money(totals[key]);
+      return '<tr><td class="text-left">'+item[0]+'</td><td class="'+(counts[key]&&!unknown[key]?signClass(totals[key]):'neutral')+'">'+value+'</td><td>'+int(counts[key])+'</td></tr>';
+    });
+    return '<div class="table-panel section-gap"><div class="table-head"><div><h2>REALIZED PROFIT BY EXIT</h2><span class="sub">Net P&amp;L recorded for each partial sale; sale proceeds are shown separately above</span></div></div>'+table(['EXIT STAGE','NET PROFIT','SALES'],rows,'No exit sales recorded')+'</div>';
+  }
+
   function buildSystems() {
     var api = state.api || {};
     var input = [
@@ -669,7 +688,7 @@
     var list=visibleTransactions,t=list[index];if(!t)return;
     var fields=[['Bot / strategy',t.system],['Strategy',t.strategy],['Mode',t.mode||'PAPER'],['Swarm ID',t.swarmId||'Not applicable'],['Parent',t.parentId||'Not recorded'],['Genesis',t.genesisId||'Not recorded'],['Generation',t.generation],['Token',t.token||t.symbol],['Entry time',dateTime(t.entryTime)],['Exit time',dateTime(t.exitTime||t.time)],['Hold duration',duration(t.holdMs)],['Capital invested',money(t.invested||t.amountInvested||t.amount)],['Entry price',priceValue(t.entryPrice||t.price)],['Exit price',priceValue(t.exitPrice||t.price)],['Amount received',money(t.saleValue||t.amountReceived)],['Estimated fees',t.estimatedFeesUsd==null?'Not recorded':money(t.estimatedFeesUsd)],['Estimated slippage',t.estimatedSlippageUsd==null?'Not recorded':money(t.estimatedSlippageUsd)],['Gross P&L',t.grossPnl==null&&t.pnlGross==null?'Not recorded':money(t.grossPnl??t.pnlGross)],['Net P&L',money(t.netPnl??t.pnl)],['Return',pct(t.returnPercent??t.pnlPercent)],['Entry reason',t.entryReason||'Not recorded'],['Exit reason',t.exitReason||t.reason||'Not recorded']];
     var raw=t.sourceRecord||t;
-    $('detailDrawer').innerHTML='<div class="drawer-top"><div><div class="eyebrow">TRANSACTION DETAIL</div><h2>'+esc(t.token||t.symbol||'Trade')+'</h2></div><button class="icon-button" data-action="close-drawer">×</button></div><div class="detail-grid">'+fields.map(function(x){return '<div class="detail-field"><span>'+esc(x[0])+'</span><strong>'+esc(x[1]===null||x[1]===undefined?'Not recorded':x[1])+'</strong></div>';}).join('')+'</div><details class="raw-record"><summary>ALL SAVED TRANSACTION FIELDS</summary><pre>'+esc(JSON.stringify(raw,null,2))+'</pre></details><div class="footer-note">Transaction detail uses fields present in saved records. No missing values are estimated.</div>';
+    $('detailDrawer').innerHTML='<div class="drawer-top"><div><div class="eyebrow">TRANSACTION DETAIL</div><h2>'+esc(t.token||t.symbol||'Trade')+'</h2></div><button class="icon-button" data-action="close-drawer">×</button></div><div class="detail-grid">'+fields.map(function(x){return '<div class="detail-field"><span>'+esc(x[0])+'</span><strong>'+esc(x[1]===null||x[1]===undefined?'Not recorded':x[1])+'</strong></div>';}).join('')+'</div>'+exitProfitBreakdown(raw)+'<details class="raw-record"><summary>ALL SAVED TRANSACTION FIELDS</summary><pre>'+esc(JSON.stringify(raw,null,2))+'</pre></details><div class="footer-note">Transaction detail uses fields present in saved records. No missing values are estimated.</div>';
     $('drawerBackdrop').classList.remove('hidden');$('detailDrawer').classList.add('open');$('detailDrawer').setAttribute('aria-hidden','false');
   }
   function priceValue(value) { var x=n(value);return x===null?'Not recorded':'$'+x.toFixed(8); }

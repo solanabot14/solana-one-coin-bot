@@ -95,7 +95,11 @@ test("position IDs separate identical token/times and bridge unambiguous older p
 
 test("current transaction table and drawer preserve recorded dollars and missing metrics", () => {
   const {ui,node}=require('./helpers/client.cjs').clientContext();
-  const trade=groupCompletedTrades(history())[0];
+  const records=history();
+  records[1].pnl=0.25;
+  records[2].pnl=0.50;
+  records[2].reason='Trailing stop 10%';
+  const trade=groupCompletedTrades(records)[0];
   const system={id:'v31',name:'V3.1',mode:'PAPER'};
   const normalized=ui.normalizeTrade(trade,system,false);
   const html=ui.renderTransactions([normalized]);
@@ -108,6 +112,10 @@ test("current transaction table and drawer preserve recorded dollars and missing
   ui.openTransaction(0);
   assert.match(node('detailDrawer').innerHTML,/7\.25/);
   assert.match(node('detailDrawer').innerHTML,/15\.75/);
+  assert.match(node('detailDrawer').innerHTML,/REALIZED PROFIT BY EXIT/);
+  assert.match(node('detailDrawer').innerHTML,/\$0\.25/);
+  assert.match(node('detailDrawer').innerHTML,/\$0\.50/);
+  assert.match(node('detailDrawer').innerHTML,/Trailing/);
   const empty=ui.renderTransactions([]);
   assert.match(empty,/No transactions/);
 });
