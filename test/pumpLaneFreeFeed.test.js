@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { decodeCurveAccount, parseTradeTransaction } = require('../pumpLaneFreeFeed');
+const { createPumpLaneFreeFeed, decodeCurveAccount, parseTradeTransaction } = require('../pumpLaneFreeFeed');
 
 test('decodes Pump bonding curve reserves and derives progress', () => {
   const data = Buffer.alloc(49);
@@ -32,4 +32,17 @@ test('identifies a token buy and seller from parsed transaction balances', () =>
   tx.meta.preTokenBalances = [{ mint: 'mint-a', owner: 'wallet-a', uiTokenAmount: { amount: '2500000', decimals: 6 } }];
   tx.meta.postTokenBalances = [];
   assert.equal(parseTradeTransaction(tx, 'sig-b').type, 'sell');
+});
+
+test('free feed uses public Solana WebSocket when no Helius key is available', () => {
+  let url;
+  class FakeSocket {
+    constructor(value) { url = value; this.readyState = 0; }
+    addEventListener() {}
+    close() {}
+  }
+  const feed = createPumpLaneFreeFeed({ apiKey: '', WebSocketImpl: FakeSocket });
+  feed.start();
+  assert.equal(url, 'wss://api.mainnet-beta.solana.com');
+  feed.stop();
 });
