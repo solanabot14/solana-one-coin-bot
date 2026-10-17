@@ -10,6 +10,8 @@ const { buildDashboardData } = require("./dashboardData");
 const swarm = require("./janMvpBot");
 const profitSniper = require("./profitSniper");
 const geminiBot = require("./geminiBot");
+const pumpLaneBot = require("./pumpLaneBot");
+const pumpLaneTrader = require("./pumpLaneTrader");
 const { getGeckoTokenQuote } = require("./geminiSources");
 const geminiTrader = require("./geminiTrader");
 const { buildGeminiAnalytics } = require("./geminiAnalytics");
@@ -240,6 +242,13 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         if (route.endsWith("/start")) geminiBot.start(); else geminiBot.stop();
         return json(res, { running: geminiBot.getStatus(), error: geminiBot.getLastError() });
       }
+      if (route === "/api/pump-lane/start" || route === "/api/pump-lane/stop") {
+        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
+        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        if (route.endsWith("/start")) pumpLaneBot.start(); else pumpLaneBot.stop();
+        return json(res, pumpLaneBot.getStatus());
+      }
       if (route === "/api/start" || route === "/api/stop") {
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
         if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
@@ -332,7 +341,8 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           buildDashboardData(profitSniperAccount, sharedMarketData, { allowAlternatePairQuote: true }),
         ]);
         const outcomeData = outcomeBot.getDashboardData(), stockData = stockBot.getDashboardData();
-        const equities = {v31:v31.equity,candle:candleBreakout.data?.equity,'profit-sniper':profitSniperData.equity,gemini:geminiData.equity,outcome:outcomeData.equity,stock:stockData.equity,swarm:swarm.getDashboardState().totalCapital};
+        const pumpLaneData = pumpLaneTrader.dashboard();
+        const equities = {'pump-lane':pumpLaneData.equity,v31:v31.equity,candle:candleBreakout.data?.equity,'profit-sniper':profitSniperData.equity,gemini:geminiData.equity,outcome:outcomeData.equity,stock:stockData.equity,swarm:swarm.getDashboardState().totalCapital};
         if (Object.values(equities).every(v => typeof v === 'number' && Number.isFinite(v))) equities.total = Object.values(equities).reduce((s,v) => s+v,0);
         let equityRows = equityHistory.getRows();
         try { equityRows = equityHistory.record(equities); } catch (error) { console.error('Equity history persistence:', error.message); }
@@ -344,6 +354,8 @@ function createDashboardServer({ config = getConfig(), controls = bot,
           candleBreakoutError: candleBreakout.error,
           profitSniper: profitSniperData,
           profitSniperStatus: profitSniper.getStatus(),
+          pumpLane: pumpLaneData,
+          pumpLaneStatus: pumpLaneBot.getStatus(),
           gemini: geminiData,
           geminiStatus: { running: geminiBot.getStatus(), error: geminiBot.getLastError(), ...geminiBot.getDiagnostics() },
           outcomeBot: outcomeData,
@@ -380,6 +392,7 @@ if (require.main === module) {
     geminiBot.start();
     outcomeBot.start();
     stockBot.start();
+    pumpLaneBot.start();
     console.log("Dashboard listening on " + config.host + ":" + config.port);
     let sampling = false;
     async function sampleEquity() {
@@ -403,6 +416,7 @@ if (require.main === module) {
     geminiBot.stop();
     outcomeBot.stop();
     stockBot.stop();
+    pumpLaneBot.stop();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 12000).unref();
   };
