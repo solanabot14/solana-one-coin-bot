@@ -100,19 +100,31 @@ function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade =
     watched.set(mint, c);
     sendSubscription(mint, mint, 'trades');
     try {
-      let response, coin;
-      for (let attempt = 0; attempt < 4; attempt++) {
-        response = await fetchImpl(`${PUMP_COIN_API}${encodeURIComponent(mint)}`, { signal: AbortSignal.timeout(10000) });
-        if (response.ok) { coin = await response.json(); break; }
-        if (![404, 429, 502, 503].includes(response.status) || attempt === 3) throw new Error(`Pump coin API HTTP ${response.status}`);
-        await new Promise(resolve => setTimeout(resolve, 800 * (attempt + 1)));
+      // PumpPortal's free creation event includes bondingCurveKey. Use it directly
+      // so a token does not depend on Pump.fun's slower indexing API.
+      let curveAddress = seed.bondingCurveKey || seed.bonding_curve || null;
+      if (!curveAddress) {
+        let response, coin;
+        for (let attempt = 0; attempt < 6; attempt++) {
+          response = await fetchImpl(`${PUMP_COIN_API}${encodeURIComponent(mint)}`, { signal: AbortSignal.timeout(10000) });
+          if (response.ok) {
+            coin = await response.json();
+            if (coin?.bonding_curve || coin?.bondingCurveKey) break;
+          } else if (![404, 429, 502, 503].includes(response.status) || attempt === 5) {
+            throw new Error(`Pump coin API HTTP ${response.status}`);
+          }
+          // Newly created coins may take several seconds to appear in Pump.fun's
+          // index. Keep the token watched and retry instead of dropping it.
+          if (attempt < 5) await new Promise(resolve => setTimeout(resolve, 1500 * (attempt + 1)));
+        }
+        c.symbol = coin?.symbol || c.symbol;
+        c.creator = coin?.creator || c.creator;
+        c.nsfw = c.nsfw || !!coin?.nsfw;
+        c.graduated = !!(coin?.complete || coin?.is_banned);
+        curveAddress = coin?.bonding_curve || coin?.bondingCurveKey || null;
+        if (!curveAddress) throw new Error('Pump coin index has not published the bonding curve yet');
       }
-      c.symbol = coin.symbol || c.symbol;
-      c.creator = coin.creator || c.creator;
-      c.nsfw = c.nsfw || !!coin.nsfw;
-      c.graduated = !!(coin.complete || coin.is_banned);
-      if (coin.bonding_curve) sendSubscription(mint, coin.bonding_curve, 'curve');
-      else throw new Error('Pump coin API did not return bonding_curve');
+      sendSubscription(mint, curveAddress, 'curve');
     } catch (e) {
       error = `Free coin lookup (${mint.slice(0, 6)}…): ${e.message}`;
       onStatus({ error, watched: watched.size });
@@ -192,8 +204,22 @@ function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade =
       ws = new WebSocketImpl(wsUrl());
       ws.addEventListener('open', () => { if (!running) return ws.close(); error = null; drainPending(); onStatus({ connected: true, watched: watched.size }); });
       ws.addEventListener('message', e => handleMessage(e.data));
-      ws.addEventListener('error', () => { error = 'Helius WebSocket error'; onStatus({ error, watched: watched.size }); });
-      ws.addEventListener('close', () => { if (!running) return; ws = null; reconnectTimer = setTimeout(connect, 5000); });
+      ws.addEventListener('error', event => {
+        // Browser-style WebSocket error events intentionally hide transport
+        // details; Node runtimes may expose a useful message.
+        const detail = event?.message || event?.error?.message;
+        error = detail ? `Helius WebSocket error: ${detail}` : 'Helius WebSocket error';
+        onStatus({ error, watched: watched.size });
+      });
+      ws.addEventListener('close', event => {
+        if (!running) return;
+        if (event?.code && event.code !== 1000) {
+          error = `Helius WebSocket closed (${event.code}${event.reason ? `: ${event.reason}` : ''})`;
+          onStatus({ error, watched: watched.size });
+        }
+        ws = null;
+        reconnectTimer = setTimeout(connect, 5000);
+      });
     } catch (e) { error = e.message; onStatus({ error, watched: watched.size }); reconnectTimer = setTimeout(connect, 5000); }
   }
   function start() { if (running) return status(); running = true; connect(); return status(); }
