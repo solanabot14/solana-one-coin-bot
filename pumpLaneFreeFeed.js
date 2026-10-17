@@ -5,8 +5,8 @@
 const PUMP_COIN_API = 'https://frontend-api-v3.pump.fun/coins-v2/';
 const HELIUS_RPC = 'https://mainnet.helius-rpc.com/';
 const HELIUS_WS = 'wss://mainnet.helius-rpc.com/';
-const PUBLIC_RPC = 'https://api.mainnet-beta.solana.com';
-const PUBLIC_WS = 'wss://api.mainnet-beta.solana.com';
+const PUBLIC_RPC = 'https://api.mainnet.solana.com';
+const PUBLIC_WS = 'wss://api.mainnet.solana.com';
 
 function decodeCurveAccount(encoded) {
   if (typeof encoded !== 'string') return null;
@@ -63,6 +63,7 @@ function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade =
   let wsProviderIndex = apiKey ? 0 : 1;
   let rpcProviderIndex = 1;
   let lastRpcAt = 0;
+  let heliusCooldownUntil = 0;
   const watched = new Map();
   const requestMap = new Map();
   const pendingRequests = new Map();
@@ -75,8 +76,9 @@ function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade =
     { name: 'Solana public RPC', rpc: PUBLIC_RPC, ws: PUBLIC_WS }
   ];
   const rpc = async (method, params) => {
-    let lastError;
-    for (const index of [rpcProviderIndex, 1 - rpcProviderIndex]) {
+    const failures = [];
+    const order = [rpcProviderIndex, 1 - rpcProviderIndex].filter(index => (index !== 0 || (apiKey && Date.now() >= heliusCooldownUntil)));
+    for (const index of order) {
       try {
         const delay = 500 - (Date.now() - lastRpcAt);
         if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
@@ -92,11 +94,14 @@ function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade =
         rpcProviderIndex = index;
         return payload.result;
       } catch (e) {
-        lastError = e;
-        if (/HTTP 429/.test(e.message) && index === 0) rpcProviderIndex = 1;
+        failures.push(e.message);
+        if (/HTTP 429/.test(e.message) && index === 0) {
+          heliusCooldownUntil = Date.now() + 60_000;
+          rpcProviderIndex = 1;
+        }
       }
     }
-    throw lastError || new Error('No free Solana RPC endpoint available');
+    throw new Error(failures.join('; ') || 'No free Solana RPC endpoint available');
   };
   function sendSubscription(mint, pubkey, kind) {
     if (!ws || ws.readyState !== 1) { pendingRequests.set(`${kind}:${mint}`, { mint, pubkey, kind }); return; }
