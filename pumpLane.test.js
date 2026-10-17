@@ -77,7 +77,7 @@ test('free feed never buys creation or subscribes to paid PumpPortal trades', as
   try {
     bot.start(); const helius = instances[0], portal = instances[1]; helius.open(); portal.open();
     assert.deepEqual(portal.sent[0], { method: 'subscribeNewToken' });
-    portal.event({ txType: 'create', mint: 'mint', symbol: 'TEST', traderPublicKey: 'creator', tokenAmount: 100 });
+    portal.event({ txType: 'create', mint: 'mint', symbol: 'TEST', traderPublicKey: 'creator', tokenAmount: 100, bondingCurveKey: 'curve' });
     assert.equal(trader.getState().position, null); assert.equal(bot.getStatus().watched, 1);
     await new Promise(resolve => setImmediate(resolve));
     assert.ok(helius.sent.some(x => x.method === 'logsSubscribe'));
