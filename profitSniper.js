@@ -304,7 +304,7 @@ if (reconciliation.reason === "account-differs-from-audited-ledger") {
   console.error("Profit Sniper reconciliation skipped: saved account changed; scanner must stay paused.");
 }
 const trader = createPaperTrader(statePath(), fs, {
-  strategyVersion: "Profit-Sniper-200-10-12.5-Compound-2026-10-16",
+  strategyVersion: "Profit-Sniper-200-10-Compound-2026-10-17",
   startingBalance: 200,
   sessionResetId: SESSION_RESET_ID,
   maxOpenPositions: MAX_OPEN_POSITIONS,
