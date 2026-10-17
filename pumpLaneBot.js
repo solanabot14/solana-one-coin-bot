@@ -75,6 +75,7 @@ function connectPortal() {
           creatorBuyTokens: Number(token.tokenAmount) || 0,
           creationSignature: token.signature,
           creationSlot: token.slot,
+          bondingCurveKey: token.bondingCurveKey,
           nsfw: !!token.nsfw
         }).then(tryCandidate).catch(e => { error = e.message; console.error('[Pump Lane free token lookup]', error); });
       } catch (e) { error = e.message; console.error('[Pump Lane token feed]', error); }
