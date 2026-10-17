@@ -43,6 +43,6 @@ test('free feed uses public Solana WebSocket when no Helius key is available', (
   }
   const feed = createPumpLaneFreeFeed({ apiKey: '', WebSocketImpl: FakeSocket });
   feed.start();
-  assert.equal(url, 'wss://api.mainnet-beta.solana.com');
+  assert.equal(url, 'wss://api.mainnet.solana.com');
   feed.stop();
 });
