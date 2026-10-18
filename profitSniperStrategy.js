@@ -14,11 +14,11 @@ const MIN_EXIT_LIQUIDITY_USD = 1000;
 const MAX_EXIT_LIQUIDITY_DRAWDOWN = 0.25;
 const BLOCKED_TOKEN_ADDRESSES = new Set(["EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J"]);
 const TAKE_PROFIT_1_PERCENT = 15;
-const TAKE_PROFIT_1_SELL_PERCENT = 40;
+const TAKE_PROFIT_1_SELL_PERCENT = 50;
 const TAKE_PROFIT_2_PERCENT = 25;
-const TAKE_PROFIT_2_SELL_PERCENT = (40 / 60) * 100;
-const TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT = 80;
-const TRAILING_STOP_PERCENT = 12;
+const TAKE_PROFIT_2_SELL_PERCENT = (40 / 50) * 100;
+const TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT = 90;
+const TRAILING_STOP_PERCENT = 8;
 
 const COMPOUND_RATES = [0.10];
 const MINIMUM_TRADE_USD = 20;
@@ -151,12 +151,12 @@ function chooseExit({ position, currentPrice, freshData, exitProgress, history, 
     const high = Number(position.highestPrice);
     const pullback = high > 0 ? (high - price) / high * 100 : 0;
     return pullback >= TRAILING_STOP_PERCENT
-      ? { percent: 100, triggerPrice: high * (1 - TRAILING_STOP_PERCENT / 100), reason: "TRAILING STOP -12% FROM HIGH" } : null;
+      ? { percent: 100, triggerPrice: high * (1 - TRAILING_STOP_PERCENT / 100), reason: "TRAILING STOP -8% FROM HIGH" } : null;
   }
   if (soldPercent + 1e-6 < TAKE_PROFIT_1_SELL_PERCENT && profitPercent + 1e-9 >= TAKE_PROFIT_1_PERCENT)
-    return { targetOriginalPositionPercent: 40, triggerPrice: entryPrice * (1 + TAKE_PROFIT_1_PERCENT / 100), reason: "TAKE PROFIT 1 - SELL 40% OF ORIGINAL POSITION AT +15%", takeProfit: "firstTakeProfitDone" };
+    return { targetOriginalPositionPercent: 50, triggerPrice: entryPrice * (1 + TAKE_PROFIT_1_PERCENT / 100), reason: "TAKE PROFIT 1 - SELL 50% OF ORIGINAL POSITION AT +15%", takeProfit: "firstTakeProfitDone" };
   if (soldPercent + 1e-6 < TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT && profitPercent + 1e-9 >= TAKE_PROFIT_2_PERCENT)
-    return { targetOriginalPositionPercent: 80, triggerPrice: entryPrice * (1 + TAKE_PROFIT_2_PERCENT / 100), reason: "TAKE PROFIT 2 - SELL ANOTHER 40% OF ORIGINAL POSITION AT +25%", takeProfit: "secondTakeProfitDone" };
+    return { targetOriginalPositionPercent: 90, triggerPrice: entryPrice * (1 + TAKE_PROFIT_2_PERCENT / 100), reason: "TAKE PROFIT 2 - SELL ANOTHER 40% OF ORIGINAL POSITION AT +25%", takeProfit: "secondTakeProfitDone" };
   return null;
 }
 

@@ -418,7 +418,7 @@ function getStatus() {
     strategy: { hardStopPercent: HARD_STOP_PERCENT, tp1Percent: TAKE_PROFIT_1_PERCENT,
       tp1SellPercent: TAKE_PROFIT_1_SELL_PERCENT, tp1OriginalPositionSellPercent: TAKE_PROFIT_1_SELL_PERCENT,
       tp2Percent: TAKE_PROFIT_2_PERCENT, tp2OriginalPositionSellPercent: TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT - TAKE_PROFIT_1_SELL_PERCENT,
-      tp2SellRemainingPercent: TAKE_PROFIT_2_SELL_PERCENT, runnerOriginalPositionPercent: 20,
+      tp2SellRemainingPercent: TAKE_PROFIT_2_SELL_PERCENT, runnerOriginalPositionPercent: 10,
       trailingStopPercent: TRAILING_STOP_PERCENT,
       postTp1FloorPercent: null,
       postTp1FloorBasis: "disabled",
