@@ -61,4 +61,77 @@ function buildProfitSniper48h(portfolio, rejectionEvents = [], now = Date.now())
   };
 }
 
-module.exports = { WINDOW_MS, buildProfitSniper48h };
+function buildNext25Review(portfolio, strategyVersion, target = 25) {
+  const history = Array.isArray(portfolio?.history) ? portfolio.history : [];
+  const openIds = new Set((portfolio?.positions || []).map(position => position.positionId || position.id));
+  const buysById = new Map();
+  const sellsById = new Map();
+  for (const row of history) {
+    if (row?.strategyVersion !== strategyVersion || !row.positionId) continue;
+    if (row.type === "BUY") buysById.set(row.positionId, row);
+    if (row.type === "SELL") {
+      const rows = sellsById.get(row.positionId) || [];
+      rows.push(row);
+      sellsById.set(row.positionId, rows);
+    }
+  }
+
+  const completed = [];
+  for (const [positionId, entry] of buysById) {
+    const sells = (sellsById.get(positionId) || [])
+      .slice().sort((a, b) => Date.parse(a.exitTime || 0) - Date.parse(b.exitTime || 0));
+    if (!sells.length || openIds.has(positionId)) continue;
+    const finalExit = sells.at(-1);
+    completed.push({
+      positionId,
+      exitTime: finalExit.exitTime || null,
+      pnl: sells.reduce((sum, row) => sum + (Number(row.netPnl ?? row.pnl) || 0), 0),
+      finalExitReason: finalExit.reason || "not recorded",
+      hardStopAudits: sells.filter(row => /HARD STOP/i.test(String(row.reason || ""))),
+      entryTime: entry.entryTime || null
+    });
+  }
+  completed.sort((a, b) => Date.parse(a.exitTime || 0) - Date.parse(b.exitTime || 0));
+  const sample = completed.slice(0, target);
+  const winners = sample.filter(row => row.pnl > 0);
+  const losses = sample.filter(row => row.pnl < 0);
+  const reasonTotals = {};
+  for (const row of sample) {
+    const item = reasonTotals[row.finalExitReason] || { trades: 0, netPnlUsd: 0 };
+    item.trades++;
+    item.netPnlUsd += row.pnl;
+    reasonTotals[row.finalExitReason] = item;
+  }
+  const stopAudits = sample.flatMap(row => row.hardStopAudits);
+  const recordedStopAudits = stopAudits.filter(row => Number.isFinite(Number(row.fillVsTriggerPercent)));
+  const stopFillGaps = recordedStopAudits.map(row => Number(row.fillVsTriggerPercent));
+  const grossWins = winners.reduce((sum, row) => sum + row.pnl, 0);
+  const grossLosses = losses.reduce((sum, row) => sum + row.pnl, 0);
+
+  return {
+    strategyVersion,
+    targetTrades: target,
+    closedTrades: sample.length,
+    remainingTrades: Math.max(0, target - sample.length),
+    complete: sample.length >= target,
+    startedAt: sample[0]?.entryTime || null,
+    lastClosedAt: sample.at(-1)?.exitTime || null,
+    netPnlUsd: sample.reduce((sum, row) => sum + row.pnl, 0),
+    wins: winners.length,
+    losses: losses.length,
+    winRatePercent: sample.length ? winners.length / sample.length * 100 : null,
+    profitFactor: grossLosses < 0 ? grossWins / Math.abs(grossLosses) : (grossWins > 0 ? null : 0),
+    finalExitReasons: Object.fromEntries(Object.entries(reasonTotals).map(([reason, metrics]) =>
+      [reason, { trades: metrics.trades, netPnlUsd: Number(metrics.netPnlUsd.toFixed(6)) }])),
+    hardStopFillAudit: {
+      exits: stopAudits.length,
+      exitsWithTriggerAndFill: recordedStopAudits.length,
+      missingTriggerOrFill: stopAudits.length - recordedStopAudits.length,
+      averageFillVsTriggerPercent: stopFillGaps.length
+        ? stopFillGaps.reduce((sum, value) => sum + value, 0) / stopFillGaps.length : null,
+      worstFillVsTriggerPercent: stopFillGaps.length ? Math.min(...stopFillGaps) : null
+    }
+  };
+}
+
+module.exports = { WINDOW_MS, buildProfitSniper48h, buildNext25Review };

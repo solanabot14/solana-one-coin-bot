@@ -11,7 +11,8 @@ const {hourlyRank,compareHourly}=require("./profitSniperHourlyRank");
 const { createMomentumTracker } = require("./profitSniperMomentum");
 const { createRecoveryWatchlist } = require("./profitSniperRecoveryWatchlist");
 const { createSniperEntryGuard } = require("./profitSniperEntryGuard");
-const { WINDOW_MS, buildProfitSniper48h } = require("./profitSniperAnalytics");
+const { createShockCooldown } = require("./profitSniperShockCooldown");
+const { WINDOW_MS, buildProfitSniper48h, buildNext25Review } = require("./profitSniperAnalytics");
 const { constants } = strategy;
 const { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_5M_USD,
   MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M,
@@ -56,6 +57,7 @@ const finalEntryCounts = { passed: 0, rejected: 0 };
 let lastScanDiagnostics = { state: "waiting_for_first_scan", updatedAt: null, source: "DexScreener public feeds + live observations + RugCheck" };
 const entryGuard = createSniperEntryGuard();
 const momentumTracker = createMomentumTracker();
+const shockCooldown = createShockCooldown();
 const ageWatchlist = new Map();
 const recoveryWatchlist = createRecoveryWatchlist({
   maxAgeMs: CONFIG.RECOVERY_WATCHLIST_MAX_AGE_MS,
@@ -92,8 +94,9 @@ async function discoverCandidates(options = {}) {
   for (const raw of scanned) {
     const key = String(raw.tokenAddress || "") + ":" + String(raw.pairAddress || "");
     currentKeys.add(key);
+    const shock = shockCooldown.observe(raw, now);
     const momentumPattern = momentumTracker.observe(raw, now);
-    const coin = { ...raw, momentumPattern };
+    const coin = { ...raw, momentumPattern, shockCooldown: shock };
     recoveryWatchlist.remember(coin, now);
     const failures = getMomentumFailureReasons(coin, now);
     const ageMs = now - Number(coin.pairCreatedAt);
@@ -114,7 +117,7 @@ async function discoverCandidates(options = {}) {
       item.rechecks++;
       ageWatchlistRechecks++;
     }
-    candidates.push({ key, coin, failures, ageMs, wasWatchlisted: wasOnWatchlist });
+    candidates.push({ key, coin, failures, ageMs, wasWatchlisted: wasOnWatchlist, shock });
   }
 
   // Discovery feeds rotate quickly. Keep promising exact pools warm with fresh
@@ -136,13 +139,14 @@ async function discoverCandidates(options = {}) {
       if (!fresh || fresh.pairAddress !== item.pairAddress) continue;
       const raw = { ...item.lastSnapshot, ...fresh, pairAddress: item.pairAddress,
         tokenAddress: item.tokenAddress };
+      const shock = shockCooldown.observe(raw, now);
       const momentumPattern = momentumTracker.observe(raw, now);
-      const coin = { ...raw, momentumPattern, recoveryWatchlistRecheck: true };
+      const coin = { ...raw, momentumPattern, shockCooldown: shock, recoveryWatchlistRecheck: true };
       recoveryWatchlist.recordDirectRecheck(item.key, coin, now);
       recoveryWatchlist.remember(coin, now);
       currentKeys.add(item.key);
       candidates.push({ key: item.key, coin, failures: getMomentumFailureReasons(coin, now),
-        ageMs: now - Number(coin.pairCreatedAt), wasWatchlisted: ageWatchlist.has(item.key) });
+        ageMs: now - Number(coin.pairCreatedAt), wasWatchlisted: ageWatchlist.has(item.key), shock });
     }
   }
 
@@ -166,6 +170,7 @@ async function discoverCandidates(options = {}) {
   for (const item of candidates) {
     const { coin, key, ageMs, wasWatchlisted } = item;
     let failures = [...item.failures];
+    if (item.shock?.active) failures.push("rapidDropCooldown");
     // Observe the pool during momentum warmup, so both independent windows
     // mature together. Entry still requires current momentum and stable reserves.
     const poolStability = entryGuard.observe(coin, now);
@@ -223,6 +228,13 @@ async function discoverCandidates(options = {}) {
       },
       fromAgeWatchlist: wasWatchlisted,
       fromRecoveryWatchlist: !!coin.recoveryWatchlistRecheck,
+      shockCooldown: coin.shockCooldown ? {
+        active: coin.shockCooldown.active,
+        reason: coin.shockCooldown.reason,
+        remainingMs: coin.shockCooldown.remainingMs,
+        priceDropPercent: coin.shockCooldown.priceDropPercent,
+        liquidityDropPercent: coin.shockCooldown.liquidityDropPercent
+      } : null,
       reason: failures.length ? [...new Set(failures)].join(",") : "entry_candidate_selected"
     };
     logs.push(record);
@@ -287,6 +299,7 @@ async function discoverCandidates(options = {}) {
 }
 
 const SESSION_RESET_ID = "profit-sniper-reset-200-2026-10-16T2134PR";
+const STRATEGY_VERSION = "Profit-Sniper-200-10-Compound-2026-10-18-ShockCooldown";
 const savedSessionId = fs.existsSync(statePath())
   ? JSON.parse(fs.readFileSync(statePath(), "utf8")).sessionId : null;
 const savedSessionIsCurrent = savedSessionId === SESSION_RESET_ID;
@@ -305,7 +318,7 @@ if (reconciliation.reason === "account-differs-from-audited-ledger") {
   console.error("Profit Sniper reconciliation skipped: saved account changed; scanner must stay paused.");
 }
 const trader = createPaperTrader(statePath(), fs, {
-  strategyVersion: "Profit-Sniper-200-10-Compound-2026-10-17",
+  strategyVersion: STRATEGY_VERSION,
   startingBalance: 200,
   sessionResetId: SESSION_RESET_ID,
   maxOpenPositions: MAX_OPEN_POSITIONS,
@@ -419,6 +432,7 @@ function getStatus() {
         ? new Date(Math.min(...rejectionEvents48h.map(event => Number(event.at)))).toISOString() : null,
       unavailableRejectionMetrics: ["noSellRoute", "roundTripLoss", "priceImpact", "failClosed"]
     },
+    next25Review: buildNext25Review(portfolio, STRATEGY_VERSION),
     scanDiagnostics: lastScanDiagnostics,
     entryDiagnostics: {
       rejectionCounts: { ...cumulativeRejectionCounts },
@@ -427,6 +441,7 @@ function getStatus() {
       reentryPolicy: { inheritedV31FilterEnabled: false, maximumTokenAttempts: null, tokenAttemptLimitEnabled: false,
         stopLossReentryBlocked: true, openMintDuplicatesBlocked: true },
       poolStability: entryGuard.getStatus(),
+      shockCooldown: shockCooldown.getStatus(),
       ageWatchlistPending: ageWatchlist.size,
       recoveryWatchlistPending: recoveryWatchlist.size(),
       ageWatchlistRechecks,
@@ -502,7 +517,10 @@ module.exports = {
     maximumIndividualHolderPercent: CONFIG.MAX_SINGLE_HOLDER_PERCENT,
     minimumLiquidityLockPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT,
     maximumOpenPositions: MAX_OPEN_POSITIONS,
-    minimumTradeUsd: MINIMUM_TRADE_USD
+    minimumTradeUsd: MINIMUM_TRADE_USD,
+    rapidDropCooldownMs: 5 * 60 * 1000,
+    rapidPriceDropPercent: 12,
+    rapidLiquidityDropPercent: 20
   }
 };
 

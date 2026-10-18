@@ -38,6 +38,13 @@ test('a pool collapse still resets stability even when the price pattern qualifi
  assert.equal((await f.scan(start+60000,{priceUsd:1.02,liquidityUsd:12000})).length,0);
 });
 
+test('a sudden price drop applies a temporary cooldown to the same pool',async()=>{
+ const f=setup(),start=1800000000000;
+ await f.scan(start);
+ assert.equal((await f.scan(start+30000,{priceUsd:0.87})).length,0);
+ assert.equal((await f.scan(start+60000,{priceUsd:0.88})).length,0);
+});
+
 
 test('Sniper reentry uses its own fresh gates without the conflicting inherited V3.1 cap',async()=>{
  const start=1800000000000;
