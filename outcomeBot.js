@@ -250,7 +250,7 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     if (!(last > 0 && open > 0)) reasons.push("Price unavailable");
     if (!Number.isFinite(volumeUsd) || volumeUsd < MIN_DAILY_VOLUME_USD) reasons.push("24h USD volume below $5M");
     if (dayChange < MIN_DAILY_GAIN_PERCENT) reasons.push("24h gain below +4%");
-    if (dayChange > MAX_DAILY_GAIN_PERCENT) reasons.push("24h gain above +25% chase limit");
+    if (dayChange > MAX_DAILY_GAIN_PERCENT) reasons.push("24h gain above +35% chase limit");
     if (closed.length < 21) reasons.push("Insufficient 105 minutes of trend history");
     if (relativeVolume15m < 1.2) reasons.push("15m relative volume below 1.2x");
     if (!(vwap > 0 && last > vwap)) reasons.push("Price is not above session VWAP");
@@ -303,13 +303,13 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
       realizedPnlUsd:0,entryTime:new Date(now()).toISOString(),strategyVersion:STRATEGY_VERSION,
       hardStopPercent:Number(candidate.riskPercent)||HARD_STOP_PERCENT,stopPriceUsd:entryPrice*(1-(Number(candidate.riskPercent)||HARD_STOP_PERCENT)/100),tp1Done:false,tp2Done:false,
       runnerTrailActive:false,markPriceUsd:candidate.priceUsd,
-      strategy:"Coinbase Bot paper momentum · +4% to +25% day move · 3x 15m relative volume · above VWAP with EMA9>EMA21 and RSI<80 · pullback/reclaim or breakout · 40% at +4.5%, 30% at +7%, 30% runner · ATR stop 1.5%-2.5% · 45m time stop · PR 23:45 flat",
+      strategy:"Coinbase Bot paper major-coin uptrend · BTC/SOL/XRP/HYPE only · rising 1h trend · VWAP + EMA9>EMA21 · green reclaim/breakout · 70% at +5%, 30% at +20% · 2% hard stop · PR 23:45 flat",
       entryMetrics:{dayChangePercent:candidate.dayChangePercent,hourChangePercent:candidate.hourChangePercent,fiveMinChangePercent:candidate.fiveMinChangePercent,
         pullbackPercent:candidate.pullbackPercent,volumeRatio:candidate.volumeRatio,volumeUsd:candidate.volumeUsd,score:candidate.score,entrySetup:candidate.entrySetup} };
     next.cashUsd -= costBasisUsd; next.openPositions.push(pos);
     next.history.unshift({type:"BUY",positionId:pos.id,productId:pos.productId,tokenAddress:pos.productId,symbol:pos.symbol,
       entryPrice:pos.entryPrice,quantity:pos.quantity,amountUsd:notional,feeUsd:fee,costBasisUsd:pos.costBasisUsd,time:pos.entryTime,
-      entryTime:pos.entryTime,mode:"PAPER",strategy:pos.strategy,entryReason:"Coinbase daily top gainer; "+(candidate.entrySetup||"momentum confirmation")});
+      entryTime:pos.entryTime,mode:"PAPER",strategy:pos.strategy,entryReason:"Major-coin upward momentum; "+(candidate.entrySetup||"trend confirmation")});
     commit(next); return {success:true,position:structuredClone(pos)};
   }
   function sellQuantity(positionId, markPrice, requestedQuantity, reason, patch={}) {
@@ -404,12 +404,12 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     const pnlPercent=(price/p.entryPrice-1)*100;
     if(pnlPercent<=-(Number(p.hardStopPercent)||HARD_STOP_PERCENT)){closePosition(p.id,price,"ATR HARD STOP -"+(Number(p.hardStopPercent)||HARD_STOP_PERCENT)+"%");return;}
     current=state.openPositions.find(x=>x.id===snapshot.id);if(!current)return;
-    if(!current.tp1Done&&pnlPercent>=TP1_PERCENT){
-      sellQuantity(current.id,price,(Number(current.originalQuantity)||current.quantity)*TP1_SELL_FRACTION,"TAKE PROFIT +4.5% (40%)",{tp1Done:true,stopPriceUsd:current.entryPrice*(1+0.014)});
+    if(!current.tp1Done&&pnlPercent+1e-9>=TP1_PERCENT){
+      sellQuantity(current.id,price,(Number(current.originalQuantity)||current.quantity)*TP1_SELL_FRACTION,"TAKE PROFIT +5% (70%)",{tp1Done:true,stopPriceUsd:current.entryPrice*(1+0.014)});
     }
     current=state.openPositions.find(x=>x.id===snapshot.id);if(!current)return;
-    if(!current.tp2Done&&pnlPercent>=TP2_PERCENT){
-      sellQuantity(current.id,price,(Number(current.originalQuantity)||current.quantity)*TP2_SELL_FRACTION,"TAKE PROFIT +7% (30%)",{tp1Done:true,tp2Done:true,runnerTrailActive:true,stopPriceUsd:current.entryPrice*(1+0.014)});
+    if(!current.tp2Done&&pnlPercent+1e-9>=TP2_PERCENT){
+      sellQuantity(current.id,price,(Number(current.originalQuantity)||current.quantity)*TP2_SELL_FRACTION,"TAKE PROFIT +20% (30%)",{tp1Done:true,tp2Done:true,runnerTrailActive:true,stopPriceUsd:current.entryPrice*(1+0.014)});
     }
     current=state.openPositions.find(x=>x.id===snapshot.id);if(!current)return;
     next=structuredClone(state);p=next.openPositions.find(x=>x.id===snapshot.id);p.markPriceUsd=price;if(price>Number(p.highestPrice||0))p.highestPrice=price;
