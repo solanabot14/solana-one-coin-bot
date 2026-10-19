@@ -90,16 +90,19 @@ test("missing and insufficient exact-pool lock are rejected below the 30% floor"
 test("burned LP can pass without a lock only when RugCheck explicitly marks it burned", () => {
   assert.equal(poolLock(report({ burned: true, lock: 0 }), coin).allowed, true);
 });
-test("GoPlus TVL and burn evidence applies only to the exact selected pool", () => {
+test("GoPlus exact-pool burn percentage counts toward the existing 30% secured-liquidity floor", () => {
   const goplus = { mint: coin.tokenAddress, provider: "goplus", rugged: false,
     token: { mintAuthority: null, freezeAuthority: null },
     topHolders: Array.from({ length: 10 }, (_, i) => ({ address: "h" + i, pct: 2 })),
     markets: [{ provider: "goplus", pubkey: coin.pairAddress, mintA: coin.tokenAddress,
-      lp: { providerTvlUSD: 30000, lpBurnedPct: 100, lpBurned: true } }] };
+      lp: { providerTvlUSD: 30000, lpBurnedPct: 35, lpLockedPct: 35,
+        lpLockedUSD: 10500, lpBurned: false } }] };
   assert.equal(poolLock(goplus, coin).allowed, true);
   assert.equal(poolLock({ ...goplus, markets: [{ ...goplus.markets[0], pubkey: "other-pool" }] }, coin).allowed, false);
   assert.equal(poolLock({ ...goplus, markets: [{ ...goplus.markets[0], lp: { ...goplus.markets[0].lp,
-    lpBurnedPct: null, lpBurned: false } }] }, coin).allowed, false);
+    lpBurnedPct: 29, lpLockedPct: 29, lpLockedUSD: 8700 } }] }, coin).allowed, false);
+  assert.equal(poolLock({ ...goplus, markets: [{ ...goplus.markets[0], lp: { ...goplus.markets[0].lp,
+    lpBurnedPct: null, lpLockedPct: null, lpLockedUSD: null } }] }, coin).allowed, false);
 });
 test("stopping during confirmation cancels the candidate", async () => {
   const controller = new AbortController();
