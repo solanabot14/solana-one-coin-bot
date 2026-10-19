@@ -10,7 +10,7 @@ module.exports = Object.freeze({
   MIN_LIQUIDITY_USD: 8000,
   MIN_VOLUME_5M_USD: 1500,
   MIN_TRANSACTIONS_5M: 30,
-  MIN_BUY_SHARE_5M: 0.55,
+  MIN_BUY_SHARE_5M: 0.52,
   HIGH_VOLUME_5M_USD: 5000,
   HIGH_TRANSACTIONS_5M: 50,
   MAX_ROUND_TRIP_LOSS_PERCENT: 4, // quoted costs plus the 1% uncertainty reserve
