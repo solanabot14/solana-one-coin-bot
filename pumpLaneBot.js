@@ -8,8 +8,11 @@ let newTokens = 0, tradeEvents = 0, acceptedCandidates = 0;
 const rejectionCounts = Object.create(null);
 const MAX_WATCH_AGE_MS = 25 * 60000;
 const WATCHLIST_LIMIT = 400;
+const FALLBACK_QUOTE_RETRY_MS = 15000;
 let recheckTimer = null;
 let freeFeed;
+let fallbackQuoteInFlight = false;
+let lastFallbackQuoteAttemptAt = 0;
 
 function pruneWatched(now = Date.now()) {
   const saved = trader.getState();
@@ -49,8 +52,12 @@ function tryCandidate(c) {
   trader.touchScan();
   const pos = trader.getState().position;
   const quoteFresh = Number.isFinite(c.lastQuoteAt) && Date.now() - c.lastQuoteAt <= 120000;
-  if (pos?.tokenAddress === c.mint && c.lastPriceUsd > 0 && quoteFresh) {
-    trader.decideExit(c.lastPriceUsd, Date.now(), c.lastQuoteAt);
+  if (pos?.tokenAddress === c.mint) {
+    if (Number.isFinite(c.lastPriceUsd) && c.lastPriceUsd > 0 && quoteFresh) {
+      trader.decideExit(c.lastPriceUsd, Date.now(), c.lastQuoteAt);
+    } else {
+      void refreshOpenPositionFromDexScreener(pos);
+    }
     pruneWatched();
     return;
   }
@@ -65,6 +72,39 @@ function tryCandidate(c) {
     const bought = trader.buy({ ...c, tokenAddress: c.mint, priceUsd: c.lastPriceUsd });
     if (bought.success) { acceptedCandidates++; console.log('[Pump Lane] PAPER entry', c.symbol, c.mint); }
     else if (bought.error !== 'Already open / previously bought') error = bought.error;
+  }
+}
+
+async function refreshOpenPositionFromDexScreener(position = trader.getState().position) {
+  const now = Date.now();
+  if (!position || fallbackQuoteInFlight || now - lastFallbackQuoteAttemptAt < FALLBACK_QUOTE_RETRY_MS) return false;
+  fallbackQuoteInFlight = true;
+  lastFallbackQuoteAttemptAt = now;
+  try {
+    const quote = await require('./dexscreener').getTokenData(position.tokenAddress);
+    const price = Number(quote?.priceUsd);
+    if (!Number.isFinite(price) || price <= 0) return false;
+    const current = trader.getState().position;
+    if (!current || current.id !== position.id) return false;
+
+    // Mark the DexScreener response time as the latest observed quote so the
+    // dashboard can value this paper position even if the free RPC feed fails.
+    const quoteAt = Date.now();
+    trader.decideExit(price, quoteAt, quoteAt);
+    const candidate = freeFeed.getCandidate(position.tokenAddress);
+    if (candidate) {
+      candidate.lastPriceUsd = price;
+      candidate.lastQuoteAt = quoteAt;
+      if (quote.pairAddress) candidate.pairAddress = quote.pairAddress;
+    }
+    pruneWatched(quoteAt);
+    console.log(`[Pump Lane] DexScreener fallback quote ${position.symbol || position.tokenAddress}: $${price}`);
+    return true;
+  } catch (e) {
+    console.warn('[Pump Lane DexScreener quote]', e.message);
+    return false;
+  } finally {
+    fallbackQuoteInFlight = false;
   }
 }
 
@@ -161,4 +201,4 @@ function stop() {
   return getStatus();
 }
 
-module.exports = { start, stop, getStatus };
+module.exports = { start, stop, getStatus, refreshOpenPositionFromDexScreener };
