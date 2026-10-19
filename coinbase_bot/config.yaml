@@ -1,7 +1,6 @@
-# Runtime constants for the Coinbase Bot JavaScript paper simulator.
-# This YAML documents outcomeBot.js; that module does not load YAML at runtime.
+# Coinbase Bot paper strategy configuration (documentation; runtime currently uses outcomeBot.js constants).
 mode: paper
-strategy_version: COINBASE_INTRADAY_MOMENTUM_V4
+strategy_version: COINBASE_MAJOR_UPTREND_V5
 timezone: America/Puerto_Rico
 end_of_day_flat_time: "23:45"
 scan_interval_seconds: 45
@@ -14,37 +13,30 @@ winner_compound_rate: 0.10
 max_daily_loss_fraction_of_day_start_equity: 0.03
 reentry_cooldown_minutes: 60
 universe:
-  data_source: Coinbase Exchange public REST
+  allowed_products: [BTC-USD, SOL-USD, XRP-USD, HYPE-USD]
   quote_currencies: [USD, USDC]
-  min_24h_volume_usd: 5000000
+  min_24h_volume_usd: 1000000
   max_entry_spread_percent: 0.30
   max_exit_spread_percent: 0.60
-  min_history_hours: 24
-  min_listing_hours: 48
-  stablecoins: [USDC, USDT, DAI, PYUSD, GUSD, USDP, USDS]
-  wrapped_symbols: [WBTC, WETH, WSTETH, CBBTC, CBETH, WETH.E]
 momentum:
-  min_24h_change_percent: 4
-  max_24h_change_percent: 25
-  relative_volume_15m: 3.0
-  rsi_5m_max: 80
+  min_24h_change_percent: -5
+  max_24h_change_percent: 35
+  min_1h_change_percent: 0.25
+  relative_volume_15m: 1.2
+  rsi_5m_max: 85
   ema_fast: 9
   ema_slow: 21
   btc_drop_pause_1h_percent: -2
 entry:
-  pullback_min_percent: 1.0
-  pullback_max_percent: 2.5
-  breakout_requires_retest: true
+  requires_price_above_vwap: true
+  requires_ema9_above_ema21: true
+  setup: green_pullback_reclaim_or_upward_breakout
 risk:
-  stop_min_percent: 1.5
-  atr_multiple: 1.5
-  stop_max_percent: 2.5
-  take_profit_1_percent: 4.5
-  take_profit_1_fraction: 0.40
-  take_profit_2_percent: 7.0
+  hard_stop_percent: 2.0
+  take_profit_1_percent: 5
+  take_profit_1_fraction: 0.70
+  take_profit_2_percent: 20
   take_profit_2_fraction: 0.30
-  runner_fraction: 0.30
-  runner_trail_percent: 1.75
   time_stop_minutes: 45
   time_stop_min_gain_percent: 1.0
 fees:
@@ -53,7 +45,5 @@ fees:
   rate_limit_requests_per_second: 5
   max_429_retries: 3
 execution_status:
-  websocket_market_data: false
-  authenticated_fee_lookup: false
   exchange_orders: false
   exchange_side_stops: false
