@@ -44,18 +44,18 @@ test("accepts a strong top-gainer pullback reclaim",()=>{
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
-test("rejects movers beyond the 25% chase cap",()=>{
+test("rejects movers beyond the 35% chase cap",()=>{
   const {bot,dir}=fixture();
   try{
     const at=1_800_000_000_000,first=Math.floor(at/300_000)*300-13*300;
     const c=Array.from({length:13},(_,i)=>({time:first+i*300,open:i===12?100.2:100,low:99.9,high:i===12?102.2:100.2,close:i===12?102:100.05,volume:i===12?1800:1000}));
     const r=bot.assessCandidate("HOT-USD",{last:"102",open:"55",volume:"50000"},c,at);
     assert.equal(r.accepted,false);
-    assert.ok(r.reasons.some(reason=>reason.includes("24h gain above +25%")));
+    assert.ok(r.reasons.some(reason=>reason.includes("24h gain above +35%")));
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
-test("new positions use 40-30-30 exits and a fee-cushioned 1.75% runner trail",async()=>{
+test("new positions sell 70% at +5% and the remaining 30% at +20%",async()=>{
   const {bot,dir}=fixture();
   try{
     bot.start();
@@ -63,7 +63,7 @@ test("new positions use 40-30-30 exits and a fee-cushioned 1.75% runner trail",a
     let p=bot.getState().openPositions[0];
     assert.ok(p.notionalUsd >= 200 * 0.05 && p.notionalUsd <= 200 * 0.10);
     assert.equal(p.hardStopPercent,2.0);
-    const prices=[p.entryPrice*1.05,p.entryPrice*1.08];
+    const prices=[p.entryPrice*1.05,p.entryPrice*1.20];
     bot.stop();
     const saved=bot.getState(); saved.running=true; fs.writeFileSync(path.join(dir,"state.json"),JSON.stringify(saved));
     let ix=0;
@@ -71,12 +71,12 @@ test("new positions use 40-30-30 exits and a fee-cushioned 1.75% runner trail",a
     await b.monitorOnce();
     p=b.getState().openPositions[0];
     assert.equal(p.tp1Done,true);
-    assert.ok(Math.abs(p.quantity/p.originalQuantity-0.6)<1e-8);
+    assert.ok(Math.abs(p.quantity/p.originalQuantity-0.3)<1e-8);
     await b.monitorOnce();
     p=b.getState().openPositions[0];
-    assert.equal(p.tp2Done,true);
-    assert.equal(p.runnerTrailActive,true);
-    assert.ok(Math.abs(p.quantity/p.originalQuantity-0.3)<1e-8);
+    assert.equal(b.getState().openPositions.length,0);
+    assert.equal(b.getState().history.filter(row=>row.type==="SELL").length,2);
+    assert.ok(Math.abs(b.getState().history.filter(row=>row.type==="SELL").reduce((sum,row)=>sum+row.quantity,0)/p.originalQuantity-1)<1e-8);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
