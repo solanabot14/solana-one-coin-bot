@@ -91,8 +91,11 @@ test("GoPlus response normalizes authorities, holders, and exact pool burn/TVL",
   assert.equal(normalized.topHolders[0].pct, 12.5);
   assert.equal(normalized.markets[0].pubkey, "pool-A");
   assert.equal(normalized.markets[0].lp.providerTvlUSD, 30000);
+  assert.equal(normalized.markets[0].lp.lpLockedPct, 99.99);
+  assert.equal(normalized.markets[0].lp.lpLockedUSD, 29997);
   assert.equal(normalized.markets[0].lp.lpBurned, true);
   assert.equal(normalized.markets[1].lp.lpBurned, false);
+  assert.equal(normalized.markets[1].lp.lpLockedPct, null);
   assert.throws(() => normalizeGoPlusReport(raw, "other-mint"), /INCOMPLETE/);
 });
 test("GoPlus client sends mint lookup and rejects wrong-mint or missing result records", async () => {
