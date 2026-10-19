@@ -49,6 +49,23 @@ test("transient failures retry once and 429 Retry-After prevents requests across
   await assert.rejects(limited.getReport("mint-B"), /provider rate limit/);
   assert.equal(calls, 1);
 });
+test("RugCheck DNS outages back off across mints and recover with the configured API origin", async () => {
+  let now = 100000, calls = 0, requestedUrl;
+  const client = createSniperDataClient({ clock: () => now, wait: async ms => { now += ms; },
+    rugCheckBaseUrl: "https://rugcheck-api.example/",
+    httpGet: async url => {
+      requestedUrl = url;
+      if (++calls <= 2) throw Object.assign(new Error("getaddrinfo ENOTFOUND"), { code: "ENOTFOUND" });
+      return { data: { ...report, mint: "mint-C" } };
+    } });
+  await assert.rejects(client.getReport("mint-A"), /RugCheck DNS unavailable \(ENOTFOUND\)/);
+  await assert.rejects(client.getReport("mint-B"), /RugCheck DNS unavailable/);
+  assert.equal(calls, 2); // one failed lookup plus its bounded retry
+  now += 30001;
+  await client.getReport("mint-C");
+  assert.equal(calls, 3);
+  assert.equal(requestedUrl, "https://rugcheck-api.example/v1/tokens/mint-C/report");
+});
 test("wrong mint, stale response and cancelled requests never become approvals", async () => {
   for (const response of [{ data: { ...report, mint: "wrong" } }, { data: report, headers: { age: "20" } }]) {
     const client = createSniperDataClient({ httpGet: async () => response });
