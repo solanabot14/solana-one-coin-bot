@@ -10,17 +10,17 @@ const MAX_OPEN_POSITIONS = 3;
 const START_SIZE_USD = 10;
 const COMPOUND_RATE = 0.10;
 const HARD_STOP_PERCENT = 2.0;
-const TP1_PERCENT = 4.5;
-const TP2_PERCENT = 7;
-const TP1_SELL_FRACTION = 0.40;
+const TP1_PERCENT = 5;
+const TP2_PERCENT = 20;
+const TP1_SELL_FRACTION = 0.70;
 const TP2_SELL_FRACTION = 0.30;
 const RUNNER_TRAIL_PERCENT = 1.75;
 const MAX_HOLD_MS = 45 * 60 * 1000;
 const LEGACY_MAX_HOLD_MS = 24 * 60 * 60 * 1000;
 const DAILY_LOSS_FRACTION = 0.03;
-const MIN_DAILY_GAIN_PERCENT = 4;
-const MAX_DAILY_GAIN_PERCENT = 25;
-const MIN_DAILY_VOLUME_USD = 5_000_000;
+const MIN_DAILY_GAIN_PERCENT = -5;
+const MAX_DAILY_GAIN_PERCENT = 35;
+const MIN_DAILY_VOLUME_USD = 1_000_000;
 const MAX_SCAN_PRODUCTS = 180;
 const MAX_MOVER_CANDLES = 30;
 const PRODUCT_CACHE_MS = 15 * 60 * 1000;
@@ -32,9 +32,9 @@ const FEE_RATE = Math.min(0.01, Math.max(0, Number(process.env.OUTCOME_PAPER_FEE
 const SLIPPAGE_RATE = Math.min(0.005, Math.max(0, Number(process.env.OUTCOME_PAPER_SLIPPAGE_RATE ?? 0.001)));
 const SCAN_INTERVAL_MS = 45_000;
 const MONITOR_INTERVAL_MS = 5_000;
-const PRODUCTS = ["ETH-USD","SOL-USD","XRP-USD","ADA-USD","DOGE-USD","LINK-USD","AVAX-USD","DOT-USD","LTC-USD","BCH-USD","UNI-USD","XLM-USD"];
+const PRODUCTS = ["BTC-USD","SOL-USD","XRP-USD","HYPE-USD"];
 const BASE_URL = "https://api.exchange.coinbase.com";
-const STRATEGY_VERSION = "COINBASE_INTRADAY_MOMENTUM_V4";
+const STRATEGY_VERSION = "COINBASE_MAJOR_UPTREND_V5";
 const MIN_POSITION_EQUITY_FRACTION = 0.05;
 const MAX_POSITION_EQUITY_FRACTION = 0.10;
 const REQUEST_INTERVAL_MS = 200;
@@ -178,7 +178,7 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     const stable = new Set(["USDC","USDT","DAI","PYUSD","GUSD","USDP","USDS"]);
     const wrapped = new Set(["WBTC","WETH","WSTETH","CBBTC","CBETH","WETH.E"]);
     const eligible = (Array.isArray(products) ? products : []).filter(product =>
-      product && product.id && ["USD","USDC"].includes(product.quote_currency) && product.status === "online" &&
+      product && PRODUCTS.includes(product.id) && product.id && ["USD","USDC"].includes(product.quote_currency) && product.status === "online" &&
       !product.trading_disabled && !product.cancel_only && !product.post_only && !product.limit_only &&
       !product.auction_mode && !product.fx_stablecoin && !stable.has(product.base_currency) && !wrapped.has(product.base_currency) &&
       (!product.trading_start || (now() - Date.parse(product.trading_start) >= 48 * 60 * 60 * 1000)) &&
@@ -237,14 +237,13 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     const average15mVolume = windows.length ? windows.reduce((sum, n) => sum + n, 0) / windows.length : 0;
     const relativeVolume15m = average15mVolume > 0 ? recent15mVolume / average15mVolume : 0;
     const priorResistance = closed.length >= 4 ? Math.max(...closed.slice(-4, -1).map(c => c.high)) : 0;
-    const pullbackSetup = !!(closed.length >= 21 && pullbackPercent >= 1 && pullbackPercent <= 2.5 &&
-      current && previous && current.close > previous.high && current.close > current.open &&
-      current.volume <= (average15mVolume / 3 || current.volume));
-    const retest = previous && priorResistance > 0 && previous.low <= priorResistance * 1.003 &&
-      previous.close >= priorResistance * 0.997;
-    const breakoutSetup = !!(closed.length >= 21 && current && retest &&
-      current.close > Math.max(previous.high, priorResistance) && current.close > current.open);
-    const setup = pullbackSetup ? "PULLBACK_RECLAIM" : (breakoutSetup ? "BREAKOUT_RETEST" : null);
+    const pullbackSetup = !!(closed.length >= 21 && current && previous &&
+      current.close > current.open && current.close > ema9 && current.close > previous.close &&
+      previous.low <= ema9 * 1.01 && last >= ema9);
+    const breakoutSetup = !!(closed.length >= 21 && current && previous &&
+      current.close > current.open && current.close > previous.high &&
+      current.close > priorResistance && relativeVolume15m >= 1.2);
+    const setup = pullbackSetup ? "UPTREND_PULLBACK_RECLAIM" : (breakoutSetup ? "UPTREND_BREAKOUT" : null);
     const recentHigh = closed.length ? Math.max(...closed.slice(-12).map(c => c.high)) : 0;
     const offHighPercent = recentHigh > 0 ? Math.max(0, (recentHigh - last) / recentHigh * 100) : 0;
     const reasons = [];
@@ -252,14 +251,14 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     if (!Number.isFinite(volumeUsd) || volumeUsd < MIN_DAILY_VOLUME_USD) reasons.push("24h USD volume below $5M");
     if (dayChange < MIN_DAILY_GAIN_PERCENT) reasons.push("24h gain below +4%");
     if (dayChange > MAX_DAILY_GAIN_PERCENT) reasons.push("24h gain above +25% chase limit");
-    if (closed.length < 288) reasons.push("Insufficient 24h candle history; possible recent listing");
-    if (relativeVolume15m < 3) reasons.push("15m relative volume below 3x");
+    if (closed.length < 21) reasons.push("Insufficient 105 minutes of trend history");
+    if (relativeVolume15m < 1.2) reasons.push("15m relative volume below 1.2x");
     if (!(vwap > 0 && last > vwap)) reasons.push("Price is not above session VWAP");
     if (!(ema9 > 0 && ema21 > 0 && ema9 > ema21)) reasons.push("5m EMA9 is not above EMA21");
-    if (!(rsi5m !== null && rsi5m < 80)) reasons.push("5m RSI is 80 or higher");
-    if (hourChange <= 0 || hourChange > 25) reasons.push("1h trend is weak or extended");
-    if (!setup) reasons.push("Waiting for a 1%-2.5% pullback reclaim or resistance breakout");
-    if (offHighPercent > 2.5) reasons.push("Price has fallen too far from the local high");
+    if (!(rsi5m !== null && rsi5m < 85)) reasons.push("5m RSI is 85 or higher");
+    if (hourChange <= 0.25 || hourChange > 25) reasons.push("1h trend is not rising or is overextended");
+    if (!setup) reasons.push("Waiting for a green pullback reclaim or upward breakout");
+    if (offHighPercent > 5) reasons.push("Price is more than 5% below the local high");
     const feeAndSlippageRoundTripPercent = (2 * FEE_RATE + 2 * SLIPPAGE_RATE) * 100;
     if (TP1_PERCENT < feeAndSlippageRoundTripPercent * 3) reasons.push("First target does not clear the 3x round-trip cost hurdle");
     const accepted = reasons.length === 0;
@@ -444,7 +443,7 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
       return {position:p,live:{priceUsd:mark,currentValue:value,pnl,pnlPercent:initial>0?pnl/initial*100:0,realizedPnlUsd:realized,unrealizedPnlUsd:unrealized,holdTimeMs:Math.max(0,now()-Date.parse(p.entryTime)),exchangeUrl:"https://www.coinbase.com/advanced-trade/spot/"+p.productId},pnl};});
     const equity=state.cashUsd+livePositions.reduce((sum,row)=>sum+Number(row.live.currentValue||0),0),totalPnl=equity-state.startingBalanceUsd;
     return {label:"Coinbase Bot",paperOnly:true,mode:"PAPER",exchange:"Coinbase",strategyVersion:STRATEGY_VERSION,
-      strategy:"Paper-only Coinbase spot momentum. Universe: liquid USD/USDC pairs; +4% to +25% daily gain; 24h volume at least $5M; 15m relative volume at least 3x; above session VWAP, EMA9>EMA21, RSI<80; confirmed pullback reclaim or breakout. BTC sell-off, spread, news, daily loss, cooldown and PR end-of-day guards. Exit 40% at +4.5%, 30% at +7%, trail 30% by 1.75%; ATR stop 1.5%-2.5%; 45m time stop. No live order execution.",
+      strategy:"Paper-only Coinbase spot trend trading on BTC, SOL, XRP and HYPE; no other listings. Entry requires an upward 1h trend, price above session VWAP, EMA9>EMA21, green pullback reclaim or breakout, and moderate volume confirmation. Exit 70% at +5% and the remaining 30% at +20%; retain hard stop, spread, daily-loss, news and end-of-day safety controls. No live order execution.",
       startingBalance:state.startingBalanceUsd,startingBalanceUsd:state.startingBalanceUsd,cashBalance:state.cashUsd,equity,totalPnl,totalPnlPercent:state.startingBalanceUsd>0?totalPnl/state.startingBalanceUsd*100:0,nextTradeSizeUsd:state.nextEntryUsd,compoundIncrementPercent:COMPOUND_RATE*100,positionEquityFractionMin:MIN_POSITION_EQUITY_FRACTION,positionEquityFractionMax:MAX_POSITION_EQUITY_FRACTION,dailyLossLimitUsd:dailyLossLimitUsd(state),maxOpenPositions:MAX_OPEN_POSITIONS,estimatedFeePercentPerSide:FEE_RATE*100,estimatedSlippagePercentPerSide:SLIPPAGE_RATE*100,completedTrades,history:state.history,livePositions,openPositions:livePositions,rejections:state.rejections.slice(0,30),lastScanAt:state.lastScanAt,lastError:state.lastError,running:state.running,pausedForDailyLoss:state.pausedForDailyLoss,dailyPnlUsd:state.dailyPnlUsd,candidates:lastMarketScan.slice(0,15),news:news.getState(),dailyMoverUniverseSize:productCache.length};
   }
   return {start,stop,scanOnce,monitorOnce,buy,closePosition,closeAll,getStatus,getDashboardData,getState:()=>structuredClone(state),assessCandidate,file};
