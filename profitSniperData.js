@@ -3,10 +3,12 @@ const { setTimeout: sleep } = require("node:timers/promises");
 
 // Sniper-only client. Never turn an API error into a security approval.
 function createSniperDataClient({ httpGet = (...args) => axios.get(...args), clock = Date.now,
-  wait = (ms, signal) => sleep(ms, undefined, { signal }) } = {}) {
+  wait = (ms, signal) => sleep(ms, undefined, { signal }),
+  rugCheckBaseUrl = process.env.RUGCHECK_API_BASE_URL || "https://api.rugcheck.xyz" } = {}) {
   const reports = new Map(), pending = new Map(), failures = new Map();
-  let reportCooldownUntil = 0, historyCooldownUntil = 0;
+  let reportCooldownUntil = 0, historyCooldownUntil = 0, dnsCooldownUntil = 0;
   const history = new Map();
+  const rugCheckOrigin = rugCheckBaseUrl.replace(/\/+$/, "");
   const aborted = signal => { if (signal?.aborted) throw new Error("ABORTED"); };
   function prune(map, now) {
     for (const [key, item] of map) if (now >= item.until) map.delete(key);
@@ -21,13 +23,14 @@ function createSniperDataClient({ httpGet = (...args) => axios.get(...args), clo
       const value = await pending.get(address); aborted(signal); return structuredClone(value);
     }
     if (failures.has(address)) throw new Error(failures.get(address).reason);
+    if (now < dnsCooldownUntil) throw new Error("SECURITY_DATA_PENDING: RugCheck DNS unavailable");
     if (now < reportCooldownUntil) throw new Error("SECURITY_DATA_PENDING: provider rate limit");
     const task = (async () => {
       for (let attempt = 0; attempt < 2; attempt++) {
         aborted(signal);
         const startedAt = clock();
         try {
-          const response = await httpGet("https://api.rugcheck.xyz/v1/tokens/" +
+          const response = await httpGet(rugCheckOrigin + "/v1/tokens/" +
             encodeURIComponent(address) + "/report", { timeout: 8000, signal,
             headers: { "Cache-Control": "no-cache" } });
           aborted(signal);
@@ -46,15 +49,20 @@ function createSniperDataClient({ httpGet = (...args) => axios.get(...args), clo
         } catch (error) {
           aborted(signal);
           const status = error.response?.status;
+          const dnsFailure = ["ENOTFOUND", "EAI_AGAIN"].includes(error.code);
           const transient = error.message === "INCOMPLETE_SECURITY_REPORT" || status === 429 || status >= 500 ||
-            ["ECONNABORTED", "ETIMEDOUT", "ECONNRESET", "EAI_AGAIN"].includes(error.code);
+            ["ECONNABORTED", "ETIMEDOUT", "ECONNRESET", "EAI_AGAIN", "ENOTFOUND"].includes(error.code);
           const retryAfter = Number(error.response?.headers?.["retry-after"]);
           const delay = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1000;
           if (transient && attempt === 0 && delay <= 2000) { await wait(delay, signal); continue; }
-          const reason = "SECURITY_DATA_PENDING: " + (status ? "HTTP " + status : error.message);
+          const reason = "SECURITY_DATA_PENDING: " + (status ? "HTTP " + status :
+            dnsFailure ? "RugCheck DNS unavailable (" + error.code + ")" : error.message);
           const until = clock() + Math.max(30000, status === 429 ? Math.min(delay, 300000) : 0);
           failures.set(address, { until, reason });
           if (status === 429) reportCooldownUntil = until;
+          // Avoid making one doomed request per newly discovered mint during a provider DNS outage.
+          // This expires quickly so the bot automatically recovers as soon as DNS does.
+          if (dnsFailure) dnsCooldownUntil = clock() + 30000;
           console.warn("PROFIT SNIPER SECURITY DATA PENDING | " + address + " | " + reason);
           throw new Error(reason);
         }
