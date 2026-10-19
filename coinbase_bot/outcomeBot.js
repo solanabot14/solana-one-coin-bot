@@ -248,8 +248,8 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     const offHighPercent = recentHigh > 0 ? Math.max(0, (recentHigh - last) / recentHigh * 100) : 0;
     const reasons = [];
     if (!(last > 0 && open > 0)) reasons.push("Price unavailable");
-    if (!Number.isFinite(volumeUsd) || volumeUsd < MIN_DAILY_VOLUME_USD) reasons.push("24h USD volume below $5M");
-    if (dayChange < MIN_DAILY_GAIN_PERCENT) reasons.push("24h gain below +4%");
+    if (!Number.isFinite(volumeUsd) || volumeUsd < MIN_DAILY_VOLUME_USD) reasons.push("24h USD volume below $1M");
+    if (dayChange < MIN_DAILY_GAIN_PERCENT) reasons.push("24h change below -5%");
     if (dayChange > MAX_DAILY_GAIN_PERCENT) reasons.push("24h gain above +35% chase limit");
     if (closed.length < 21) reasons.push("Insufficient 105 minutes of trend history");
     if (relativeVolume15m < 1.2) reasons.push("15m relative volume below 1.2x");
@@ -263,7 +263,7 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     if (TP1_PERCENT < feeAndSlippageRoundTripPercent * 3) reasons.push("First target does not clear the 3x round-trip cost hurdle");
     const accepted = reasons.length === 0;
     const score = accepted ? dayChange * 2 + hourChange + Math.min(relativeVolume15m, 6) * 3 +
-      (setup === "PULLBACK_RECLAIM" ? 4 : 2) + (last > vwap ? 2 : 0) : 0;
+      (setup === "UPTREND_PULLBACK_RECLAIM" ? 4 : 2) + (last > vwap ? 2 : 0) : 0;
     const atrBars = closed.slice(-15);
     const atr = atrBars.length >= 15 ? atrBars.slice(1).reduce((sum, c, i) => {
       const prev = atrBars[i].close;
