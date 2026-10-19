@@ -11,10 +11,10 @@ const START_SIZE_USD = 10;
 const COMPOUND_RATE = 0.10;
 const HARD_STOP_PERCENT = 2.0;
 const TP1_PERCENT = 5;
-const TP2_PERCENT = 20;
+const TP2_PERCENT = 8;
 const TP1_SELL_FRACTION = 0.70;
-const TP2_SELL_FRACTION = 0.30;
-const RUNNER_TRAIL_PERCENT = 1.75;
+const TP2_SELL_FRACTION = 0.20;
+const RUNNER_TRAIL_PERCENT = 8;
 const MAX_HOLD_MS = 45 * 60 * 1000;
 const LEGACY_MAX_HOLD_MS = 24 * 60 * 60 * 1000;
 const DAILY_LOSS_FRACTION = 0.03;
@@ -303,7 +303,7 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
       realizedPnlUsd:0,entryTime:new Date(now()).toISOString(),strategyVersion:STRATEGY_VERSION,
       hardStopPercent:Number(candidate.riskPercent)||HARD_STOP_PERCENT,stopPriceUsd:entryPrice*(1-(Number(candidate.riskPercent)||HARD_STOP_PERCENT)/100),tp1Done:false,tp2Done:false,
       runnerTrailActive:false,markPriceUsd:candidate.priceUsd,
-      strategy:"Coinbase Bot paper major-coin uptrend · BTC/SOL/XRP/HYPE only · rising 1h trend · VWAP + EMA9>EMA21 · green reclaim/breakout · 70% at +5%, 30% at +20% · 2% hard stop · PR 23:45 flat",
+      strategy:"Coinbase Bot paper major-coin uptrend · BTC/SOL/XRP/HYPE only · rising 1h trend · VWAP + EMA9>EMA21 · green reclaim/breakout · 70% at +5%, 20% at +8%, 10% runner trailing 8% · 2% hard stop · PR 23:45 flat",
       entryMetrics:{dayChangePercent:candidate.dayChangePercent,hourChangePercent:candidate.hourChangePercent,fiveMinChangePercent:candidate.fiveMinChangePercent,
         pullbackPercent:candidate.pullbackPercent,volumeRatio:candidate.volumeRatio,volumeUsd:candidate.volumeUsd,score:candidate.score,entrySetup:candidate.entrySetup} };
     next.cashUsd -= costBasisUsd; next.openPositions.push(pos);
@@ -362,7 +362,9 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
       await news.refresh();
       const marketRows=await mapLimit(products.filter(id=>!state.openPositions.some(p=>p.productId===id) && !(Number(state.coinCooldowns?.[id]) > now())),4,async productId=>{
         try{const stats=await getStats(productId);const last=Number(stats.last),open=Number(stats.open),volumeUsd=last*Number(stats.volume),dayChange=open>0?(last/open-1)*100:0;
-          if(!(last>0&&open>0)||!Number.isFinite(volumeUsd)||dayChange<MIN_DAILY_GAIN_PERCENT||dayChange>MAX_DAILY_GAIN_PERCENT||volumeUsd<MIN_DAILY_VOLUME_USD)return null;
+          if(!(last>0&&open>0)){rejectionRows.push({productId,reasons:["Price/24h stats unavailable"]});return null;}
+          if(!Number.isFinite(volumeUsd)||volumeUsd<MIN_DAILY_VOLUME_USD){rejectionRows.push({productId,reasons:["24h USD volume below $1M"],metrics:{volumeUsd}});return null;}
+          if(dayChange<MIN_DAILY_GAIN_PERCENT||dayChange>MAX_DAILY_GAIN_PERCENT){rejectionRows.push({productId,reasons:[dayChange<MIN_DAILY_GAIN_PERCENT?"24h change below -5%":"24h change above +35% chase limit"],metrics:{dayChangePercent:dayChange,volumeUsd}});return null;}
           return {productId,stats,last,dayChange,volumeUsd};}catch(error){rejectionRows.push({productId,reasons:[error.message]});return null;}
       });
       const topMovers=marketRows.filter(Boolean).sort((a,b)=>b.dayChange-a.dayChange).slice(0,MAX_MOVER_CANDLES);
@@ -380,6 +382,7 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
         }catch(error){rejectionRows.push({productId:candidate.productId,reasons:["Pre-entry quote failed: "+error.message]});}
       }
       recordRejections(rejectionRows.slice(0,80));
+      console.log("COINBASE_SCAN",JSON.stringify({at:new Date(now()).toISOString(),universe:products.length,topMovers:topMovers.length,qualified:ranked.filter(x=>x.accepted).length,opened:state.openPositions.length,candidates:lastMarketScan.slice(0,5).map(x=>({productId:x.productId,score:x.score,dayChangePercent:x.dayChangePercent,hourChangePercent:x.hourChangePercent,relativeVolume15m:x.relativeVolume15m})),rejections:rejectionRows.slice(0,8).map(x=>({productId:x.productId,reasons:x.reasons}))}));
       const next=structuredClone(state);next.lastScanAt=new Date(now()).toISOString();next.lastError=null;commit(next);
     }catch(error){const next=structuredClone(state);next.lastError=error.message;commit(next);}finally{scanning=false;}
   }
@@ -409,12 +412,12 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
     }
     current=state.openPositions.find(x=>x.id===snapshot.id);if(!current)return;
     if(!current.tp2Done&&pnlPercent+1e-9>=TP2_PERCENT){
-      sellQuantity(current.id,price,(Number(current.originalQuantity)||current.quantity)*TP2_SELL_FRACTION,"TAKE PROFIT +20% (30%)",{tp1Done:true,tp2Done:true,runnerTrailActive:true,stopPriceUsd:current.entryPrice*(1+0.014)});
+      sellQuantity(current.id,price,(Number(current.originalQuantity)||current.quantity)*TP2_SELL_FRACTION,"TAKE PROFIT +8% (20%)",{tp1Done:true,tp2Done:true,runnerTrailActive:true,stopPriceUsd:current.entryPrice*(1+0.014)});
     }
     current=state.openPositions.find(x=>x.id===snapshot.id);if(!current)return;
     next=structuredClone(state);p=next.openPositions.find(x=>x.id===snapshot.id);p.markPriceUsd=price;if(price>Number(p.highestPrice||0))p.highestPrice=price;
     let stop=p.entryPrice*(1-HARD_STOP_PERCENT/100);if(p.tp1Done)stop=Math.max(stop,p.entryPrice*1.014);if(p.tp2Done||p.runnerTrailActive)stop=Math.max(stop,p.entryPrice*1.014,p.highestPrice*(1-RUNNER_TRAIL_PERCENT/100));p.stopPriceUsd=stop;commit(next);
-    if(price<=stop){closePosition(p.id,price,p.tp2Done?"RUNNER TRAILING STOP 1.75%":"BREAKEVEN STOP");return;}
+    if(price<=stop){closePosition(p.id,price,p.tp2Done?"RUNNER TRAILING STOP 8%":"BREAKEVEN STOP");return;}
     if(now()-Date.parse(p.entryTime)>=MAX_HOLD_MS && pnlPercent<1)closePosition(p.id,price,"TIME STOP 45M UNDER +1%");
   }
   async function closeAllForReason(reason){const results=[];for(const p of structuredClone(state.openPositions)){try{const ticker=await getTicker(p.productId);results.push(closePosition(p.id,Number(ticker.price),reason));}catch(error){results.push({success:false,symbol:p.symbol,error:error.message});}}return results;}
@@ -443,7 +446,7 @@ function createOutcomeBot({ file = defaultFile(), io = fs, fetchImpl = globalThi
       return {position:p,live:{priceUsd:mark,currentValue:value,pnl,pnlPercent:initial>0?pnl/initial*100:0,realizedPnlUsd:realized,unrealizedPnlUsd:unrealized,holdTimeMs:Math.max(0,now()-Date.parse(p.entryTime)),exchangeUrl:"https://www.coinbase.com/advanced-trade/spot/"+p.productId},pnl};});
     const equity=state.cashUsd+livePositions.reduce((sum,row)=>sum+Number(row.live.currentValue||0),0),totalPnl=equity-state.startingBalanceUsd;
     return {label:"Coinbase Bot",paperOnly:true,mode:"PAPER",exchange:"Coinbase",strategyVersion:STRATEGY_VERSION,
-      strategy:"Paper-only Coinbase spot trend trading on BTC, SOL, XRP and HYPE; no other listings. Entry requires an upward 1h trend, price above session VWAP, EMA9>EMA21, green pullback reclaim or breakout, and moderate volume confirmation. Exit 70% at +5% and the remaining 30% at +20%; retain hard stop, spread, daily-loss, news and end-of-day safety controls. No live order execution.",
+      strategy:"Paper-only Coinbase spot trend trading on BTC, SOL, XRP and HYPE; no other listings. Entry requires an upward 1h trend, price above session VWAP, EMA9>EMA21, green pullback reclaim or breakout, and moderate volume confirmation. Exit 70% at +5%, 20% at +8%, and trail the remaining 10% by 8%; retain hard stop, spread, daily-loss, news and end-of-day safety controls. No live order execution.",
       startingBalance:state.startingBalanceUsd,startingBalanceUsd:state.startingBalanceUsd,cashBalance:state.cashUsd,equity,totalPnl,totalPnlPercent:state.startingBalanceUsd>0?totalPnl/state.startingBalanceUsd*100:0,nextTradeSizeUsd:state.nextEntryUsd,compoundIncrementPercent:COMPOUND_RATE*100,positionEquityFractionMin:MIN_POSITION_EQUITY_FRACTION,positionEquityFractionMax:MAX_POSITION_EQUITY_FRACTION,dailyLossLimitUsd:dailyLossLimitUsd(state),maxOpenPositions:MAX_OPEN_POSITIONS,estimatedFeePercentPerSide:FEE_RATE*100,estimatedSlippagePercentPerSide:SLIPPAGE_RATE*100,completedTrades,history:state.history,livePositions,openPositions:livePositions,rejections:state.rejections.slice(0,30),lastScanAt:state.lastScanAt,lastError:state.lastError,running:state.running,pausedForDailyLoss:state.pausedForDailyLoss,dailyPnlUsd:state.dailyPnlUsd,candidates:lastMarketScan.slice(0,15),news:news.getState(),dailyMoverUniverseSize:productCache.length};
   }
   return {start,stop,scanOnce,monitorOnce,buy,closePosition,closeAll,getStatus,getDashboardData,getState:()=>structuredClone(state),assessCandidate,file};
