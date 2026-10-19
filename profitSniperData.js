@@ -6,7 +6,8 @@ function createSniperDataClient({ httpGet = (...args) => axios.get(...args), clo
   wait = (ms, signal) => sleep(ms, undefined, { signal }),
   provider = process.env.SNIPER_SECURITY_PROVIDER || "goplus",
   rugCheckBaseUrl = process.env.RUGCHECK_API_BASE_URL || "https://api.rugcheck.xyz",
-  goPlusBaseUrl = process.env.GOPLUS_API_BASE_URL || "https://api.gopluslabs.io/api/v1/solana/token_security" } = {}) {
+  goPlusBaseUrl = process.env.GOPLUS_API_BASE_URL || "https://api.gopluslabs.io/api/v1/solana/token_security",
+  birdEyeBaseUrl = process.env.BIRDEYE_API_BASE_URL || "https://public-api.birdeye.so" } = {}) {
   const reports = new Map(), pending = new Map(), failures = new Map();
   let reportCooldownUntil = 0, historyCooldownUntil = 0, dnsCooldownUntil = 0;
   const history = new Map();
@@ -19,15 +20,16 @@ function createSniperDataClient({ httpGet = (...args) => axios.get(...args), clo
     for (const [key, item] of map) if (now >= item.until) map.delete(key);
     while (map.size > 200) map.delete(map.keys().next().value);
   }
-  async function getReport(address, signal) {
+  async function getReport(address, signal, context = {}) {
     aborted(signal);
     const now = clock();
     prune(reports, now); prune(failures, now);
-    if (reports.has(address)) return structuredClone(reports.get(address).value);
-    if (pending.has(address)) {
-      const value = await pending.get(address); aborted(signal); return structuredClone(value);
+    const cacheKey = address + (context.pairAddress ? ":" + context.pairAddress : "");
+    if (reports.has(cacheKey)) return structuredClone(reports.get(cacheKey).value);
+    if (pending.has(cacheKey)) {
+      const value = await pending.get(cacheKey); aborted(signal); return structuredClone(value);
     }
-    if (failures.has(address)) throw new Error(failures.get(address).reason);
+    if (failures.has(cacheKey)) throw new Error(failures.get(cacheKey).reason);
     if (now < dnsCooldownUntil) throw new Error("SECURITY_DATA_PENDING: " + providerName + " DNS unavailable");
     if (now < reportCooldownUntil) throw new Error("SECURITY_DATA_PENDING: provider rate limit");
     const task = (async () => {
@@ -44,17 +46,27 @@ function createSniperDataClient({ httpGet = (...args) => axios.get(...args), clo
               { Authorization: "Bearer " + process.env.GOPLUS_API_KEY } : {}) } });
           aborted(signal);
           const age = Number(response.headers?.age || 0) * 1000;
-          if (!Number.isFinite(age) || age < 0 || age > 15000 || clock() - startedAt > 15000)
-            throw new Error("STALE_SECURITY_RESPONSE");
-          const data = selectedProvider === "goplus" ? normalizeGoPlusReport(response.data, address) : response.data;
+          let data;
+          if (selectedProvider === "goplus") {
+            try {
+              data = normalizeGoPlusReport(response.data, address);
+              if (!data.topHolders.length || !data.markets.length) throw new Error("INCOMPLETE_SECURITY_REPORT");
+            }
+            catch (error) {
+              if (error.message !== "INCOMPLETE_SECURITY_REPORT" || !process.env.BIRDEYE_API_KEY) throw error;
+              data = await fetchBirdeyeFallback({ httpGet, address, signal, birdEyeBaseUrl, context, clock });
+            }
+          } else data = response.data;
+          if ((data.provider !== "birdeye" && (!Number.isFinite(age) || age < 0 || age > 15000 ||
+              clock() - startedAt > 15000))) throw new Error("STALE_SECURITY_RESPONSE");
           if (!data || data.mint !== address || !Array.isArray(data.markets))
             throw new Error("INVALID_SECURITY_REPORT");
           const holders = data.topHolders ?? data.tokenHolders ?? data.holders;
           if (!Array.isArray(holders) || !holders.length || !data.markets.length)
             throw new Error("INCOMPLETE_SECURITY_REPORT");
-          const value = { data, sampledAt: startedAt - age };
+          const value = { data, sampledAt: data.provider === "birdeye" ? data.sampledAt : startedAt - age };
           if (clock() - value.sampledAt < 10000)
-            reports.set(address, { until: value.sampledAt + 10000, value: structuredClone(value) });
+            reports.set(cacheKey, { until: value.sampledAt + 10000, value: structuredClone(value) });
           return value;
         } catch (error) {
           aborted(signal);
@@ -68,7 +80,7 @@ function createSniperDataClient({ httpGet = (...args) => axios.get(...args), clo
           const reason = "SECURITY_DATA_PENDING: " + (status ? "HTTP " + status :
             dnsFailure ? providerName + " DNS unavailable (" + error.code + ")" : error.message);
           const until = clock() + Math.max(30000, status === 429 ? Math.min(delay, 300000) : 0);
-          failures.set(address, { until, reason });
+          failures.set(cacheKey, { until, reason });
           if (status === 429) reportCooldownUntil = until;
           // Avoid making one doomed request per newly discovered mint during a provider DNS outage.
           // This expires quickly so the bot automatically recovers as soon as DNS does.
@@ -78,8 +90,8 @@ function createSniperDataClient({ httpGet = (...args) => axios.get(...args), clo
         }
       }
     })();
-    pending.set(address, task);
-    try { return structuredClone(await task); } finally { pending.delete(address); }
+    pending.set(cacheKey, task);
+    try { return structuredClone(await task); } finally { pending.delete(cacheKey); }
   }
   async function getHistoricalCandles(coin, { signal, limit } = {}) {
     aborted(signal);
@@ -111,11 +123,79 @@ function createSniperDataClient({ httpGet = (...args) => axios.get(...args), clo
   return { getReport, getHistoricalCandles, canFetchHistorical };
 }
 
+async function fetchBirdeyeFallback({ httpGet, address, signal, birdEyeBaseUrl, context, clock }) {
+  const origin = birdEyeBaseUrl.replace(/\/+$/, "");
+  const headers = { "Cache-Control": "no-cache", "x-chain": "solana",
+    "X-API-KEY": process.env.BIRDEYE_API_KEY };
+  const request = (path, query) => httpGet(origin + path + "?" + query,
+    { timeout: 8000, signal, headers });
+  const startedAt = clock();
+  const [securityResponse, holderResponse, marketsResponse] = await Promise.all([
+    request("/defi/token_security", "address=" + encodeURIComponent(address)),
+    request("/defi/v3/token/holder", "address=" + encodeURIComponent(address) + "&offset=0&limit=10"),
+    request("/defi/v2/markets", "address=" + encodeURIComponent(address) + "&sort_by=liquidity&sort_type=desc&limit=20")
+  ]);
+  if (signal?.aborted) throw new Error("ABORTED");
+  const security = securityResponse.data?.data;
+  const holders = holderResponse.data?.data?.items;
+  const pool = marketsResponse.data?.data?.items?.find(item => item?.address === context.pairAddress);
+  const poolLiquidity = positiveNumberOrNull(pool?.liquidity);
+  const ages = [securityResponse, holderResponse, marketsResponse]
+    .map(response => Number(response.headers?.age || 0) * 1000);
+  const maxAge = Math.max(...ages);
+  if (!Number.isFinite(maxAge) || maxAge < 0 || maxAge > 15000 || clock() - startedAt > 15000)
+    throw new Error("STALE_BIRDEYE_SECURITY_RESPONSE");
+  if (securityResponse.data?.success !== true || holderResponse.data?.success !== true ||
+      marketsResponse.data?.success !== true || !security ||
+      !Array.isArray(holders) || !holders.length || !pool || poolLiquidity === null)
+    throw new Error("INCOMPLETE_BIRDEYE_SECURITY_REPORT");
+  const topHolders = holders.map(holder => {
+    const raw = holder?.percentage;
+    const fraction = raw === null || raw === undefined || raw === "" ? NaN : Number(raw);
+    return { address: holder?.address, owner: holder?.owner,
+      pct: Number.isFinite(fraction) && fraction >= 0 && fraction <= 100
+        ? (fraction <= 1 ? fraction * 100 : fraction) : NaN };
+  });
+  const authority = value => value === null || value === "" || value === false ? null
+    : value === undefined ? "unverified" : value;
+  const freezeAuthority = security.freezeable === false || security.freezeable === "false" ? null
+    : security.freezeable === true || security.freezeable === "true"
+      ? authority(security.freezeAuthority || "unverified") : authority(security.freezeAuthority);
+  return { mint: address, provider: "birdeye", rugged: false,
+    token: { mintAuthority: authority(security.ownerAddress),
+      freezeAuthority },
+    topHolders,
+    markets: [{ pubkey: pool.address, provider: "birdeye", mintA: address, mintB: null,
+      lp: { providerTvlUSD: poolLiquidity, lpLockedPct: null,
+        lpLockedUSD: null, lpBurnedPct: null, lpBurned: false } }],
+    securitySummary: { top10HolderPercent: maxValidPercent(
+        numberOrNull(security.top10HolderPercent), numberOrNull(security.top10UserPercent)),
+      creatorPercentage: numberOrNull(security.creatorPercentage),
+      transferFeeEnable: security.transferFeeEnable, isToken2022: security.isToken2022,
+      mutableMetadata: security.mutableMetadata },
+    lockDataUnavailable: true, sampledAt: startedAt - maxAge };
+}
+
+function numberOrNull(value) {
+  const number = value === null || value === undefined || value === "" ? NaN : Number(value);
+  return Number.isFinite(number) && number >= 0 && number <= 100 ? number : null;
+}
+
+function positiveNumberOrNull(value) {
+  const number = value === null || value === undefined || value === "" ? NaN : Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function maxValidPercent(...values) {
+  const valid = values.filter(value => value !== null);
+  return valid.length ? Math.max(...valid) : null;
+}
+
 function normalizeGoPlusReport(envelope, mint) {
   if (!envelope || envelope.code !== 1 || !envelope.result || typeof envelope.result !== "object")
     throw new Error("INVALID_GOPLUS_RESPONSE");
   const raw = envelope.result[mint];
-  if (!raw || !Array.isArray(raw.holders) || !raw.holders.length || !Array.isArray(raw.dex) || !raw.dex.length)
+  if (!raw)
     throw new Error("INCOMPLETE_SECURITY_REPORT");
   const authority = status => status?.status === "0" ? null :
     Array.isArray(status?.authority) && status.authority.length ? status.authority[0] : "unverified";
@@ -123,7 +203,7 @@ function normalizeGoPlusReport(envelope, mint) {
   // GoPlus returns lp_holders without a pool id. Attribute those holders only
   // when the response contains one DEX pool, so this lower bound cannot be
   // borrowed from a different pool of the same mint.
-  if (raw.dex.length === 1 && Array.isArray(raw.lp_holders)) {
+  if (Array.isArray(raw.dex) && raw.dex.length === 1 && Array.isArray(raw.lp_holders)) {
     const seen = new Set();
     let sum = 0, verifiedLockedHolder = false;
     for (const holder of raw.lp_holders) {
@@ -140,7 +220,7 @@ function normalizeGoPlusReport(envelope, mint) {
     }
     if (verifiedLockedHolder) uniquelyAttributedLockedPct = Math.min(100, sum);
   }
-  const markets = raw.dex.map(dex => {
+  const markets = (Array.isArray(raw.dex) ? raw.dex : []).map(dex => {
     const burnedPercent = dex?.burn_percent === null || dex?.burn_percent === undefined || dex?.burn_percent === ""
       ? NaN : Number(dex.burn_percent);
     const tvl = dex?.tvl === null || dex?.tvl === undefined || dex?.tvl === "" ? NaN : Number(dex.tvl);
@@ -157,7 +237,7 @@ function normalizeGoPlusReport(envelope, mint) {
         lpBurnedPct: usableBurn,
         lpBurned: Number.isFinite(burnedPercent) && burnedPercent >= 99.99 } };
   });
-  const topHolders = raw.holders.map(holder => {
+  const topHolders = (Array.isArray(raw.holders) ? raw.holders : []).map(holder => {
     const fraction = holder?.percent === null || holder?.percent === undefined || holder?.percent === ""
       ? NaN : Number(holder.percent);
     return { address: holder?.token_account, owner: holder?.account,
@@ -168,4 +248,5 @@ function normalizeGoPlusReport(envelope, mint) {
     topHolders, markets };
 }
 
-module.exports = { createSniperDataClient, normalizeGoPlusReport, sniperData: createSniperDataClient() };
+module.exports = { createSniperDataClient, normalizeGoPlusReport, fetchBirdeyeFallback,
+  sniperData: createSniperDataClient() };

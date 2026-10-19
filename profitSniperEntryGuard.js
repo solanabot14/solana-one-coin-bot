@@ -57,8 +57,24 @@ function holderConcentration(report) {
   if (!percentages.length) return { verified: false, top10Percent: null, largestPercent: null };
   if (percentages.some(value => !Number.isFinite(value)))
     return { verified: false, top10Percent: null, largestPercent: null };
-  return { verified: true, top10Percent: percentages.reduce((sum, value) => sum + value, 0),
+  const observedTop10 = percentages.reduce((sum, value) => sum + value, 0);
+  const providerTop10 = Number(report?.securitySummary?.top10HolderPercent);
+  const top10Percent = Number.isFinite(providerTop10) && providerTop10 >= 0 && providerTop10 <= 100
+    ? Math.max(observedTop10, providerTop10) : observedTop10;
+  return { verified: true, top10Percent,
     largestPercent: Math.max(...percentages) };
+}
+
+function allowsUnlockedBirdeyePaperEntry(report, coin, now = Date.now()) {
+  if (report?.provider !== "birdeye" || report?.lockDataUnavailable !== true) return false;
+  const age = now - Number(coin?.pairCreatedAt);
+  const transactions = Number(coin?.buys5m) + Number(coin?.sells5m);
+  const buyShare = transactions > 0 ? Number(coin?.buys5m) / transactions : 0;
+  return age >= CONFIG.MATURE_MIN_PAIR_AGE_MS &&
+    Number(coin?.liquidityUsd) >= CONFIG.MATURE_MIN_LIQUIDITY_USD &&
+    Number(coin?.volume5m) >= CONFIG.HIGH_VOLUME_5M_USD &&
+    transactions >= CONFIG.HIGH_TRANSACTIONS_5M &&
+    buyShare >= CONFIG.MIN_BUY_SHARE_5M;
 }
 
 function tokenAuthoritiesRenounced(report) {
@@ -91,6 +107,8 @@ function evaluatePoolReport(report, coin, liquidityUsd, now = Date.now()) {
   const authorities = tokenAuthoritiesRenounced(report);
   if (!authorities.mintRenounced) return "Mint authority is active or unverified";
   if (!authorities.freezeRenounced) return "Freeze authority is active or unverified";
+  if (report.securitySummary?.transferFeeEnable === true || report.securitySummary?.transferFeeEnable === "true")
+    return "Token transfer fee is enabled";
   const holders = holderConcentration(report);
   if (!holders.verified) return "Top-holder concentration is unavailable";
   const policy = holderPolicy(coin, now);
@@ -99,7 +117,7 @@ function evaluatePoolReport(report, coin, liquidityUsd, now = Date.now()) {
   if (holders.top10Percent > policy.top10LimitPercent)
     return "Top 10 holders exceed " + policy.top10LimitPercent + "%";
   const lp = market.lp || {};
-  const providerTvl = market.provider === "goplus" && lp.providerTvlUSD !== null && lp.providerTvlUSD !== undefined
+  const providerTvl = ["goplus", "birdeye"].includes(market.provider) && lp.providerTvlUSD !== null && lp.providerTvlUSD !== undefined
     ? Number(lp.providerTvlUSD) : NaN;
   const reserveUsd = Number.isFinite(providerTvl) ? providerTvl : Number(lp.baseUSD) + Number(lp.quoteUSD);
   const burned = isLiquidityBurned(report, market);
@@ -107,7 +125,8 @@ function evaluatePoolReport(report, coin, liquidityUsd, now = Date.now()) {
   const lockedUsd = Number(lp.lpLockedUSD);
   if (!Number.isFinite(reserveUsd) || reserveUsd < CONFIG.MIN_LIQUIDITY_USD ||
       reserveUsd < liquidityUsd * MIN_REPORT_RESERVE_RATIO) return "RugCheck pool reserve is too low or disagrees with DexScreener";
-  if (!burned && (!Number.isFinite(lockedPercent) || lockedPercent < MIN_LOCKED_PERCENT || lockedPercent > 100 ||
+  const unlockedFallbackAllowed = allowsUnlockedBirdeyePaperEntry(report, coin, now);
+  if (!burned && !unlockedFallbackAllowed && (!Number.isFinite(lockedPercent) || lockedPercent < MIN_LOCKED_PERCENT || lockedPercent > 100 ||
       !Number.isFinite(lockedUsd) || lockedUsd < reserveUsd * MIN_LOCKED_PERCENT / 100 * MIN_REPORT_RESERVE_RATIO)) {
     return "Exact pool lock cannot be verified";
   }
@@ -143,8 +162,8 @@ function createSniperEntryGuard({
     "https://api.dexscreener.com/latest/dex/pairs/solana/" + encodeURIComponent(address),
     { timeout: 10_000, signal }
   )).data?.pairs,
-  fetchReport = async (address, signal) =>
-    (await require("./profitSniperData").sniperData.getReport(address, signal)).data
+  fetchReport = async (address, signal, context) =>
+    (await require("./profitSniperData").sniperData.getReport(address, signal, context)).data
 } = {}) {
   const observations = new Map();
   let lastSecurityDiagnostics = null;
@@ -212,7 +231,8 @@ function createSniperEntryGuard({
       return { allowed: false, reason: "exact pool did not hold liquidity across two scans" };
     }
     const [pairs, report] = await Promise.all([
-      fetchPair(coin.pairAddress, signal), fetchReport(coin.tokenAddress, signal)
+      fetchPair(coin.pairAddress, signal), fetchReport(coin.tokenAddress, signal,
+        { pairAddress: coin.pairAddress, liquidityUsd: coin.liquidityUsd })
     ]);
     const pair = (Array.isArray(pairs) ? pairs : [])
       .find(item => item.chainId === "solana" && item.pairAddress === coin.pairAddress &&
@@ -251,7 +271,8 @@ function createSniperEntryGuard({
   return { observe, validate, getStatus, getSecurityDiagnostics: () => lastSecurityDiagnostics };
 }
 
-module.exports = { createSniperEntryGuard, hasCatastrophicLoss, evaluatePoolReport, holderConcentration, holderPolicy, tokenAuthoritiesRenounced, isLiquidityBurned };
+module.exports = { createSniperEntryGuard, hasCatastrophicLoss, evaluatePoolReport, holderConcentration,
+  holderPolicy, tokenAuthoritiesRenounced, isLiquidityBurned, allowsUnlockedBirdeyePaperEntry };
 
 
 
