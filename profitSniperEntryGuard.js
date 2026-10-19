@@ -99,12 +99,16 @@ function evaluatePoolReport(report, coin, liquidityUsd, now = Date.now()) {
   if (holders.top10Percent > policy.top10LimitPercent)
     return "Top 10 holders exceed " + policy.top10LimitPercent + "%";
   const lp = market.lp || {};
-  const reserveUsd = Number(lp.baseUSD) + Number(lp.quoteUSD);
+  const providerTvl = market.provider === "goplus" && lp.providerTvlUSD !== null && lp.providerTvlUSD !== undefined
+    ? Number(lp.providerTvlUSD) : NaN;
+  const reserveUsd = Number.isFinite(providerTvl) ? providerTvl : Number(lp.baseUSD) + Number(lp.quoteUSD);
   const burned = isLiquidityBurned(report, market);
   const lockedPercent = Number(lp.lpLockedPct);
   const lockedUsd = Number(lp.lpLockedUSD);
   if (!Number.isFinite(reserveUsd) || reserveUsd < CONFIG.MIN_LIQUIDITY_USD ||
       reserveUsd < liquidityUsd * MIN_REPORT_RESERVE_RATIO) return "RugCheck pool reserve is too low or disagrees with DexScreener";
+  if (market.provider === "goplus" && !burned)
+    return "GoPlus has no confirmed burn for the exact pool";
   if (!burned && (!Number.isFinite(lockedPercent) || lockedPercent < MIN_LOCKED_PERCENT || lockedPercent > 100 ||
       !Number.isFinite(lockedUsd) || lockedUsd < reserveUsd * MIN_LOCKED_PERCENT / 100 * MIN_REPORT_RESERVE_RATIO)) {
     return "Exact pool lock cannot be verified";
