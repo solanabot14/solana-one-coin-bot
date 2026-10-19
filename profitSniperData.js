@@ -119,18 +119,41 @@ function normalizeGoPlusReport(envelope, mint) {
     throw new Error("INCOMPLETE_SECURITY_REPORT");
   const authority = status => status?.status === "0" ? null :
     Array.isArray(status?.authority) && status.authority.length ? status.authority[0] : "unverified";
+  let uniquelyAttributedLockedPct = null;
+  // GoPlus returns lp_holders without a pool id. Attribute those holders only
+  // when the response contains one DEX pool, so this lower bound cannot be
+  // borrowed from a different pool of the same mint.
+  if (raw.dex.length === 1 && Array.isArray(raw.lp_holders)) {
+    const seen = new Set();
+    let sum = 0, verifiedLockedHolder = false;
+    for (const holder of raw.lp_holders) {
+      const locked = holder?.is_locked === 1 || holder?.is_locked === "1";
+      if (!locked) continue;
+      const identity = holder?.token_account || holder?.account;
+      if (identity && seen.has(identity)) continue;
+      if (identity) seen.add(identity);
+      const fraction = holder?.percent === null || holder?.percent === undefined || holder?.percent === ""
+        ? NaN : Number(holder.percent);
+      if (!Number.isFinite(fraction) || fraction < 0 || fraction > 1) continue;
+      verifiedLockedHolder = true;
+      sum += fraction * 100;
+    }
+    if (verifiedLockedHolder) uniquelyAttributedLockedPct = Math.min(100, sum);
+  }
   const markets = raw.dex.map(dex => {
     const burnedPercent = dex?.burn_percent === null || dex?.burn_percent === undefined || dex?.burn_percent === ""
       ? NaN : Number(dex.burn_percent);
     const tvl = dex?.tvl === null || dex?.tvl === undefined || dex?.tvl === "" ? NaN : Number(dex.tvl);
     const usableBurn = Number.isFinite(burnedPercent) && burnedPercent >= 0 && burnedPercent <= 100
       ? burnedPercent : null;
+    const securedPercent = usableBurn === null ? uniquelyAttributedLockedPct
+      : uniquelyAttributedLockedPct === null ? usableBurn : Math.max(usableBurn, uniquelyAttributedLockedPct);
     // LP that GoPlus reports burned is permanently inaccessible. Count that
     // exact-pool share toward the existing 30% secured-liquidity floor.
     return { pubkey: dex?.id, provider: "goplus", mintA: mint, mintB: null,
       lp: { providerTvlUSD: tvl,
-        lpLockedPct: usableBurn,
-        lpLockedUSD: Number.isFinite(tvl) && usableBurn !== null ? tvl * usableBurn / 100 : null,
+        lpLockedPct: securedPercent,
+        lpLockedUSD: Number.isFinite(tvl) && securedPercent !== null ? tvl * securedPercent / 100 : null,
         lpBurnedPct: usableBurn,
         lpBurned: Number.isFinite(burnedPercent) && burnedPercent >= 99.99 } };
   });

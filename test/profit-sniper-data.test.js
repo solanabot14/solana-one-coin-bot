@@ -98,6 +98,27 @@ test("GoPlus response normalizes authorities, holders, and exact pool burn/TVL",
   assert.equal(normalized.markets[1].lp.lpLockedPct, null);
   assert.throws(() => normalizeGoPlusReport(raw, "other-mint"), /INCOMPLETE/);
 });
+test("GoPlus LP-holder lock shares are attributed only when the token has one reported pool", () => {
+  const mint = "mint-A";
+  const base = { code: 1, result: { [mint]: {
+    mintable: { status: "0" }, freezable: { status: "0" },
+    holders: [{ account: "owner", token_account: "holder", percent: "0.01" }],
+    lp_holders: [
+      { account: "lock-A", token_account: "lp-A", is_locked: 1, percent: "0.20" },
+      { account: "lock-B", token_account: "lp-B", is_locked: "1", percent: "0.15" },
+      { account: "free", token_account: "lp-C", is_locked: 0, percent: "0.50" }
+    ]
+  } } };
+  const onePool = normalizeGoPlusReport({ ...base, result: { [mint]: { ...base.result[mint],
+    dex: [{ id: "pool-A", tvl: "30000", burn_percent: null }] } } }, mint);
+  assert.equal(onePool.markets[0].lp.lpLockedPct, 35);
+  assert.equal(onePool.markets[0].lp.lpLockedUSD, 10500);
+  const twoPools = normalizeGoPlusReport({ ...base, result: { [mint]: { ...base.result[mint],
+    dex: [{ id: "pool-A", tvl: "30000", burn_percent: null },
+      { id: "pool-B", tvl: "20000", burn_percent: null }] } } }, mint);
+  assert.equal(twoPools.markets[0].lp.lpLockedPct, null);
+  assert.equal(twoPools.markets[1].lp.lpLockedPct, null);
+});
 test("GoPlus client sends mint lookup and rejects wrong-mint or missing result records", async () => {
   const mint = "mint-A"; let requested = "";
   const payload = { code: 1, result: { [mint]: { mintable: { status: "0" }, freezable: { status: "0" },
