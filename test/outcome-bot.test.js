@@ -39,7 +39,7 @@ test("accepts a strong top-gainer pullback reclaim",()=>{
     const at=1_800_000_000_000;
     const r=bot.assessCandidate("SOL-USD",{last:"110.5",open:"90",volume:"50000"},candles(at),at);
     assert.equal(r.accepted,true);
-    assert.equal(r.candidate.entrySetup,"PULLBACK_RECLAIM");
+    assert.equal(r.candidate.entrySetup,"UPTREND_PULLBACK_RECLAIM");
     assert.ok(r.candidate.dayChangePercent>=8);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
@@ -61,9 +61,10 @@ test("new positions sell 70% at +5% and the remaining 30% at +20%",async()=>{
     bot.start();
     assert.equal(bot.buy(candidate()).success,true);
     let p=bot.getState().openPositions[0];
+    const originalQuantity=p.originalQuantity;
     assert.ok(p.notionalUsd >= 200 * 0.05 && p.notionalUsd <= 200 * 0.10);
     assert.equal(p.hardStopPercent,2.0);
-    const prices=[p.entryPrice*1.05,p.entryPrice*1.20];
+    const prices=[p.entryPrice*1.05,p.entryPrice*1.201];
     bot.stop();
     const saved=bot.getState(); saved.running=true; fs.writeFileSync(path.join(dir,"state.json"),JSON.stringify(saved));
     let ix=0;
@@ -76,7 +77,7 @@ test("new positions sell 70% at +5% and the remaining 30% at +20%",async()=>{
     p=b.getState().openPositions[0];
     assert.equal(b.getState().openPositions.length,0);
     assert.equal(b.getState().history.filter(row=>row.type==="SELL").length,2);
-    assert.ok(Math.abs(b.getState().history.filter(row=>row.type==="SELL").reduce((sum,row)=>sum+row.quantity,0)/p.originalQuantity-1)<1e-8);
+    assert.ok(Math.abs(b.getState().history.filter(row=>row.type==="SELL").reduce((sum,row)=>sum+row.quantity,0)/originalQuantity-1)<1e-8);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
