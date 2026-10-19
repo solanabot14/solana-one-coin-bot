@@ -54,7 +54,8 @@ function createSniperDataClient({ httpGet = (...args) => axios.get(...args), clo
             }
             catch (error) {
               if (error.message !== "INCOMPLETE_SECURITY_REPORT" || !process.env.BIRDEYE_API_KEY) throw error;
-              data = await fetchBirdeyeFallback({ httpGet, address, signal, birdEyeBaseUrl, context, clock });
+              try { data = await fetchBirdeyeFallback({ httpGet, address, signal, birdEyeBaseUrl, context, clock }); }
+              catch (fallbackError) { fallbackError.securityProvider = "birdeye"; throw fallbackError; }
             }
           } else data = response.data;
           if ((data.provider !== "birdeye" && (!Number.isFinite(age) || age < 0 || age > 15000 ||
@@ -71,17 +72,34 @@ function createSniperDataClient({ httpGet = (...args) => axios.get(...args), clo
         } catch (error) {
           aborted(signal);
           const status = error.response?.status;
+          const providerError = !!status || ["ECONNABORTED", "ETIMEDOUT", "ECONNRESET", "EAI_AGAIN", "ENOTFOUND"]
+            .includes(error.code) || error.message === "STALE_SECURITY_RESPONSE" || error.message === "INVALID_GOPLUS_RESPONSE";
+          if (selectedProvider === "goplus" && process.env.BIRDEYE_API_KEY &&
+              error.securityProvider !== "birdeye" && providerError) {
+            try {
+              const data = await fetchBirdeyeFallback({ httpGet, address, signal, birdEyeBaseUrl, context, clock });
+              const value = { data, sampledAt: data.sampledAt };
+              if (clock() - value.sampledAt < 10000)
+                reports.set(cacheKey, { until: value.sampledAt + 10000, value: structuredClone(value) });
+              console.warn("PROFIT SNIPER SECURITY FALLBACK | " + address + " | GoPlus unavailable; Birdeye verified security data");
+              return value;
+            } catch (fallbackError) {
+              fallbackError.securityProvider = "birdeye";
+              error = fallbackError;
+            }
+          }
+          const finalStatus = error.response?.status;
           const dnsFailure = ["ENOTFOUND", "EAI_AGAIN"].includes(error.code);
-          const transient = error.message === "INCOMPLETE_SECURITY_REPORT" || status === 429 || status >= 500 ||
+          const transient = error.message === "INCOMPLETE_SECURITY_REPORT" || finalStatus === 429 || finalStatus >= 500 ||
             ["ECONNABORTED", "ETIMEDOUT", "ECONNRESET", "EAI_AGAIN", "ENOTFOUND"].includes(error.code);
           const retryAfter = Number(error.response?.headers?.["retry-after"]);
           const delay = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1000;
           if (transient && attempt === 0 && delay <= 2000) { await wait(delay, signal); continue; }
-          const reason = "SECURITY_DATA_PENDING: " + (status ? "HTTP " + status :
+          const reason = "SECURITY_DATA_PENDING: " + (finalStatus ? "HTTP " + finalStatus :
             dnsFailure ? providerName + " DNS unavailable (" + error.code + ")" : error.message);
-          const until = clock() + Math.max(30000, status === 429 ? Math.min(delay, 300000) : 0);
+          const until = clock() + Math.max(30000, finalStatus === 429 ? Math.min(delay, 300000) : 0);
           failures.set(cacheKey, { until, reason });
-          if (status === 429) reportCooldownUntil = until;
+          if (finalStatus === 429) reportCooldownUntil = until;
           // Avoid making one doomed request per newly discovered mint during a provider DNS outage.
           // This expires quickly so the bot automatically recovers as soon as DNS does.
           if (dnsFailure) dnsCooldownUntil = clock() + 30000;
