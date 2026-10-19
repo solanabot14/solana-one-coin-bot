@@ -6,15 +6,51 @@ const { createPumpLaneFreeFeed } = require('./pumpLaneFreeFeed');
 let running = false, error = null, portalSocket = null, reconnect = null;
 let newTokens = 0, tradeEvents = 0, acceptedCandidates = 0;
 const rejectionCounts = Object.create(null);
-const MAX_WATCHED = 30;
+const MAX_WATCH_AGE_MS = 25 * 60000;
+const WATCHLIST_LIMIT = 400;
+let recheckTimer = null;
 let freeFeed;
+
+function pruneWatched(now = Date.now()) {
+  const saved = trader.getState();
+  const openMint = saved.position?.tokenAddress;
+  const boughtMints = new Set(saved.boughtMints || []);
+  for (const [mint, candidate] of freeFeed.watched) {
+    if (mint !== openMint && (now - candidate.createdAt > MAX_WATCH_AGE_MS || boughtMints.has(mint))) {
+      freeFeed.removeMint(mint);
+    }
+  }
+  if (freeFeed.watched.size > WATCHLIST_LIMIT) {
+    const oldestFirst = [...freeFeed.watched.values()]
+      .filter(candidate => candidate.mint !== openMint)
+      .sort((a, b) => a.createdAt - b.createdAt);
+    for (const candidate of oldestFirst) {
+      if (freeFeed.watched.size <= WATCHLIST_LIMIT) break;
+      freeFeed.removeMint(candidate.mint);
+    }
+  }
+}
+
+function recheckWatched() {
+  if (!running) return;
+  try {
+    const now = Date.now();
+    pruneWatched(now);
+    for (const candidate of [...freeFeed.watched.values()]) {
+      if (now - candidate.createdAt >= 60000) tryCandidate(candidate);
+    }
+  } catch (e) { error = e.message; console.error('[Pump Lane recheck]', error); }
+}
 
 function tryCandidate(c) {
   if (!running || !c) return;
+  pruneWatched();
+  if (!freeFeed.getCandidate(c.mint)) return;
   trader.touchScan();
   const pos = trader.getState().position;
   if (pos?.tokenAddress === c.mint && c.lastPriceUsd > 0) {
     trader.decideExit(c.lastPriceUsd);
+    pruneWatched();
     return;
   }
   if (pos) return;
@@ -66,12 +102,8 @@ function connectPortal() {
         if (token.txType !== 'create' || !token.mint) return;
         newTokens++;
         if (freeFeed.getCandidate(token.mint)) return;
-        if (freeFeed.watched.size >= MAX_WATCHED) {
-          const position = trader.getState().position;
-          const oldest = [...freeFeed.watched.keys()].find(mint => mint !== position?.tokenAddress);
-          if (oldest) freeFeed.removeMint(oldest);
-        }
-        void freeFeed.addMint(token.mint, {
+        pruneWatched();
+        const added = freeFeed.addMint(token.mint, {
           symbol: token.symbol,
           createdAt: Date.now(),
           creator: token.traderPublicKey || token.creator,
@@ -80,7 +112,9 @@ function connectPortal() {
           creationSlot: token.slot,
           bondingCurveKey: token.bondingCurveKey,
           nsfw: !!token.nsfw
-        }).then(tryCandidate).catch(e => { error = e.message; console.error('[Pump Lane free token lookup]', error); });
+        });
+        pruneWatched();
+        void added.then(tryCandidate).catch(e => { error = e.message; console.error('[Pump Lane free token lookup]', error); });
       } catch (e) { error = e.message; console.error('[Pump Lane token feed]', error); }
     });
     ws.addEventListener('error', () => { if (portalSocket === ws) { error = 'PumpPortal free token-feed WebSocket error'; console.error('[Pump Lane]', error); } });
@@ -105,6 +139,8 @@ function start() {
   console.log('[Pump Lane] PAPER only · no paid trade feed · no signing');
   freeFeed.start();
   connectPortal();
+  recheckTimer = setInterval(recheckWatched, 20000);
+  recheckTimer.unref?.();
   return getStatus();
 }
 
@@ -112,6 +148,8 @@ function stop() {
   running = false;
   clearTimeout(reconnect);
   reconnect = null;
+  clearInterval(recheckTimer);
+  recheckTimer = null;
   const old = portalSocket;
   portalSocket = null;
   if (old) old.close();
