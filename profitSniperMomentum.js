@@ -79,7 +79,7 @@ function createMomentumTracker() {
     const afterLow = samples.slice(lowIndex);
     const recoverySteps = afterLow.slice(1).filter((item,index)=>item.price>afterLow[index].price).length;
     const notFalling = previous && price>=previous.price;
-    const ordinaryContinuation = freshWindow && notFalling && price>samples[0].price && risingSteps>=2;
+    const ordinaryContinuation = freshWindow && notFalling && price>samples[0].price && risingSteps>=1;
     const recovery = freshWindow && notFalling && price>low && recoverySteps>=2;
     const transactions = buys5m+sells5m;
     const currentBuyShare = transactions>0 ? buys5m/transactions : 0;
