@@ -25,6 +25,7 @@ function fixture({ first = pair(), final = pair({ price: 1.02 }), lockReport = r
   let time = now, quotes = 0;
   const urls = [];
   const guard = createEntryGuard({ clock: () => time,
+    securityProvider: "rugcheck",
     verifyExecution,
     wait: async ms => { time += ms; if (onWait) onWait(); },
     httpGet: async (url, options) => {
@@ -89,6 +90,17 @@ test("missing and insufficient exact-pool lock are rejected below the 30% floor"
 test("burned LP can pass without a lock only when RugCheck explicitly marks it burned", () => {
   assert.equal(poolLock(report({ burned: true, lock: 0 }), coin).allowed, true);
 });
+test("GoPlus TVL and burn evidence applies only to the exact selected pool", () => {
+  const goplus = { mint: coin.tokenAddress, provider: "goplus", rugged: false,
+    token: { mintAuthority: null, freezeAuthority: null },
+    topHolders: Array.from({ length: 10 }, (_, i) => ({ address: "h" + i, pct: 2 })),
+    markets: [{ provider: "goplus", pubkey: coin.pairAddress, mintA: coin.tokenAddress,
+      lp: { providerTvlUSD: 30000, lpBurnedPct: 100, lpBurned: true } }] };
+  assert.equal(poolLock(goplus, coin).allowed, true);
+  assert.equal(poolLock({ ...goplus, markets: [{ ...goplus.markets[0], pubkey: "other-pool" }] }, coin).allowed, false);
+  assert.equal(poolLock({ ...goplus, markets: [{ ...goplus.markets[0], lp: { ...goplus.markets[0].lp,
+    lpBurnedPct: null, lpBurned: false } }] }, coin).allowed, false);
+});
 test("stopping during confirmation cancels the candidate", async () => {
   const controller = new AbortController();
   const { guard } = fixture({ onWait: () => controller.abort() });
@@ -106,7 +118,7 @@ test("missing execution routes and final price falling both prevent entry", asyn
 
 test("stale pair cache retries official token endpoint and still requires exact fresh pool", async () => {
   let time=now; const urls=[];
-  const guard=createEntryGuard({clock:()=>time,wait:async ms=>{time+=ms;},
+  const guard=createEntryGuard({clock:()=>time,securityProvider:"rugcheck",wait:async ms=>{time+=ms;},
     verifyExecution:async()=>({allowed:true,lossPercent:1}),
     httpGet:async url=>{
       urls.push(url);
@@ -128,7 +140,7 @@ test("cost rejection retains actual quote values for diagnosis",async()=>{
 test("27-second market cache is accepted, labeled honestly, with fresh execution last",async()=>{
   const order=[];
   let time=now;
-  const guard=createEntryGuard({clock:()=>time,wait:async ms=>{time+=ms;},
+  const guard=createEntryGuard({clock:()=>time,securityProvider:"rugcheck",wait:async ms=>{time+=ms;},
     httpGet:async url=>{order.push(url.includes('rugcheck')?'report':'market');return url.includes('rugcheck')
       ?{data:report(),headers:{}}:{data:{pairs:[pair()]},headers:{age:'27','cache-control':'public, max-age=30'}};},
     verifyExecution:async()=>{order.push('execution');return {allowed:true,lossPercent:3.6,quotedCostPercent:2.6};}});
