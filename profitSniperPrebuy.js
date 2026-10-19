@@ -1,7 +1,8 @@
 const { setTimeout: sleep } = require("node:timers/promises");
 const { constants, getMomentumFailureReasons, getBuySizing } = require("./profitSniperStrategy");
 const CONFIG = require("./profitSniperConfig");
-const { evaluatePoolReport, isLiquidityBurned, holderConcentration, holderPolicy } = require("./profitSniperEntryGuard");
+const { evaluatePoolReport, isLiquidityBurned, holderConcentration, holderPolicy,
+  allowsUnlockedBirdeyePaperEntry } = require("./profitSniperEntryGuard");
 const CONFIRMATION_MS = 7500;
 const MAX_SAMPLE_AGE_MS = CONFIG.MAX_EXECUTION_QUOTE_AGE_MS;
 const MAX_MARKET_DATA_AGE_MS = CONFIG.MAX_MARKET_DATA_AGE_MS;
@@ -15,11 +16,11 @@ function number(value) {
 function poolLock(report, coin, now = Date.now()) {
   if (!report || report.mint !== coin.tokenAddress) return { allowed: false, reason: "REPORT_MINT_MISMATCH" };
   const markets = (report.markets || []).filter(m => m.pubkey === coin.pairAddress &&
-    (m.provider === "goplus" || [m.mintA, m.mintB].includes(coin.tokenAddress)));
+    (["goplus", "birdeye"].includes(m.provider) || [m.mintA, m.mintB].includes(coin.tokenAddress)));
   if (markets.length !== 1) return { allowed: false, reason: "EXACT_POOL_LOCK_UNAVAILABLE" };
   const lp = markets[0].lp;
   const lockedPercent = number(lp?.lpLockedPct);
-  const providerTvl = markets[0].provider === "goplus" ? number(lp?.providerTvlUSD) : NaN;
+  const providerTvl = ["goplus", "birdeye"].includes(markets[0].provider) ? number(lp?.providerTvlUSD) : NaN;
   const baseUsd = number(lp?.baseUSD), quoteUsd = number(lp?.quoteUSD);
   const liquidityUsd = Number.isFinite(providerTvl) ? providerTvl : baseUsd + quoteUsd;
   if ((!Number.isFinite(providerTvl) && (!(baseUsd > 0) || !(quoteUsd > 0))) || !Number.isFinite(liquidityUsd) ||
@@ -28,11 +29,15 @@ function poolLock(report, coin, now = Date.now()) {
   const safetyFailure = evaluatePoolReport(report, coin, Number(coin.liquidityUsd) || liquidityUsd, now);
   if (safetyFailure) return { allowed: false, lockedPercent, liquidityUsd, reason: safetyFailure };
   const burned = isLiquidityBurned(report, markets[0]);
-  if (!burned && (!Number.isFinite(lockedPercent) || lockedPercent < MIN_LOCK_PERCENT || lockedPercent > 100))
+  const unlockedFallbackAllowed = allowsUnlockedBirdeyePaperEntry(report, coin, now);
+  if (!burned && !unlockedFallbackAllowed && (!Number.isFinite(lockedPercent) || lockedPercent < MIN_LOCK_PERCENT || lockedPercent > 100))
     return { allowed: false, lockedPercent: null, reason: "EXACT_POOL_LOCK_NOT_CONFIRMED" };
-  return { allowed: true, lockedPercent: burned ? 100 : lockedPercent, liquidityUsd, pairAddress: coin.pairAddress,
-    reason: burned ? "EXACT_POOL_LP_BURN_CONFIRMED" : markets[0].provider === "goplus"
-      ? "EXACT_POOL_LOCK_OR_BURN_AND_RESERVES_CONFIRMED" : "EXACT_POOL_LOCK_AND_RESERVES_CONFIRMED" };
+  return { allowed: true, lockedPercent: burned ? 100 : Number.isFinite(lockedPercent) ? lockedPercent : null,
+    liquidityUsd, pairAddress: coin.pairAddress,
+    reason: burned ? "EXACT_POOL_LP_BURN_CONFIRMED" : unlockedFallbackAllowed
+      ? "BIRDEYE_SECURITY_AND_HOLDER_CHECKS_WITH_MATURE_POOL_EXECUTION_GUARDS"
+      : markets[0].provider === "goplus" ? "EXACT_POOL_LOCK_OR_BURN_AND_RESERVES_CONFIRMED"
+      : "EXACT_POOL_LOCK_AND_RESERVES_CONFIRMED" };
 }
 
 function createEntryGuard({
@@ -70,7 +75,8 @@ function createEntryGuard({
       ageBasis:"HTTP cache age; underlying indexer delay unavailable" };
   }
   async function readLock(coin, signal) {
-    const response = await reportClient.getReport(coin.tokenAddress, signal);
+    const response = await reportClient.getReport(coin.tokenAddress, signal,
+      { pairAddress: coin.pairAddress, liquidityUsd: coin.liquidityUsd });
     return { ...poolLock(response.data, coin, clock()), sampledAt: response.sampledAt,
       holderSecurity: { ...holderConcentration(response.data), ...holderPolicy(coin, clock()) },
       report: response.data };
@@ -154,7 +160,9 @@ function createEntryGuard({
         marketCacheAdvanced:final.sampledAt>first.sampledAt,
         checkedAt: new Date(clock()).toISOString() };
       return { allowed: true, coin: { ...coin, ...final, reasons: [...(coin.reasons || []),
-        "Exact pool locked or burned LP " + lock.lockedPercent + "%; reserves $" + lock.liquidityUsd.toFixed(2),
+        lock.lockedPercent === null
+          ? "Birdeye security and holder checks passed; LP lock unavailable, so mature-pool, liquidity-stability, and executable round-trip checks were required; reserves $" + lock.liquidityUsd.toFixed(2)
+          : "Exact pool locked or burned LP " + lock.lockedPercent + "%; reserves $" + lock.liquidityUsd.toFixed(2),
         "Holder policy " + lastCheck.holderSecurity.policy + ": top 10 " +
           lastCheck.holderSecurity.top10Percent.toFixed(2) + "% / cap " +
           lastCheck.holderSecurity.top10LimitPercent + "%; largest " +
