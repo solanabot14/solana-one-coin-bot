@@ -76,8 +76,8 @@ test("Sniper sells 90% at +20% and trails the final 10% by 10%", () => {
     freshData: { liquidityUsd: 15000 } }), { percent: 100, writeOff: true, reason: "UNEXECUTABLE QUOTE: POSITION EXCEEDS POOL CAPACITY" });
   assert.deepEqual(chooseExit({ position: { entryPrice: 100 }, currentPrice: 1, freshData: { liquidityUsd: 1 } }),
     { percent: 100, writeOff: true, reason: "EMERGENCY WRITE-OFF: NO EXECUTABLE LIQUIDITY" });
-  assert.deepEqual(chooseExit({ position, currentPrice: 92, exitProgress: { soldPercent: 0 } }),
-    { percent: 100, triggerPrice: 92, reason: "HARD STOP -8%" });
+  assert.deepEqual(chooseExit({ position, currentPrice: 95, exitProgress: { soldPercent: 0 } }),
+    { percent: 100, triggerPrice: 95, reason: "HARD STOP -5%" });
   const tp1 = chooseExit({ position, currentPrice: 120, exitProgress: { soldPercent: 0 } });
   assert.equal(tp1.targetOriginalPositionPercent, 90);
   assert.equal(tp1.takeProfit, "firstTakeProfitDone");

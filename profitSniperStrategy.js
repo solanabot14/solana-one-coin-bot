@@ -9,7 +9,7 @@ const MIN_BUY_RATIO_5M = CONFIG.MIN_BUY_SHARE_5M;
 // 1h change were materially loss-making; do not infer a 5m trend filter from
 // the same sample because negative-5m recovery entries also produced winners.
 const MIN_ENTRY_PRICE_CHANGE_1H_PERCENT = 0;
-const HARD_STOP_PERCENT = -8;
+const HARD_STOP_PERCENT = -5;
 const MIN_EXIT_LIQUIDITY_USD = 1000;
 const MAX_EXIT_LIQUIDITY_DRAWDOWN = 0.25;
 const BLOCKED_TOKEN_ADDRESSES = new Set(["EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J"]);
@@ -148,7 +148,7 @@ function chooseExit({ position, currentPrice, freshData, exitProgress, history, 
   const soldPercent = Number.isFinite(Number(exitProgress?.soldPercent))
     ? Number(exitProgress.soldPercent)
     : (position.secondTakeProfitDone ? 80 : position.firstTakeProfitDone ? 50 : 0);
-  if (profitPercent <= HARD_STOP_PERCENT) return { percent: 100, triggerPrice: entryPrice * (1 + HARD_STOP_PERCENT / 100), reason: "HARD STOP -8%" };
+  if (profitPercent <= HARD_STOP_PERCENT) return { percent: 100, triggerPrice: entryPrice * (1 + HARD_STOP_PERCENT / 100), reason: "HARD STOP -5%" };
   if (soldPercent + 1e-6 >= TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT) {
     const high = Number(position.highestPrice);
     const pullback = high > 0 ? (high - price) / high * 100 : 0;
