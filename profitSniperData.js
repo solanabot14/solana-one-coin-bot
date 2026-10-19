@@ -123,9 +123,15 @@ function normalizeGoPlusReport(envelope, mint) {
     const burnedPercent = dex?.burn_percent === null || dex?.burn_percent === undefined || dex?.burn_percent === ""
       ? NaN : Number(dex.burn_percent);
     const tvl = dex?.tvl === null || dex?.tvl === undefined || dex?.tvl === "" ? NaN : Number(dex.tvl);
+    const usableBurn = Number.isFinite(burnedPercent) && burnedPercent >= 0 && burnedPercent <= 100
+      ? burnedPercent : null;
+    // LP that GoPlus reports burned is permanently inaccessible. Count that
+    // exact-pool share toward the existing 30% secured-liquidity floor.
     return { pubkey: dex?.id, provider: "goplus", mintA: mint, mintB: null,
       lp: { providerTvlUSD: tvl,
-        lpBurnedPct: Number.isFinite(burnedPercent) && burnedPercent >= 0 && burnedPercent <= 100 ? burnedPercent : null,
+        lpLockedPct: usableBurn,
+        lpLockedUSD: Number.isFinite(tvl) && usableBurn !== null ? tvl * usableBurn / 100 : null,
+        lpBurnedPct: usableBurn,
         lpBurned: Number.isFinite(burnedPercent) && burnedPercent >= 99.99 } };
   });
   const topHolders = raw.holders.map(holder => {
