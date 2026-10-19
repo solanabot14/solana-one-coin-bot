@@ -31,7 +31,8 @@ function poolLock(report, coin, now = Date.now()) {
   if (!burned && (!Number.isFinite(lockedPercent) || lockedPercent < MIN_LOCK_PERCENT || lockedPercent > 100))
     return { allowed: false, lockedPercent: null, reason: "EXACT_POOL_LOCK_NOT_CONFIRMED" };
   return { allowed: true, lockedPercent: burned ? 100 : lockedPercent, liquidityUsd, pairAddress: coin.pairAddress,
-    reason: burned ? "EXACT_POOL_LP_BURN_CONFIRMED" : "EXACT_POOL_LOCK_AND_RESERVES_CONFIRMED" };
+    reason: burned ? "EXACT_POOL_LP_BURN_CONFIRMED" : markets[0].provider === "goplus"
+      ? "EXACT_POOL_LOCK_OR_BURN_AND_RESERVES_CONFIRMED" : "EXACT_POOL_LOCK_AND_RESERVES_CONFIRMED" };
 }
 
 function createEntryGuard({
@@ -153,7 +154,7 @@ function createEntryGuard({
         marketCacheAdvanced:final.sampledAt>first.sampledAt,
         checkedAt: new Date(clock()).toISOString() };
       return { allowed: true, coin: { ...coin, ...final, reasons: [...(coin.reasons || []),
-        "Exact pool lock " + lock.lockedPercent + "%; reserves $" + lock.liquidityUsd.toFixed(2),
+        "Exact pool locked or burned LP " + lock.lockedPercent + "%; reserves $" + lock.liquidityUsd.toFixed(2),
         "Holder policy " + lastCheck.holderSecurity.policy + ": top 10 " +
           lastCheck.holderSecurity.top10Percent.toFixed(2) + "% / cap " +
           lastCheck.holderSecurity.top10LimitPercent + "%; largest " +
