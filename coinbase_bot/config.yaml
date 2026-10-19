@@ -1,6 +1,6 @@
 # Coinbase Bot paper strategy configuration (documentation; runtime currently uses outcomeBot.js constants).
 mode: paper
-strategy_version: COINBASE_MAJOR_UPTREND_V5
+strategy_version: COINBASE_MAJOR_UPTREND_V6
 timezone: America/Puerto_Rico
 end_of_day_flat_time: "23:45"
 scan_interval_seconds: 45
@@ -35,8 +35,10 @@ risk:
   hard_stop_percent: 2.0
   take_profit_1_percent: 5
   take_profit_1_fraction: 0.70
-  take_profit_2_percent: 20
-  take_profit_2_fraction: 0.30
+  take_profit_2_percent: 8
+  take_profit_2_fraction: 0.20
+  runner_fraction: 0.10
+  runner_trail_percent: 8
   time_stop_minutes: 45
   time_stop_min_gain_percent: 1.0
 fees:
