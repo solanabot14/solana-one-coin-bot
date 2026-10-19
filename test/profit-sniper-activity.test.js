@@ -13,6 +13,13 @@ test("small continuation enters without a 30% pump or any pullback",()=>{
   assert.equal(result.ready,true); assert.equal(result.entryRoute,"activity_continuation");
   assert.equal(result.pullbackObserved,false);
 });
+test("one confirmed uptick over the full window is enough for continuation at 52% buy share",()=>{
+  const result=sequence([1,1,1.01],{buys5m:55,sells5m:45});
+  assert.equal(result.ready,true);
+  assert.equal(result.entryRoute,"activity_continuation");
+  assert.equal(result.risingSteps,1);
+  assert.equal(result.currentBuyShare,0.55);
+});
 test("high steady volume and unchanged rolling counters remain eligible",()=>{
   const result=sequence([1,1.01,1.02]);
   assert.equal(result.volumeIncreasing,false);assert.equal(result.highVolume,true);
@@ -51,7 +58,7 @@ test("weak buying, insufficient liquidity and stale signals still fail",()=>{
 test("strong activity permits a single upward step across a full flat-cache window",()=>{
   assert.equal(sequence([1,1,1.01]).ready,true);
   assert.equal(sequence([1,1,1.01]).strongActivityContinuation,true);
-  assert.equal(sequence([1,1,1.01],{buys5m:59,sells5m:41}).ready,false);
+  assert.equal(sequence([1,1,1.01],{buys5m:51,sells5m:49}).ready,false);
   assert.equal(sequence([1,1,1.01],{volume5m:4999}).ready,false);
   assert.equal(sequence([1,1,1.01],{buys5m:29,sells5m:20}).ready,false);
   assert.equal(sequence([1,0.5,0.51]).ready,false);
