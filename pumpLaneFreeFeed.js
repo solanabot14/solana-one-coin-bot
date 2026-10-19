@@ -89,9 +89,11 @@ function parseTradeTransaction(tx, signature, expectedMint) {
   return null;
 }
 
-function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade = () => {}, onCurve = () => {}, onStatus = () => {}, fetchImpl = fetch, WebSocketImpl = globalThis.WebSocket } = {}) {
+function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade = () => {}, onCurve = () => {}, onStatus = () => {}, fetchImpl = fetch, WebSocketImpl = globalThis.WebSocket, priorityMint = () => null } = {}) {
   let ws = null, running = false, sequence = 0, reconnectTimer = null, error = null;
   let wsProviderIndex = apiKey ? 0 : 1;
+  let subscriptionTimer = null, sendBudget = 2, budgetAt = 0;
+  const subscriptionErrors = new Map();
   const watched = new Map();
   const requestMap = new Map();
   const pendingRequests = new Map();
@@ -100,14 +102,16 @@ function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade =
     { name: 'Solana public RPC', ws: PUBLIC_WS }
   ];
   function sendSubscription(mint, pubkey, kind) {
-    if (!ws || ws.readyState !== 1) { pendingRequests.set(`${kind}:${mint}`, { mint, pubkey, kind }); return; }
-    const id = ++sequence;
-    requestMap.set(id, { mint, kind });
-    const method = kind === 'curve' ? 'accountSubscribe' : 'logsSubscribe';
-    const params = kind === 'curve'
-      ? [pubkey, { encoding: 'base64', commitment: 'processed' }]
-      : [{ mentions: [pubkey] }, { commitment: 'confirmed' }];
-    ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params }));
+    const candidate = watched.get(mint);
+    if (!candidate) return;
+    if (kind === 'curve') candidate.curveAddress = pubkey;
+    pendingRequests.set(`${kind}:${mint}`, { mint, pubkey, kind });
+    drainPending();
+  }
+  function markHealthy() {
+    if (!error) return;
+    error = null;
+    onStatus({ connected: true, provider: endpoints[wsProviderIndex].name, error: null });
   }
   async function addMint(mint, seed = {}) {
     if (watched.has(mint)) return watched.get(mint);
@@ -145,10 +149,14 @@ function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade =
         curveAddress = coin?.bonding_curve || coin?.bondingCurveKey || null;
         if (!curveAddress) throw new Error('Pump coin index has not published the bonding curve yet');
       }
+      if (watched.get(mint) !== c) return c;
+      c.lookupWarning = null;
       sendSubscription(mint, curveAddress, 'curve');
     } catch (e) {
-      error = `Free coin lookup (${mint.slice(0, 6)}…): ${e.message}`;
-      onStatus({ error, watched: watched.size });
+      if (watched.get(mint) === c) {
+        c.lookupWarning = `Free coin lookup (${mint.slice(0, 6)}…): ${e.message}`;
+        onStatus({ warning: c.lookupWarning, watched: watched.size });
+      }
     }
     return c;
   }
@@ -160,19 +168,45 @@ function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade =
       if (c.subscriptions?.trades != null) ws.send(JSON.stringify({ jsonrpc: '2.0', id: ++sequence, method: 'logsUnsubscribe', params: [c.subscriptions.trades] }));
     }
     watched.delete(mint);
+    for (const key of [`curve:${mint}`, `trades:${mint}`]) { pendingRequests.delete(key); subscriptionErrors.delete(key); }
   }
   function drainPending() {
-    for (const item of pendingRequests.values()) sendSubscription(item.mint, item.pubkey, item.kind);
-    pendingRequests.clear();
+    if (!running || !ws || ws.readyState !== 1) return;
+    const now = Date.now();
+    if (now - budgetAt >= 500) { sendBudget = 2; budgetAt = now; }
+    const priority = pendingRequests.size ? priorityMint() : null;
+    const queued = [...pendingRequests.entries()].sort((a, b) => Number(b[1].mint === priority) - Number(a[1].mint === priority));
+    for (const [key, item] of queued) {
+      if (!watched.has(item.mint)) { pendingRequests.delete(key); continue; }
+      if (sendBudget <= 0) break;
+      const id = ++sequence;
+      const method = item.kind === 'curve' ? 'accountSubscribe' : 'logsSubscribe';
+      const params = item.kind === 'curve'
+        ? [item.pubkey, { encoding: 'base64', commitment: 'processed' }]
+        : [{ mentions: [item.pubkey] }, { commitment: 'confirmed' }];
+      ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params }));
+      requestMap.set(id, item);
+      pendingRequests.delete(key);
+      sendBudget--;
+    }
   }
   function handleMessage(raw) {
     let msg;
     try { msg = JSON.parse(String(raw)); } catch { return; }
     if (msg.id != null && requestMap.has(msg.id)) {
       const sub = requestMap.get(msg.id); requestMap.delete(msg.id);
-      if (msg.error) { error = `${endpoints[wsProviderIndex].name} ${sub.kind} subscription failed: ${msg.error.message || 'unknown error'}`; onStatus({ error, watched: watched.size }); }
-      else if (watched.get(sub.mint)) watched.get(sub.mint).subscriptions[sub.kind] = msg.result;
-      else if (ws?.readyState === 1) {
+      const key = `${sub.kind}:${sub.mint}`;
+      if (msg.error && watched.has(sub.mint)) {
+        const message = `${endpoints[wsProviderIndex].name} ${sub.kind} subscription failed: ${msg.error.message || 'unknown error'}`;
+        subscriptionErrors.set(key, message);
+        onStatus({ warning: message, watched: watched.size });
+      }
+      else if (!msg.error && watched.get(sub.mint)) {
+        watched.get(sub.mint).subscriptions[sub.kind] = msg.result;
+        subscriptionErrors.delete(key);
+        markHealthy();
+      }
+      else if (!msg.error && ws?.readyState === 1) {
         const unsubscribe = sub.kind === 'curve' ? 'accountUnsubscribe' : 'logsUnsubscribe';
         ws.send(JSON.stringify({ jsonrpc: '2.0', id: ++sequence, method: unsubscribe, params: [msg.result] }));
       }
@@ -183,7 +217,7 @@ function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade =
       const mint = [...watched.values()].find(c => c.subscriptions?.curve === id);
       const encoded = msg.params?.result?.value?.data?.[0];
       const curve = decodeCurveAccount(encoded);
-      if (mint && curve) { Object.assign(mint, curve); mint.lastPriceUsd = curve.priceSol * Number(process.env.SOL_USD_PRICE || 150); onCurve(mint); }
+      if (mint && curve) { Object.assign(mint, curve); mint.lastPriceUsd = curve.priceSol * Number(process.env.SOL_USD_PRICE || 150); mint.lastQuoteAt = Date.now(); markHealthy(); onCurve(mint); }
     } else if (msg.method === 'logsNotification') {
       const id = msg.params?.subscription;
       const c = [...watched.values()].find(x => x.subscriptions?.trades === id);
@@ -204,24 +238,40 @@ function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade =
         c.priceSol = trade.virtualSolReserves / trade.virtualTokenReserves * 1e-3;
         c.lastPriceUsd = c.priceSol * Number(process.env.SOL_USD_PRICE || 150);
       }
+      if (Number.isFinite(c.lastPriceUsd) && c.lastPriceUsd > 0) c.lastQuoteAt = Date.now();
+      markHealthy();
       onTrade({ candidate: c, trade });
     }
   }
   function connect() {
     if (!running) return;
     try {
-      ws = new WebSocketImpl(endpoints[wsProviderIndex].ws);
-      ws.addEventListener('open', () => { if (!running) return ws.close(); error = null; drainPending(); onStatus({ connected: true, provider: endpoints[wsProviderIndex].name, watched: watched.size }); });
-      ws.addEventListener('message', e => handleMessage(e.data));
-      ws.addEventListener('error', event => {
+      const socket = new WebSocketImpl(endpoints[wsProviderIndex].ws);
+      ws = socket;
+      socket.addEventListener('open', () => {
+        if (!running || ws !== socket) return socket.close();
+        error = null;
+        requestMap.clear(); pendingRequests.clear(); subscriptionErrors.clear();
+        for (const c of watched.values()) {
+          c.subscriptions = {};
+          pendingRequests.set(`trades:${c.mint}`, { mint: c.mint, pubkey: c.mint, kind: 'trades' });
+          if (c.curveAddress) pendingRequests.set(`curve:${c.mint}`, { mint: c.mint, pubkey: c.curveAddress, kind: 'curve' });
+        }
+        sendBudget = 2; budgetAt = Date.now();
+        drainPending();
+        onStatus({ connected: true, provider: endpoints[wsProviderIndex].name, watched: watched.size, error: null });
+      });
+      socket.addEventListener('message', e => { if (running && ws === socket) handleMessage(e.data); });
+      socket.addEventListener('error', event => {
+        if (!running || ws !== socket) return;
         // Browser-style WebSocket error events intentionally hide transport
         // details; Node runtimes may expose a useful message.
         const detail = event?.message || event?.error?.message;
         error = detail ? `${endpoints[wsProviderIndex].name} WebSocket error: ${detail}` : `${endpoints[wsProviderIndex].name} WebSocket error`;
         onStatus({ error, watched: watched.size });
       });
-      ws.addEventListener('close', event => {
-        if (!running) return;
+      socket.addEventListener('close', event => {
+        if (!running || ws !== socket) return;
         if (event?.code && event.code !== 1000) {
           error = `${endpoints[wsProviderIndex].name} WebSocket closed (${event.code}${event.reason ? `: ${event.reason}` : ''})`;
           onStatus({ error, watched: watched.size });
@@ -234,9 +284,9 @@ function createPumpLaneFreeFeed({ apiKey = process.env.HELIUS_API_KEY, onTrade =
       });
     } catch (e) { error = e.message; onStatus({ error, watched: watched.size }); reconnectTimer = setTimeout(connect, 5000); }
   }
-  function start() { if (running) return status(); running = true; connect(); return status(); }
-  function stop() { running = false; clearTimeout(reconnectTimer); reconnectTimer = null; const old = ws; ws = null; if (old) old.close(); return status(); }
-  function status() { return { running, connected: !!ws && ws.readyState === 1, error, watched: watched.size, queuedTransactions: 0, provider: `${endpoints[wsProviderIndex].name} + Pump.fun public coin data`, live: false }; }
+  function start() { if (running) return status(); running = true; subscriptionTimer = setInterval(drainPending, 500); subscriptionTimer.unref?.(); connect(); return status(); }
+  function stop() { running = false; clearInterval(subscriptionTimer); subscriptionTimer = null; clearTimeout(reconnectTimer); reconnectTimer = null; const old = ws; ws = null; if (old) old.close(); return status(); }
+  function status() { return { running, connected: !!ws && ws.readyState === 1, error, warnings: [...watched.values()].map(c => c.lookupWarning).filter(Boolean).concat([...subscriptionErrors.values()]), queuedSubscriptions: pendingRequests.size, watched: watched.size, queuedTransactions: 0, provider: `${endpoints[wsProviderIndex].name} + Pump.fun public coin data`, live: false }; }
   return { start, stop, status, addMint, removeMint, getCandidate: mint => watched.get(mint), watched };
 }
 

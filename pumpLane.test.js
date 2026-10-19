@@ -9,8 +9,8 @@ const { createPumpLaneTrader } = require('./pumpLaneTrader');
 const clean = () => ({ mint: 'clean', symbol: 'CLEAN', ageMinutes: 5, virtualSolReserves: 85.25, marketCapSol: 50, distinctTraders: 15, buyCount: 20, sellCount: 10, creatorBuyTokens: 100, creatorSellTokens: 20 });
 function account(t) { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pump-lane-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true })); return { file: path.join(dir, 'pump-lane-state.json'), dir }; }
 test('progress supports SOL and lamports', () => { assert.equal(progress(72.5), 50); assert.equal(progress(72500000000), 50); assert.equal(progress(10), 0); assert.equal(progress(200), 100); });
-test('reject age below 3 minutes', () => assert.equal(evaluate({ ...clean(), ageMinutes: 2.99 }).accepted, false));
-test('reject progress 20 and 96', () => { for (const bondingProgress of [20, 96]) assert.equal(evaluate({ ...clean(), bondingProgress }).accepted, false); });
+test('reject age below 1 minute', () => assert.equal(evaluate({ ...clean(), ageMinutes: 0.99 }).accepted, false));
+test('reject progress below 15 and above 90', () => { for (const bondingProgress of [14.99, 90.01]) assert.equal(evaluate({ ...clean(), bondingProgress }).accepted, false); });
 test('reject creator selling 90%', () => assert.equal(evaluate({ ...clean(), creatorSellTokens: 90 }).accepted, false));
 test('accept clean coin', () => assert.equal(evaluate(clean()).accepted, true));
 test('reject creation and first block', () => { assert.equal(evaluate({ ...clean(), txType: 'create' }).accepted, false); assert.equal(evaluate({ ...clean(), firstBlock: true }).accepted, false); });

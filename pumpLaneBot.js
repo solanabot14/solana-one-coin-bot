@@ -3,7 +3,7 @@ const trader = require('./pumpLaneTrader');
 const { evaluatePumpCandidate } = require('./pumpLaneFilter');
 const { createPumpLaneFreeFeed } = require('./pumpLaneFreeFeed');
 
-let running = false, error = null, portalSocket = null, reconnect = null;
+let running = false, error = null, portalSocket = null, reconnect = null, portalError = null;
 let newTokens = 0, tradeEvents = 0, acceptedCandidates = 0;
 const rejectionCounts = Object.create(null);
 const MAX_WATCH_AGE_MS = 25 * 60000;
@@ -48,8 +48,9 @@ function tryCandidate(c) {
   if (!freeFeed.getCandidate(c.mint)) return;
   trader.touchScan();
   const pos = trader.getState().position;
-  if (pos?.tokenAddress === c.mint && c.lastPriceUsd > 0) {
-    trader.decideExit(c.lastPriceUsd);
+  const quoteFresh = Number.isFinite(c.lastQuoteAt) && Date.now() - c.lastQuoteAt <= 120000;
+  if (pos?.tokenAddress === c.mint && c.lastPriceUsd > 0 && quoteFresh) {
+    trader.decideExit(c.lastPriceUsd, Date.now(), c.lastQuoteAt);
     pruneWatched();
     return;
   }
@@ -60,7 +61,7 @@ function tryCandidate(c) {
     trader.recordRejection(c, result.reason);
     return;
   }
-  if (Number.isFinite(c.lastPriceUsd) && c.lastPriceUsd > 0) {
+  if (Number.isFinite(c.lastPriceUsd) && c.lastPriceUsd > 0 && quoteFresh) {
     const bought = trader.buy({ ...c, tokenAddress: c.mint, priceUsd: c.lastPriceUsd });
     if (bought.success) { acceptedCandidates++; console.log('[Pump Lane] PAPER entry', c.symbol, c.mint); }
     else if (bought.error !== 'Already open / previously bought') error = bought.error;
@@ -68,20 +69,22 @@ function tryCandidate(c) {
 }
 
 freeFeed = createPumpLaneFreeFeed({
+  priorityMint: () => trader.getState().position?.tokenAddress,
   onTrade: ({ candidate }) => { tradeEvents++; tryCandidate(candidate); },
   onCurve: candidate => tryCandidate(candidate),
   onStatus: status => {
-    if (status.error) { error = status.error; console.error('[Pump Lane free feed]', error); }
-    else if (status.connected) { error = null; console.log('[Pump Lane] Connected to', status.provider); }
+    if (status.warning) console.warn('[Pump Lane token warning]', status.warning);
+    else if (status.error) console.error('[Pump Lane free feed]', status.error);
+    else if (status.connected) console.log('[Pump Lane] Connected to', status.provider);
   }
 });
 
 function getStatus() {
   const feed = freeFeed.status();
   return {
-    running, error: error || feed.error, watched: feed.watched, live: false, mode: 'PAPER',
+    running, error: error || feed.error || portalError, watched: feed.watched, live: false, mode: 'PAPER',
     provider: feed.provider, feedConnected: feed.connected, newTokens, tradeEvents,
-    acceptedCandidates, rejectionCounts: { ...rejectionCounts }, queuedTransactions: feed.queuedTransactions
+    acceptedCandidates, warnings: feed.warnings || [], statusMessage: feed.warnings?.length ? `${feed.warnings.length} token lookup/subscription warning(s); account balances remain recorded` : null, queuedSubscriptions: feed.queuedSubscriptions || 0, rejectionCounts: { ...rejectionCounts }, queuedTransactions: feed.queuedTransactions
   };
 }
 
@@ -92,6 +95,7 @@ function connectPortal() {
     portalSocket = ws;
     ws.addEventListener('open', () => {
       if (!running || portalSocket !== ws) return ws.close();
+      portalError = null;
       ws.send(JSON.stringify({ method: 'subscribeNewToken' })); // PumpPortal's free creation feed only.
       console.log('[Pump Lane] Connected to free new-token feed');
     });
@@ -117,7 +121,7 @@ function connectPortal() {
         void added.then(tryCandidate).catch(e => { error = e.message; console.error('[Pump Lane free token lookup]', error); });
       } catch (e) { error = e.message; console.error('[Pump Lane token feed]', error); }
     });
-    ws.addEventListener('error', () => { if (portalSocket === ws) { error = 'PumpPortal free token-feed WebSocket error'; console.error('[Pump Lane]', error); } });
+    ws.addEventListener('error', () => { if (portalSocket === ws) { portalError = 'PumpPortal free token-feed WebSocket error'; console.error('[Pump Lane]', portalError); } });
     ws.addEventListener('close', () => {
       if (portalSocket !== ws) return;
       portalSocket = null;

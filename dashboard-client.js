@@ -306,7 +306,7 @@
   function renderHome() {
     var rangeTrades=tradesForRange(), m=metrics(rangeTrades);
     var portfolioSystems=comparisonSystems();
-    function currentQuoteAvailable(system) { var label=health(system).label;return n(system.equity)!==null&&label!=='FEED ERROR'&&label!=='STOPPED'; }
+    function currentQuoteAvailable(system) { if(system.id==='pump-lane')return n(system.equity)!==null&&system.account.quoteAvailable===true;var label=health(system).label;return n(system.equity)!==null&&label!=='FEED ERROR'&&label!=='STOPPED'; }
     var equityValues=portfolioSystems.map(function(s){return currentQuoteAvailable(s)?n(s.equity):null;});
     var equity=sumKnown(equityValues);
     var missingEquity=portfolioSystems.filter(function(s){return !currentQuoteAvailable(s);}).map(function(s){var quote=n(s.equity)!==null;return (s.label||s.name)+(quote?' ('+health(s).label.toLowerCase()+')':' (no current quote)');});

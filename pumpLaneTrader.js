@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
-const strategy = 'Pump Lane PAPER · final stretch 55–82% · TP40%: sell 40%, TP90%: sell 30% · 15% trail after TP1 · −18% stop · 18-minute timeout below +12% · 0.75% slippage per side';
+const strategy = 'Pump Lane PAPER · curve 15–90% · TP40%: sell 40%, TP90%: sell 30% · 15% trail after TP1 · −18% stop · 18-minute timeout below +12% · 0.75% slippage per side';
 const positive = (v, fallback) => Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : fallback;
 const defaultFile = () => path.join(path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DATA_DIR || __dirname), 'pump-lane-state.json');
 function createPumpLaneTrader(file = defaultFile(), io = fs) {
@@ -32,15 +32,16 @@ function createPumpLaneTrader(file = defaultFile(), io = fs) {
     const size = Math.min(positive(process.env.PUMP_LANE_TRADE_USD, 10), state.cashBalance);
     if (!mint || !Number.isFinite(price) || price <= 0 || size <= 0) return { success: false, error: 'Invalid buy' };
     const next = structuredClone(state);
-    const p = { id: randomUUID(), tokenAddress: mint, symbol: c.symbol, entryPrice: price, currentPrice: Number(c.priceUsd), highestPrice: Number(c.priceUsd), quantity: size / price, originalQuantity: size / price, originalCostUsd: size, entryAt: now, entryTime: new Date(now).toISOString(), tp1Done: false, tp2Done: false, proceedsUsd: 0 };
+    const p = { id: randomUUID(), tokenAddress: mint, symbol: c.symbol, entryPrice: price, currentPrice: Number(c.priceUsd), highestPrice: Number(c.priceUsd), quantity: size / price, originalQuantity: size / price, originalCostUsd: size, entryAt: now, lastQuoteAt: Number(c.lastQuoteAt) || now, entryTime: new Date(now).toISOString(), tp1Done: false, tp2Done: false, proceedsUsd: 0 };
     next.cashBalance -= size; next.position = p; next.boughtMints.push(mint);
     next.history.unshift({ ...p, type: 'BUY', time: p.entryTime, amountUsd: size, mode: 'PAPER' });
     commit(next); return { success: true, position: structuredClone(p) };
   }
-  function decideExit(priceUsd, now = Date.now()) {
+  function decideExit(priceUsd, now = Date.now(), quoteAt = now) {
     const price = Number(priceUsd), p = state.position;
     if (!p || !Number.isFinite(price) || price <= 0) return null;
     const next = structuredClone(state), pos = next.position;
+    pos.lastQuoteAt = Number(quoteAt) || pos.lastQuoteAt || pos.entryAt;
     pos.currentPrice = price; pos.highestPrice = Math.max(pos.highestPrice, price);
     const gain = (price / pos.entryPrice - 1) * 100;
     const fills = [];
@@ -66,10 +67,30 @@ function createPumpLaneTrader(file = defaultFile(), io = fs) {
     }
     commit(next); return fills;
   }
-  function dashboard() {
+  function dashboard(now = Date.now()) {
     const p = state.position;
-    const equity = state.cashBalance + (p ? p.quantity * p.currentPrice * 0.9925 : 0);
-    return { strategy, startingBalance: state.startingBalance, cashBalance: state.cashBalance, equity, totalPnl: equity - state.startingBalance, totalPnlPercent: (equity / state.startingBalance - 1) * 100, completedTrades: state.completedTradeRecords.length, completedTradeRecords: structuredClone(state.completedTradeRecords), history: structuredClone(state.history), livePositions: p ? [{ ...structuredClone(p), priceUsd: p.currentPrice, currentValue: p.quantity * p.currentPrice * 0.9925, amountInvestedUsd: p.originalCostUsd * p.quantity / p.originalQuantity }] : [], lastScanAt: state.lastScanAt };
+    const lastQuoteAt = p ? Number(p.lastQuoteAt || p.entryAt) : null;
+    const quoteAvailable = !p || (Number.isFinite(lastQuoteAt) && now - lastQuoteAt <= 120000);
+    const value = p && quoteAvailable ? p.quantity * p.currentPrice * 0.9925 : null;
+    const equity = p ? quoteAvailable ? state.cashBalance + value : null : state.cashBalance;
+    const basis = p ? p.originalCostUsd * p.quantity / p.originalQuantity : 0;
+    const pnl = p && value !== null ? value - basis : null;
+    const livePositions = p ? [{
+      ...structuredClone(p), priceUsd: quoteAvailable ? p.currentPrice : null,
+      currentPrice: quoteAvailable ? p.currentPrice : null, currentValue: value,
+      amountInvestedUsd: basis, pnl, pnlUsd: pnl,
+      pnlPercent: pnl !== null && basis > 0 ? pnl / basis * 100 : null,
+      holdTimeMs: Math.max(0, now - p.entryAt), quoteAvailable,
+      lastQuoteAt: new Date(lastQuoteAt).toISOString()
+    }] : [];
+    return {
+      strategy, startingBalance: state.startingBalance, cashBalance: state.cashBalance, equity,
+      totalPnl: equity === null ? null : equity - state.startingBalance,
+      totalPnlPercent: equity === null ? null : (equity / state.startingBalance - 1) * 100,
+      completedTrades: state.completedTradeRecords.length, completedTradeRecords: structuredClone(state.completedTradeRecords),
+      history: structuredClone(state.history), livePositions, lastScanAt: state.lastScanAt,
+      quoteAvailable, lastQuoteAt: lastQuoteAt ? new Date(lastQuoteAt).toISOString() : null
+    };
   }
   function recordRejection(candidate, reason) { const next = structuredClone(state); next.rejections.unshift({ mint: candidate.mint || candidate.tokenAddress, reason, time: new Date().toISOString() }); next.rejections = next.rejections.slice(0, 200); commit(next); }
   function touchScan() { const next = structuredClone(state); next.lastScanAt = new Date().toISOString(); commit(next); }
