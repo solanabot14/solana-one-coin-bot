@@ -55,7 +55,7 @@ test("rejects movers beyond the 35% chase cap",()=>{
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
-test("new positions sell 70% at +5% and the remaining 30% at +20%",async()=>{
+test("new positions sell 70% at +5%, 20% at +8%, and trail the final 10% by 8%",async()=>{
   const {bot,dir}=fixture();
   try{
     bot.start();
@@ -64,7 +64,7 @@ test("new positions sell 70% at +5% and the remaining 30% at +20%",async()=>{
     const originalQuantity=p.originalQuantity;
     assert.ok(p.notionalUsd >= 200 * 0.05 && p.notionalUsd <= 200 * 0.10);
     assert.equal(p.hardStopPercent,2.0);
-    const prices=[p.entryPrice*1.05,p.entryPrice*1.201];
+    const prices=[p.entryPrice*1.05,p.entryPrice*1.081,p.entryPrice*1.20,p.entryPrice*1.10];
     bot.stop();
     const saved=bot.getState(); saved.running=true; fs.writeFileSync(path.join(dir,"state.json"),JSON.stringify(saved));
     let ix=0;
@@ -75,8 +75,13 @@ test("new positions sell 70% at +5% and the remaining 30% at +20%",async()=>{
     assert.ok(Math.abs(p.quantity/p.originalQuantity-0.3)<1e-8);
     await b.monitorOnce();
     p=b.getState().openPositions[0];
+    assert.equal(p.tp2Done,true);
+    assert.ok(Math.abs(p.quantity/p.originalQuantity-0.1)<1e-8);
+    await b.monitorOnce();
+    await b.monitorOnce();
     assert.equal(b.getState().openPositions.length,0);
-    assert.equal(b.getState().history.filter(row=>row.type==="SELL").length,2);
+    assert.equal(b.getState().history.filter(row=>row.type==="SELL").length,3);
+    assert.match(b.getState().history[0].reason,/RUNNER TRAILING STOP 8%/);
     assert.ok(Math.abs(b.getState().history.filter(row=>row.type==="SELL").reduce((sum,row)=>sum+row.quantity,0)/originalQuantity-1)<1e-8);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
