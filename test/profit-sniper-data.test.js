@@ -170,6 +170,35 @@ test("GoPlus missing index data falls back to Birdeye security and exact-pool co
     else process.env.BIRDEYE_API_KEY = oldKey;
   }
 });
+test("GoPlus rate limits fall back to Birdeye instead of pausing all candidate security checks", async () => {
+  const oldKey = process.env.BIRDEYE_API_KEY;
+  process.env.BIRDEYE_API_KEY = "test-key";
+  try {
+    const mint = "mint-A", requested = [];
+    const client = createSniperDataClient({ provider: "goplus", httpGet: async url => {
+      requested.push(url);
+      if (url.includes("gopluslabs")) {
+        const error = new Error("rate limited"); error.response = { status: 429, headers: {} }; throw error;
+      }
+      if (url.includes("token_security")) return { data: { success: true, data: {
+        ownerAddress: null, freezeable: false, top10HolderPercent: 10
+      } }, headers: {} };
+      if (url.includes("/defi/v2/markets")) return { data: { success: true, data: { items: [
+        { address: "pool-A", liquidity: 30000 }
+      ] } }, headers: {} };
+      return { data: { success: true, data: { items: Array.from({ length: 10 }, (_, i) => ({
+        address: "acct-" + i, owner: "owner-" + i, percentage: 0.01
+      })) } }, headers: {} };
+    } });
+    const result = await client.getReport(mint, undefined, { pairAddress: "pool-A", liquidityUsd: 30000 });
+    assert.equal(result.data.provider, "birdeye");
+    assert.equal(result.data.markets[0].pubkey, "pool-A");
+    assert.equal(requested.length, 4);
+  } finally {
+    if (oldKey === undefined) delete process.env.BIRDEYE_API_KEY;
+    else process.env.BIRDEYE_API_KEY = oldKey;
+  }
+});
 test("only verified token reserve accounts and the incinerator are excluded", () => {
   const r = { mint: "mint-A", markets: [{ mintA: "mint-A", liquidityA: "vault",
     liquidityAAccount: { mint: "mint-A", owner: "pool", delegate: null, closeAuthority: null } }],
