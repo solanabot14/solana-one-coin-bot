@@ -133,6 +133,43 @@ test("GoPlus client sends mint lookup and rejects wrong-mint or missing result r
   const bad = createSniperDataClient({ provider: "goplus", httpGet: async () => ({ data: { code: 1, result: {} } }) });
   await assert.rejects(bad.getReport(mint), /SECURITY_DATA_PENDING/);
 });
+test("GoPlus missing index data falls back to Birdeye security and exact-pool context", async () => {
+  const oldKey = process.env.BIRDEYE_API_KEY;
+  process.env.BIRDEYE_API_KEY = "test-key";
+  try {
+    const mint = "mint-A", seen = [];
+    const client = createSniperDataClient({ provider: "goplus", httpGet: async (url, options) => {
+      seen.push({ url, options });
+      if (url.includes("gopluslabs")) return { data: { code: 1, result: { [mint]: {
+        mintable: { status: "0" }, freezable: { status: "0" }
+      } } }, headers: {} };
+      if (url.includes("token_security")) return { data: { success: true, data: {
+        ownerAddress: null, freezeable: false, freezeAuthority: null,
+        top10HolderPercent: 24, top10UserPercent: 27, creatorPercentage: 2
+      } }, headers: {} };
+      if (url.includes("/defi/v2/markets")) return { data: { success: true, data: { items: [
+        { address: "pool-A", liquidity: 30000 }
+      ] } }, headers: {} };
+      return { data: { success: true, data: { items: [
+        { address: "acct-1", owner: "owner-1", percentage: 0.08 },
+        { address: "acct-2", owner: "owner-2", percentage: 0.06 }
+      ] } }, headers: {} };
+    } });
+    const result = await client.getReport(mint, undefined, { pairAddress: "pool-A", liquidityUsd: 30000 });
+    assert.equal(result.data.provider, "birdeye");
+    assert.equal(result.data.token.mintAuthority, null);
+    assert.equal(result.data.markets[0].pubkey, "pool-A");
+    assert.equal(result.data.markets[0].lp.providerTvlUSD, 30000);
+    assert.equal(result.data.topHolders[0].pct, 8);
+    assert.equal(result.data.securitySummary.top10HolderPercent, 27);
+    assert.equal(seen.length, 4);
+    assert.ok(seen.slice(1).every(({ options }) => options.headers["x-chain"] === "solana" &&
+      options.headers["X-API-KEY"] === "test-key"));
+  } finally {
+    if (oldKey === undefined) delete process.env.BIRDEYE_API_KEY;
+    else process.env.BIRDEYE_API_KEY = oldKey;
+  }
+});
 test("only verified token reserve accounts and the incinerator are excluded", () => {
   const r = { mint: "mint-A", markets: [{ mintA: "mint-A", liquidityA: "vault",
     liquidityAAccount: { mint: "mint-A", owner: "pool", delegate: null, closeAuthority: null } }],
