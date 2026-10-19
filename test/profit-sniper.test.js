@@ -63,13 +63,16 @@ test("trade sizing uses 10% of equity on every trade with a $20 minimum", () => 
   assert.equal(getBuySizing({ cashBalance: 250, positions: [], history: [{type: "BUY"}] }).amountInvested, 25);
   assert.equal(getBuySizing({ cashBalance: 400, positions: [], history: [] }).amountInvested, 40);
 });
-test("Sniper sells 90% at +20% and trails the final 10% by 10%", () => {
+test("Sniper sells 60% at +15%, 30% more at +20%, and trails the final 10% by 8%", () => {
   const position = { entryPrice: 100, highestPrice: 100 };
-  assert.equal(constants.TAKE_PROFIT_1_PERCENT, 20);
-  assert.equal(constants.TAKE_PROFIT_1_SELL_PERCENT, 90);
-  assert.equal(constants.TAKE_PROFIT_2_PERCENT, null);
+  assert.equal(constants.HARD_STOP_PERCENT, -5);
+  assert.equal(constants.TAKE_PROFIT_1_PERCENT, 15);
+  assert.equal(constants.TAKE_PROFIT_1_SELL_PERCENT, 60);
+  assert.equal(constants.TAKE_PROFIT_2_PERCENT, 20);
+  assert.equal(constants.TAKE_PROFIT_2_SELL_PERCENT, 30);
   assert.equal(constants.TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT, 90);
-  assert.equal(constants.TRAILING_STOP_PERCENT, 10);
+  assert.equal(100 - constants.TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT, 10);
+  assert.equal(constants.TRAILING_STOP_PERCENT, 8);
   assert.deepEqual(chooseExit({ position: { entryPrice: 100, entryLiquidityUsd: 20000 },
     currentPrice: 105, freshData: { liquidityUsd: 14999 } }), { percent: 100, reason: "EMERGENCY EXIT: POOL LIQUIDITY DOWN 25%" });
   assert.deepEqual(chooseExit({ position: { entryPrice: 1, quantity: 100 }, currentPrice: 100,
@@ -78,14 +81,18 @@ test("Sniper sells 90% at +20% and trails the final 10% by 10%", () => {
     { percent: 100, writeOff: true, reason: "EMERGENCY WRITE-OFF: NO EXECUTABLE LIQUIDITY" });
   assert.deepEqual(chooseExit({ position, currentPrice: 95, exitProgress: { soldPercent: 0 } }),
     { percent: 100, triggerPrice: 95, reason: "HARD STOP -5%" });
-  const tp1 = chooseExit({ position, currentPrice: 120, exitProgress: { soldPercent: 0 } });
-  assert.equal(tp1.targetOriginalPositionPercent, 90);
+  const tp1 = chooseExit({ position, currentPrice: 115, exitProgress: { soldPercent: 0 } });
+  assert.equal(tp1.targetOriginalPositionPercent, 60);
   assert.equal(tp1.takeProfit, "firstTakeProfitDone");
-  assert.ok(Math.abs(tp1.triggerPrice - 120) < 1e-10);
+  assert.ok(Math.abs(tp1.triggerPrice - 115) < 1e-10);
+  const tp2 = chooseExit({ position, currentPrice: 120, exitProgress: { soldPercent: 60 } });
+  assert.equal(tp2.targetOriginalPositionPercent, 90);
+  assert.equal(tp2.takeProfit, "secondTakeProfitDone");
+  assert.ok(Math.abs(tp2.triggerPrice - 120) < 1e-10);
   assert.equal(chooseExit({ position, currentPrice: 125, exitProgress: { soldPercent: 90 } }), null);
-  const trail = chooseExit({ position: { ...position, highestPrice: 160 }, currentPrice: 143.9, exitProgress: { soldPercent: 90 } });
-  assert.equal(trail.reason, "TRAILING STOP -10% FROM HIGH");
-  assert.ok(Math.abs(trail.triggerPrice - 144) < 1e-10);
+  const trail = chooseExit({ position: { ...position, highestPrice: 160 }, currentPrice: 147.1, exitProgress: { soldPercent: 90 } });
+  assert.equal(trail.reason, "TRAILING STOP -8% FROM HIGH");
+  assert.ok(Math.abs(trail.triggerPrice - 147.2) < 1e-10);
 });
 test("age rejection is distinguishable for watchlist tracking", () => {
   assert.ok(getMomentumFailureReasons(candidate({ tokenAddress: "EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J" })).includes("blockedTokenAddress"));
