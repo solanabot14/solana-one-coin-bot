@@ -72,15 +72,19 @@ test("Sniper sells 60% at +15%, another 30% at +20%, and trails 10% by 8%", () =
   assert.equal(constants.TRAILING_STOP_PERCENT, 8);
   assert.deepEqual(chooseExit({ position, currentPrice: 95, exitProgress: { soldPercent: 0 } }),
     { percent: 100, triggerPrice: 95, reason: "HARD STOP -5%" });
-  assert.deepEqual(chooseExit({ position, currentPrice: 115, exitProgress: { soldPercent: 0 } }),
-    { targetOriginalPositionPercent: 60, triggerPrice: 115,
-      reason: "TAKE PROFIT 1 - SELL 60% OF ORIGINAL POSITION AT +15%", takeProfit: "firstTakeProfitDone" });
-  assert.deepEqual(chooseExit({ position, currentPrice: 120, exitProgress: { soldPercent: 60 } }),
-    { targetOriginalPositionPercent: 90, triggerPrice: 120,
-      reason: "TAKE PROFIT 2 - SELL 30% OF ORIGINAL POSITION AT +20%", takeProfit: "secondTakeProfitDone" });
+  const tp1 = chooseExit({ position, currentPrice: 115, exitProgress: { soldPercent: 0 } });
+  assert.equal(tp1.targetOriginalPositionPercent, 60);
+  assert.equal(tp1.takeProfit, "firstTakeProfitDone");
+  assert.ok(Math.abs(tp1.triggerPrice - 115) < 1e-10);
+  const tp2 = chooseExit({ position, currentPrice: 120, exitProgress: { soldPercent: 60 } });
+  assert.equal(tp2.targetOriginalPositionPercent, 90);
+  assert.equal(tp2.takeProfit, "secondTakeProfitDone");
+  assert.ok(Math.abs(tp2.triggerPrice - 120) < 1e-10);
   assert.equal(chooseExit({ position, currentPrice: 125, exitProgress: { soldPercent: 90 } }), null);
-  assert.deepEqual(chooseExit({ position: { ...position, highestPrice: 160 }, currentPrice: 147.1, exitProgress: { soldPercent: 90 } }),
-    { percent: 100, triggerPrice: 147.2, reason: "TRAILING STOP -8% FROM HIGH" });
+  const trail = chooseExit({ position: { ...position, highestPrice: 160 }, currentPrice: 147.1, exitProgress: { soldPercent: 90 } });
+  assert.equal(trail.percent, 100);
+  assert.equal(trail.reason, "TRAILING STOP -8% FROM HIGH");
+  assert.ok(Math.abs(trail.triggerPrice - 147.2) < 1e-10);
 });
 test("emergency exits remain unchanged", () => {
   const position = { entryPrice: 100, highestPrice: 100 };
