@@ -15,13 +15,14 @@ function number(value) {
 function poolLock(report, coin, now = Date.now()) {
   if (!report || report.mint !== coin.tokenAddress) return { allowed: false, reason: "REPORT_MINT_MISMATCH" };
   const markets = (report.markets || []).filter(m => m.pubkey === coin.pairAddress &&
-    [m.mintA, m.mintB].includes(coin.tokenAddress));
+    (m.provider === "goplus" || [m.mintA, m.mintB].includes(coin.tokenAddress)));
   if (markets.length !== 1) return { allowed: false, reason: "EXACT_POOL_LOCK_UNAVAILABLE" };
   const lp = markets[0].lp;
   const lockedPercent = number(lp?.lpLockedPct);
+  const providerTvl = markets[0].provider === "goplus" ? number(lp?.providerTvlUSD) : NaN;
   const baseUsd = number(lp?.baseUSD), quoteUsd = number(lp?.quoteUSD);
-  const liquidityUsd = baseUsd + quoteUsd;
-  if (!(baseUsd > 0) || !(quoteUsd > 0) || !Number.isFinite(liquidityUsd) ||
+  const liquidityUsd = Number.isFinite(providerTvl) ? providerTvl : baseUsd + quoteUsd;
+  if ((!Number.isFinite(providerTvl) && (!(baseUsd > 0) || !(quoteUsd > 0))) || !Number.isFinite(liquidityUsd) ||
       liquidityUsd < CONFIG.MIN_LIQUIDITY_USD)
     return { allowed: false, lockedPercent, reason: "EXACT_POOL_RESERVES_TOO_LOW" };
   const safetyFailure = evaluatePoolReport(report, coin, Number(coin.liquidityUsd) || liquidityUsd, now);
@@ -35,12 +36,13 @@ function poolLock(report, coin, now = Date.now()) {
 
 function createEntryGuard({
   httpGet,
+  securityProvider = process.env.SNIPER_SECURITY_PROVIDER || (httpGet ? "rugcheck" : "goplus"),
   verifyExecution = require("./profitSniperExecutionQuote").createExecutionVerifier(),
   clock = Date.now,
   wait = (ms, signal) => sleep(ms, undefined, { signal })
 } = {}) {
   const reportClient = httpGet
-    ? require("./profitSniperData").createSniperDataClient({ httpGet, clock, wait })
+    ? require("./profitSniperData").createSniperDataClient({ httpGet, clock, wait, provider: securityProvider })
     : require("./profitSniperData").sniperData;
   const get = httpGet || ((...args) => require("axios").get(...args));
   let lastCheck = null;
