@@ -60,23 +60,37 @@ test("trade sizing always compounds 10% of capital with a $10 minimum", () => {
   assert.deepEqual(getBuySizing({ cashBalance: 400, positions: [], history: [] }),
     { amountInvested: 40, compoundRate: 0.10 });
 });
-test("exit rules remain unchanged", () => {
+test("Sniper sells 60% at +15%, another 30% at +20%, and trails 10% by 8%", () => {
+  const position = { entryPrice: 100, highestPrice: 100 };
+  assert.equal(constants.HARD_STOP_PERCENT, -5);
+  assert.equal(constants.TAKE_PROFIT_1_PERCENT, 15);
+  assert.equal(constants.TAKE_PROFIT_1_SELL_PERCENT, 60);
+  assert.equal(constants.TAKE_PROFIT_2_PERCENT, 20);
+  assert.equal(constants.TAKE_PROFIT_2_SELL_PERCENT, 30);
+  assert.equal(constants.TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT, 90);
+  assert.equal(100 - constants.TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT, 10);
+  assert.equal(constants.TRAILING_STOP_PERCENT, 8);
+  assert.deepEqual(chooseExit({ position, currentPrice: 95, exitProgress: { soldPercent: 0 } }),
+    { percent: 100, triggerPrice: 95, reason: "HARD STOP -5%" });
+  assert.deepEqual(chooseExit({ position, currentPrice: 115, exitProgress: { soldPercent: 0 } }),
+    { targetOriginalPositionPercent: 60, triggerPrice: 115,
+      reason: "TAKE PROFIT 1 - SELL 60% OF ORIGINAL POSITION AT +15%", takeProfit: "firstTakeProfitDone" });
+  assert.deepEqual(chooseExit({ position, currentPrice: 120, exitProgress: { soldPercent: 60 } }),
+    { targetOriginalPositionPercent: 90, triggerPrice: 120,
+      reason: "TAKE PROFIT 2 - SELL 30% OF ORIGINAL POSITION AT +20%", takeProfit: "secondTakeProfitDone" });
+  assert.equal(chooseExit({ position, currentPrice: 125, exitProgress: { soldPercent: 90 } }), null);
+  assert.deepEqual(chooseExit({ position: { ...position, highestPrice: 160 }, currentPrice: 147.1, exitProgress: { soldPercent: 90 } }),
+    { percent: 100, triggerPrice: 147.2, reason: "TRAILING STOP -8% FROM HIGH" });
+});
+test("emergency exits remain unchanged", () => {
   const position = { entryPrice: 100, highestPrice: 100 };
   assert.deepEqual(chooseExit({ position: { entryPrice: 100, entryLiquidityUsd: 20000 },
     currentPrice: 105, freshData: { liquidityUsd: 14999 } }), { percent: 100, reason: "EMERGENCY EXIT: POOL LIQUIDITY DOWN 25%" });
   assert.deepEqual(chooseExit({ position: { entryPrice: 1, quantity: 100 }, currentPrice: 100,
     freshData: { liquidityUsd: 15000 } }), { percent: 100, writeOff: true, reason: "UNEXECUTABLE QUOTE: POSITION EXCEEDS POOL CAPACITY" });
-  assert.equal(chooseExit({ position: { ...position, highestPrice: 160 }, currentPrice: 141, exitProgress: { soldPercent: 80 } }), null);
   assert.deepEqual(chooseExit({ position: { entryPrice: 100 }, currentPrice: 1, freshData: { liquidityUsd: 1 } }),
     { percent: 100, writeOff: true, reason: "EMERGENCY WRITE-OFF: NO EXECUTABLE LIQUIDITY" });
-  assert.deepEqual(chooseExit({ position, currentPrice: 92, exitProgress: { soldPercent: 0 } }), { percent: 100, reason: "HARD STOP -8%" });
   assert.equal(chooseExit({ position, currentPrice: 114, exitProgress: { soldPercent: 0 } }), null);
-  assert.deepEqual(chooseExit({ position, currentPrice: 115, exitProgress: { soldPercent: 0 } }),
-    { targetOriginalPositionPercent: 40, reason: "TAKE PROFIT 1 - SELL 40% OF ORIGINAL POSITION AT +15%", takeProfit: "firstTakeProfitDone" });
-  assert.deepEqual(chooseExit({ position, currentPrice: 125, exitProgress: { soldPercent: 40 } }),
-    { targetOriginalPositionPercent: 80, reason: "TAKE PROFIT 2 - SELL ANOTHER 40% OF ORIGINAL POSITION AT +25%", takeProfit: "secondTakeProfitDone" });
-  assert.deepEqual(chooseExit({ position: { ...position, highestPrice: 160 }, currentPrice: 140.7, exitProgress: { soldPercent: 80 } }),
-    { percent: 100, reason: "TRAILING STOP -12% FROM HIGH" });
 });
 test("age rejection is distinguishable for watchlist tracking", () => {
   assert.ok(getMomentumFailureReasons(candidate({ tokenAddress: "EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J" })).includes("blockedTokenAddress"));

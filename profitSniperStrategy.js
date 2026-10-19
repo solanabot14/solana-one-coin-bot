@@ -5,16 +5,16 @@ const MIN_LIQUIDITY_USD = CONFIG.MIN_LIQUIDITY_USD;
 const MIN_VOLUME_5M_USD = CONFIG.MIN_VOLUME_5M_USD;
 const MIN_TRANSACTIONS_5M = CONFIG.MIN_TRANSACTIONS_5M;
 const MIN_BUY_RATIO_5M = CONFIG.MIN_BUY_SHARE_5M;
-const HARD_STOP_PERCENT = -8;
+const HARD_STOP_PERCENT = -5;
 const MIN_EXIT_LIQUIDITY_USD = 1000;
 const MAX_EXIT_LIQUIDITY_DRAWDOWN = 0.25;
 const BLOCKED_TOKEN_ADDRESSES = new Set(["EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J"]);
 const TAKE_PROFIT_1_PERCENT = 15;
-const TAKE_PROFIT_1_SELL_PERCENT = 40;
-const TAKE_PROFIT_2_PERCENT = 25;
-const TAKE_PROFIT_2_SELL_PERCENT = (40 / 60) * 100;
-const TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT = 80;
-const TRAILING_STOP_PERCENT = 12;
+const TAKE_PROFIT_1_SELL_PERCENT = 60;
+const TAKE_PROFIT_2_PERCENT = 20;
+const TAKE_PROFIT_2_SELL_PERCENT = 30;
+const TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT = TAKE_PROFIT_1_SELL_PERCENT + TAKE_PROFIT_2_SELL_PERCENT;
+const TRAILING_STOP_PERCENT = 8;
 const PROFIT_FLOOR_AFTER_TP1_PERCENT = 0;
 const COMPOUND_RATES = [0.10];
 const MINIMUM_TRADE_USD = 10;
@@ -97,17 +97,19 @@ function chooseExit({ position, currentPrice, freshData, exitProgress }) {
   const profitPercent = (price - entryPrice) / entryPrice * 100;
   const soldPercent = Number.isFinite(Number(exitProgress?.soldPercent))
     ? Number(exitProgress.soldPercent)
-    : (position.secondTakeProfitDone ? 80 : position.firstTakeProfitDone ? 40 : 0);
+    : (position.secondTakeProfitDone ? TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT : position.firstTakeProfitDone ? TAKE_PROFIT_1_SELL_PERCENT : 0);
   if (soldPercent + 1e-6 >= TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT) {
     const high = Number(position.highestPrice);
     const pullback = high > 0 ? (high - price) / high * 100 : 0;
-    return pullback >= TRAILING_STOP_PERCENT ? { percent: 100, reason: "TRAILING STOP -12% FROM HIGH" } : null;
+    return pullback >= TRAILING_STOP_PERCENT ? { percent: 100, triggerPrice: high * (1 - TRAILING_STOP_PERCENT / 100), reason: `TRAILING STOP -${TRAILING_STOP_PERCENT}% FROM HIGH` } : null;
   }
-  if (profitPercent <= HARD_STOP_PERCENT) return { percent: 100, reason: "HARD STOP -8%" };
+  if (profitPercent <= HARD_STOP_PERCENT) return { percent: 100, triggerPrice: entryPrice * (1 + HARD_STOP_PERCENT / 100), reason: "HARD STOP -5%" };
   if (soldPercent + 1e-6 < TAKE_PROFIT_1_SELL_PERCENT && profitPercent + 1e-9 >= TAKE_PROFIT_1_PERCENT)
-    return { targetOriginalPositionPercent: 40, reason: "TAKE PROFIT 1 - SELL 40% OF ORIGINAL POSITION AT +15%", takeProfit: "firstTakeProfitDone" };
-  if (soldPercent + 1e-6 < TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT && profitPercent + 1e-9 >= TAKE_PROFIT_2_PERCENT)
-    return { targetOriginalPositionPercent: 80, reason: "TAKE PROFIT 2 - SELL ANOTHER 40% OF ORIGINAL POSITION AT +25%", takeProfit: "secondTakeProfitDone" };
+    return { targetOriginalPositionPercent: TAKE_PROFIT_1_SELL_PERCENT, triggerPrice: entryPrice * (1 + TAKE_PROFIT_1_PERCENT / 100), reason: "TAKE PROFIT 1 - SELL 60% OF ORIGINAL POSITION AT +15%", takeProfit: "firstTakeProfitDone" };
+  if (soldPercent + 1e-6 >= TAKE_PROFIT_1_SELL_PERCENT &&
+      soldPercent + 1e-6 < TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT &&
+      profitPercent + 1e-9 >= TAKE_PROFIT_2_PERCENT)
+    return { targetOriginalPositionPercent: TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT, triggerPrice: entryPrice * (1 + TAKE_PROFIT_2_PERCENT / 100), reason: "TAKE PROFIT 2 - SELL 30% OF ORIGINAL POSITION AT +20%", takeProfit: "secondTakeProfitDone" };
   return null;
 }
 
