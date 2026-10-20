@@ -23,6 +23,7 @@ const SCAN_INTERVAL_MS = CONFIG.WATCHLIST_RECHECK_MS;
 const POSITION_MONITOR_MS = 2000;
 const MINIMUM_LIQUIDITY_LOCK_PERCENT = CONFIG.MIN_LP_LOCK_PERCENT;
 const MAX_PAIR_AGE_MINUTES = CONFIG.MAX_CANDIDATE_AGE_MINUTES;
+const ENTRY_REENTRY_CHANGE_ACTIVATED_AT = "2026-10-20T18:43:00-04:00";
 const prebuy = require("./profitSniperPrebuy").createEntryGuard();
 
 function statePath(fileName = "profitSniperTradingData.json") {
@@ -45,6 +46,22 @@ function estimateExecutionCosts({ amountUsd, liquidityUsd }) {
 }
 
 const { qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit, selectUniqueMintCandidates } = strategy;
+
+function isConfirmedRecoveryReentry(coin) {
+  const pattern = coin?.momentumPattern;
+  const buys5m = Number(coin?.buys5m) || 0;
+  const sells5m = Number(coin?.sells5m) || 0;
+  const transactions5m = buys5m + sells5m;
+  const buyShare = transactions5m > 0 ? buys5m / transactions5m : 0;
+  const retracePercent = Number(pattern?.retracePercent);
+  return pattern?.ready === true &&
+    pattern?.entryRoute === "local_recovery" &&
+    pattern?.recovering === true &&
+    pattern?.pullbackObserved === true &&
+    pattern?.liquidityRetained === true &&
+    Number.isFinite(retracePercent) && retracePercent >= CONFIG.RECOVERY_REENTRY_MIN_PULLBACK_PERCENT &&
+    buyShare >= CONFIG.RECOVERY_REENTRY_MIN_BUY_SHARE;
+}
 
 let lastEntryDecision = null;
 const finalEntryCounts = { passed: 0, rejected: 0 };
@@ -162,7 +179,11 @@ async function discoverCandidates(options = {}) {
   const logs = [];
   for (const item of candidates) {
     const { coin, key, ageMs, wasWatchlisted } = item;
+    const confirmedRecoveryReentry = isConfirmedRecoveryReentry(coin);
     let failures = [...item.failures];
+    if (confirmedRecoveryReentry) {
+      failures = failures.filter(reason => reason !== "overextendedMomentum5m" && reason !== "overextendedMomentum1h");
+    }
     // Observe the pool during momentum warmup, so both independent windows
     // mature together. Entry still requires current momentum and stable reserves.
     const poolStability = entryGuard.observe(coin, now);
@@ -176,8 +197,9 @@ async function discoverCandidates(options = {}) {
         failures = [...new Set([...failures, "watchlistLiquidityDroppedOver30Percent"])];
       }
     }
-    if (stoppedMints.has(coin.tokenAddress)) failures.push("stopLossReentryBlocked");
-    if ((buysByMint.get(coin.tokenAddress) || 0) >= CONFIG.MAX_TOKEN_ATTEMPTS) failures.push("maxTokenAttempts");
+    if (stoppedMints.has(coin.tokenAddress) && !confirmedRecoveryReentry) failures.push("stopLossReentryBlocked");
+    if ((buysByMint.get(coin.tokenAddress) || 0) >= CONFIG.MAX_TOKEN_ATTEMPTS && !confirmedRecoveryReentry)
+      failures.push("maxTokenAttempts");
     if (!failures.length) {
       if (!poolStability.ready) failures.push("poolStability");
     }
@@ -219,6 +241,7 @@ async function discoverCandidates(options = {}) {
         ready: !!pattern.ready,
         reason: pattern.reason || null
       },
+      confirmedRecoveryReentry,
       fromAgeWatchlist: wasWatchlisted,
       fromRecoveryWatchlist: !!coin.recoveryWatchlistRecheck,
       reason: failures.length ? [...new Set(failures)].join(",") : "entry_candidate_selected"
@@ -228,6 +251,7 @@ async function discoverCandidates(options = {}) {
       entries.push({ ...coin, signal: "ORDER FLOW BUY",
         reasons: [...(coin.reasons || []), "Direct Sniper entry gates passed",
           "CONFIRMED ACTIVITY ENTRY: " + (coin.momentumPattern?.entryRoute || "unknown"),
+          ...(confirmedRecoveryReentry ? ["CONFIRMED RECOVERY REENTRY OVERRIDE"] : []),
           ...(wasWatchlisted ? ["AGE WATCHLIST REENTRY"] : []),
           "Exact identity: Solana mint " + coin.tokenAddress + "; pool " + coin.pairAddress] });
     }
@@ -412,7 +436,9 @@ function getStatus() {
       finalEntryCounts: { ...finalEntryCounts },
       lastEntryDecision,
       reentryPolicy: { inheritedV31FilterEnabled: false, maximumTokenAttempts: CONFIG.MAX_TOKEN_ATTEMPTS,
-        stopLossReentryBlocked: true, openMintDuplicatesBlocked: true },
+        stopLossReentryBlocked: true, confirmedLocalRecoveryOverride: true,
+        confirmedRecoveryBypassesAttemptLimit: true, changeActivatedAt: ENTRY_REENTRY_CHANGE_ACTIVATED_AT,
+        openMintDuplicatesBlocked: true },
       poolStability: entryGuard.getStatus(),
       ageWatchlistPending: ageWatchlist.size,
       recoveryWatchlistPending: recoveryWatchlist.size(),
@@ -491,7 +517,6 @@ module.exports = {
     minimumTradeUsd: MINIMUM_TRADE_USD
   }
 };
-
 
 
 
