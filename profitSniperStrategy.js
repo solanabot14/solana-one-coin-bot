@@ -5,7 +5,9 @@ const MIN_LIQUIDITY_USD = CONFIG.MIN_LIQUIDITY_USD;
 const MIN_VOLUME_5M_USD = CONFIG.MIN_VOLUME_5M_USD;
 const MIN_TRANSACTIONS_5M = CONFIG.MIN_TRANSACTIONS_5M;
 const MIN_BUY_RATIO_5M = CONFIG.MIN_BUY_SHARE_5M;
-const HARD_STOP_PERCENT = -5;
+const MAX_ENTRY_MOMENTUM_5M_PERCENT = CONFIG.MAX_ENTRY_MOMENTUM_5M_PERCENT;
+const MAX_ENTRY_MOMENTUM_1H_PERCENT = CONFIG.MAX_ENTRY_MOMENTUM_1H_PERCENT;
+const HARD_STOP_PERCENT = -6;
 const MIN_EXIT_LIQUIDITY_USD = 1000;
 const MAX_EXIT_LIQUIDITY_DRAWDOWN = 0.25;
 const BLOCKED_TOKEN_ADDRESSES = new Set(["EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J"]);
@@ -34,6 +36,7 @@ function getMomentumFailureReasons(coin, now = Date.now()) {
   const transactions5m = buys5m + sells5m;
   const buyRatio = transactions5m > 0 ? buys5m / transactions5m : 0;
   const momentum5m = Number(coin.priceChange5m);
+  const momentum1h = Number(coin.priceChange1h);
 
   const ageValid = Number.isFinite(createdAt) && ageMs >= MIN_PAIR_AGE_MS && ageMs <= MAX_PAIR_AGE_MS;
   if (!ageValid) failures.push("age");
@@ -42,6 +45,10 @@ function getMomentumFailureReasons(coin, now = Date.now()) {
   if (!Number.isFinite(transactions5m) || transactions5m < MIN_TRANSACTIONS_5M) failures.push("transactions5m");
   if (buyRatio < MIN_BUY_RATIO_5M) failures.push("buyRatio5m");
   if (!Number.isFinite(momentum5m)) failures.push("momentum5m");
+  if (Number.isFinite(momentum5m) && momentum5m > MAX_ENTRY_MOMENTUM_5M_PERCENT)
+    failures.push("overextendedMomentum5m");
+  if (Number.isFinite(momentum1h) && momentum1h > MAX_ENTRY_MOMENTUM_1H_PERCENT)
+    failures.push("overextendedMomentum1h");
   if (ageValid && coin.momentumPattern?.ready !== true)
     failures.push("momentumPattern");
   if (coin.momentumPattern?.observedAt !== undefined &&
@@ -110,15 +117,9 @@ function chooseExit({ position, currentPrice, freshData, exitProgress }) {
       ? { percent: 100, triggerPrice: high * (1 - TRAILING_STOP_PERCENT / 100), reason: `TRAILING STOP -${TRAILING_STOP_PERCENT}% FROM HIGH` }
       : null;
   }
-  if (profitPercent <= HARD_STOP_PERCENT)
-    return { percent: 100, triggerPrice: entryPrice * (1 + HARD_STOP_PERCENT / 100), reason: "HARD STOP -5%" };
-  if (soldPercent + 1e-6 < TAKE_PROFIT_1_SELL_PERCENT && profitPercent + 1e-9 >= TAKE_PROFIT_1_PERCENT)
-    return { targetOriginalPositionPercent: TAKE_PROFIT_1_SELL_PERCENT, triggerPrice: entryPrice * (1 + TAKE_PROFIT_1_PERCENT / 100), reason: "TAKE PROFIT 1 - SELL 60% OF ORIGINAL POSITION AT +15%", takeProfit: "firstTakeProfitDone" };
-  if (soldPercent + 1e-6 >= TAKE_PROFIT_1_SELL_PERCENT &&
-      soldPercent + 1e-6 < TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT &&
-      profitPercent + 1e-9 >= TAKE_PROFIT_2_PERCENT)
-    return { targetOriginalPositionPercent: TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT, triggerPrice: entryPrice * (1 + TAKE_PROFIT_2_PERCENT / 100), reason: "TAKE PROFIT 2 - SELL 30% OF ORIGINAL POSITION AT +20%", takeProfit: "secondTakeProfitDone" };
 
+  // Once a trade has reached +8%, never let an ordinary pullback erase the move.
+  // This is checked before the hard stop so an armed winner is treated as a protected-profit exit.
   if (highProfitPercent + 1e-9 >= EARLY_PROFIT_PROTECTION_ACTIVATION_PERCENT &&
       pullbackFromHighPercent + 1e-9 >= EARLY_PROFIT_PROTECTION_PULLBACK_PERCENT) {
     return {
@@ -127,12 +128,21 @@ function chooseExit({ position, currentPrice, freshData, exitProgress }) {
       reason: `EARLY PROFIT PROTECTION -${EARLY_PROFIT_PROTECTION_PULLBACK_PERCENT}% FROM HIGH AFTER +${EARLY_PROFIT_PROTECTION_ACTIVATION_PERCENT}% PEAK`
     };
   }
+
+  if (profitPercent <= HARD_STOP_PERCENT)
+    return { percent: 100, triggerPrice: entryPrice * (1 + HARD_STOP_PERCENT / 100), reason: "HARD STOP -6%" };
+  if (soldPercent + 1e-6 < TAKE_PROFIT_1_SELL_PERCENT && profitPercent + 1e-9 >= TAKE_PROFIT_1_PERCENT)
+    return { targetOriginalPositionPercent: TAKE_PROFIT_1_SELL_PERCENT, triggerPrice: entryPrice * (1 + TAKE_PROFIT_1_PERCENT / 100), reason: "TAKE PROFIT 1 - SELL 60% OF ORIGINAL POSITION AT +15%", takeProfit: "firstTakeProfitDone" };
+  if (soldPercent + 1e-6 >= TAKE_PROFIT_1_SELL_PERCENT &&
+      soldPercent + 1e-6 < TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT &&
+      profitPercent + 1e-9 >= TAKE_PROFIT_2_PERCENT)
+    return { targetOriginalPositionPercent: TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT, triggerPrice: entryPrice * (1 + TAKE_PROFIT_2_PERCENT / 100), reason: "TAKE PROFIT 2 - SELL 30% OF ORIGINAL POSITION AT +20%", takeProfit: "secondTakeProfitDone" };
   return null;
 }
 
 module.exports = {
   constants: { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_5M_USD,
-    MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M,
+    MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M, MAX_ENTRY_MOMENTUM_5M_PERCENT, MAX_ENTRY_MOMENTUM_1H_PERCENT,
     HARD_STOP_PERCENT, MIN_EXIT_LIQUIDITY_USD,
     MAX_EXIT_LIQUIDITY_DRAWDOWN,
     TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
