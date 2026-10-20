@@ -21,7 +21,7 @@ const { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_5M_USD,
   TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
   TAKE_PROFIT_2_SELL_PERCENT, TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT,
   TRAILING_STOP_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD } = constants;
-const MAX_OPEN_POSITIONS = 3;
+const MAX_OPEN_POSITIONS = 1;
 const SCAN_INTERVAL_MS = CONFIG.WATCHLIST_RECHECK_MS;
 const POSITION_MONITOR_MS = 2000;
 const MINIMUM_LIQUIDITY_LOCK_PERCENT = CONFIG.MIN_LP_LOCK_PERCENT;
@@ -49,7 +49,43 @@ function estimateExecutionCosts({ amountUsd, liquidityUsd }) {
 
 const { qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit, selectUniqueMintCandidates } = strategy;
 function chooseSniperExit(options = {}) {
-  return chooseExit({ ...options, estimateExecutionCosts });
+  const position = options.position || {};
+  const currentLiquidity = Number(options.freshData?.liquidityUsd);
+  const entryLiquidity = Number(position.entryLiquidityUsd);
+  if (Number.isFinite(currentLiquidity) && currentLiquidity <= constants.MIN_EXIT_LIQUIDITY_USD)
+    return chooseExit({ ...options, estimateExecutionCosts });
+  if (Number.isFinite(currentLiquidity) && currentLiquidity > constants.MIN_EXIT_LIQUIDITY_USD &&
+      entryLiquidity > 0 && currentLiquidity < entryLiquidity * (1 - CONFIG.WATCHLIST_MAX_LIQUIDITY_DROP))
+    return { percent: 100, reason: "EMERGENCY EXIT: POOL LIQUIDITY DOWN 10%" };
+
+  const standardExit = chooseExit({ ...options, estimateExecutionCosts });
+  if (standardExit) return standardExit;
+
+  const entryTimeMs = Date.parse(position.entryTime);
+  const entryPrice = Number(position.entryPrice);
+  const currentPrice = Number(options.currentPrice);
+  if (!position.firstTakeProfitDone && Number.isFinite(entryTimeMs) && entryPrice > 0 && currentPrice > 0 &&
+      Date.now() - entryTimeMs >= CONFIG.POSITION_TIME_STOP_MS) {
+    const gainPercent = (currentPrice - entryPrice) / entryPrice * 100;
+    if (gainPercent < CONFIG.POSITION_TIME_STOP_MAX_GAIN_PERCENT)
+      return { percent: 100, reason: "TIME STOP: 8 MINUTES OPEN, TP1 NOT FILLED, GAIN UNDER +8%" };
+  }
+  return null;
+}
+
+async function checkProfitSniperLiquidityLock(tokenAddress, options = {}) {
+  const result = await prebuy.checkLiquidityLock(tokenAddress, options);
+  if (!result?.allowed) return result;
+  const createdAt = Number(options.coin?.pairCreatedAt);
+  const ageMs = Date.now() - createdAt;
+  if (Number.isFinite(createdAt) && createdAt > 0 && ageMs >= 0 && ageMs < CONFIG.YOUNG_PAIR_MAX_AGE_MS) {
+    const lockedPercent = Number(result.lockedPercent);
+    if (!Number.isFinite(lockedPercent) || lockedPercent < CONFIG.YOUNG_PAIR_MIN_LP_LOCK_PERCENT) {
+      return { ...result, allowed: false,
+        reason: "YOUNG_PAIR_LP_LOCK_BELOW_80_PERCENT" };
+    }
+  }
+  return result;
 }
 
 let lastEntryDecision = null;
@@ -181,7 +217,7 @@ async function discoverCandidates(options = {}) {
         failures = [...new Set([...failures, "ageWatchlistExpired"])];
       } else if (Number(coin.liquidityUsd) < watch.initialLiquidityUsd * (1 - CONFIG.WATCHLIST_MAX_LIQUIDITY_DROP)) {
         ageWatchlist.delete(key);
-        failures = [...new Set([...failures, "watchlistLiquidityDroppedOver30Percent"])];
+        failures = [...new Set([...failures, "watchlistLiquidityDroppedOver10Percent"])];
       }
     }
     if (stoppedMints.has(coin.tokenAddress)) failures.push("stopLossReentryBlocked");
@@ -333,7 +369,7 @@ const bot = createBot({
   getTokenData: market.getTokenData,
   discoverCandidates,
   notifier: quietNotifier,
-  checkLiquidityLock: prebuy.checkLiquidityLock,
+  checkLiquidityLock: checkProfitSniperLiquidityLock,
   batchPositionPrices: true,
   lockPositionPair: true,
   positionMonitorMs: POSITION_MONITOR_MS,
@@ -518,6 +554,10 @@ module.exports = {
       minimumBuyShare: CONFIG.STRONG_ACTIVITY_MIN_BUY_SHARE },
     maximumIndividualHolderPercent: CONFIG.MAX_SINGLE_HOLDER_PERCENT,
     minimumLiquidityLockPercent: MINIMUM_LIQUIDITY_LOCK_PERCENT,
+    youngPairMinimumLiquidityLockPercent: CONFIG.YOUNG_PAIR_MIN_LP_LOCK_PERCENT,
+    youngPairMaximumAgeMinutes: CONFIG.YOUNG_PAIR_MAX_AGE_MS / 60000,
+    timeStopMinutes: CONFIG.POSITION_TIME_STOP_MS / 60000,
+    timeStopMaximumGainPercent: CONFIG.POSITION_TIME_STOP_MAX_GAIN_PERCENT,
     maximumOpenPositions: MAX_OPEN_POSITIONS,
     minimumTradeUsd: MINIMUM_TRADE_USD,
     rapidDropCooldownMs: 5 * 60 * 1000,
@@ -525,7 +565,6 @@ module.exports = {
     rapidLiquidityDropPercent: 20
   }
 };
-
 
 
 
