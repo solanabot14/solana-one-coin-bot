@@ -15,6 +15,9 @@ const TAKE_PROFIT_2_PERCENT = 20;
 const TAKE_PROFIT_2_SELL_PERCENT = 30;
 const TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT = TAKE_PROFIT_1_SELL_PERCENT + TAKE_PROFIT_2_SELL_PERCENT;
 const TRAILING_STOP_PERCENT = 6;
+const EARLY_PROFIT_PROTECTION_ACTIVATION_PERCENT = 8;
+const EARLY_PROFIT_PROTECTION_PULLBACK_PERCENT = 6;
+const STRATEGY_CHANGE_ACTIVATED_AT = "2026-10-20T05:14:20-04:00";
 const PROFIT_FLOOR_AFTER_TP1_PERCENT = 0;
 const COMPOUND_RATES = [0.10];
 const MINIMUM_TRADE_USD = 10;
@@ -98,18 +101,32 @@ function chooseExit({ position, currentPrice, freshData, exitProgress }) {
   const soldPercent = Number.isFinite(Number(exitProgress?.soldPercent))
     ? Number(exitProgress.soldPercent)
     : (position.secondTakeProfitDone ? TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT : position.firstTakeProfitDone ? TAKE_PROFIT_1_SELL_PERCENT : 0);
+  const high = Number(position.highestPrice);
+  const highProfitPercent = high > 0 ? (high - entryPrice) / entryPrice * 100 : profitPercent;
+  const pullbackFromHighPercent = high > 0 ? (high - price) / high * 100 : 0;
+
   if (soldPercent + 1e-6 >= TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT) {
-    const high = Number(position.highestPrice);
-    const pullback = high > 0 ? (high - price) / high * 100 : 0;
-    return pullback >= TRAILING_STOP_PERCENT ? { percent: 100, triggerPrice: high * (1 - TRAILING_STOP_PERCENT / 100), reason: `TRAILING STOP -${TRAILING_STOP_PERCENT}% FROM HIGH` } : null;
+    return pullbackFromHighPercent >= TRAILING_STOP_PERCENT
+      ? { percent: 100, triggerPrice: high * (1 - TRAILING_STOP_PERCENT / 100), reason: `TRAILING STOP -${TRAILING_STOP_PERCENT}% FROM HIGH` }
+      : null;
   }
-  if (profitPercent <= HARD_STOP_PERCENT) return { percent: 100, triggerPrice: entryPrice * (1 + HARD_STOP_PERCENT / 100), reason: "HARD STOP -6%" };
+  if (profitPercent <= HARD_STOP_PERCENT)
+    return { percent: 100, triggerPrice: entryPrice * (1 + HARD_STOP_PERCENT / 100), reason: "HARD STOP -6%" };
   if (soldPercent + 1e-6 < TAKE_PROFIT_1_SELL_PERCENT && profitPercent + 1e-9 >= TAKE_PROFIT_1_PERCENT)
     return { targetOriginalPositionPercent: TAKE_PROFIT_1_SELL_PERCENT, triggerPrice: entryPrice * (1 + TAKE_PROFIT_1_PERCENT / 100), reason: "TAKE PROFIT 1 - SELL 60% OF ORIGINAL POSITION AT +15%", takeProfit: "firstTakeProfitDone" };
   if (soldPercent + 1e-6 >= TAKE_PROFIT_1_SELL_PERCENT &&
       soldPercent + 1e-6 < TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT &&
       profitPercent + 1e-9 >= TAKE_PROFIT_2_PERCENT)
     return { targetOriginalPositionPercent: TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT, triggerPrice: entryPrice * (1 + TAKE_PROFIT_2_PERCENT / 100), reason: "TAKE PROFIT 2 - SELL 30% OF ORIGINAL POSITION AT +20%", takeProfit: "secondTakeProfitDone" };
+
+  if (highProfitPercent + 1e-9 >= EARLY_PROFIT_PROTECTION_ACTIVATION_PERCENT &&
+      pullbackFromHighPercent + 1e-9 >= EARLY_PROFIT_PROTECTION_PULLBACK_PERCENT) {
+    return {
+      percent: 100,
+      triggerPrice: high * (1 - EARLY_PROFIT_PROTECTION_PULLBACK_PERCENT / 100),
+      reason: `EARLY PROFIT PROTECTION -${EARLY_PROFIT_PROTECTION_PULLBACK_PERCENT}% FROM HIGH AFTER +${EARLY_PROFIT_PROTECTION_ACTIVATION_PERCENT}% PEAK`
+    };
+  }
   return null;
 }
 
@@ -119,13 +136,12 @@ module.exports = {
     HARD_STOP_PERCENT, MIN_EXIT_LIQUIDITY_USD,
     MAX_EXIT_LIQUIDITY_DRAWDOWN,
     TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
-    TAKE_PROFIT_2_SELL_PERCENT, TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT, TRAILING_STOP_PERCENT, PROFIT_FLOOR_AFTER_TP1_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD },
+    TAKE_PROFIT_2_SELL_PERCENT, TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT, TRAILING_STOP_PERCENT,
+    EARLY_PROFIT_PROTECTION_ACTIVATION_PERCENT, EARLY_PROFIT_PROTECTION_PULLBACK_PERCENT,
+    STRATEGY_CHANGE_ACTIVATED_AT, PROFIT_FLOOR_AFTER_TP1_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD },
   qualifiesMomentumCandidate,
   selectUniqueMintCandidates,
   getMomentumFailureReasons,
   getBuySizing,
   chooseExit
 };
-
-
-
