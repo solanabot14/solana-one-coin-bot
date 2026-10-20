@@ -13,6 +13,9 @@ module.exports = Object.freeze({
   MIN_BUY_SHARE_5M: 0.55,
   HIGH_VOLUME_5M_USD: 5000,
   HIGH_TRANSACTIONS_5M: 50,
+  // Avoid chasing pumps that have already made most of their move before entry.
+  MAX_ENTRY_MOMENTUM_5M_PERCENT: 35,
+  MAX_ENTRY_MOMENTUM_1H_PERCENT: 300,
   MAX_ROUND_TRIP_LOSS_PERCENT: 4, // quoted costs plus the 1% uncertainty reserve
   MAX_QUOTED_ROUND_TRIP_COST_PERCENT: 3,
   MAX_MARKET_DATA_AGE_MS: 35000,
@@ -33,5 +36,3 @@ module.exports = Object.freeze({
   STRONG_ACTIVITY_MIN_BUY_SHARE: 0.60,
   MAX_TOKEN_ATTEMPTS: 2
 });
-
-
