@@ -16,6 +16,9 @@ module.exports = Object.freeze({
   // Avoid chasing pumps that have already made most of their move before entry.
   MAX_ENTRY_MOMENTUM_5M_PERCENT: 35,
   MAX_ENTRY_MOMENTUM_1H_PERCENT: 300,
+  // Allow a second-wave/recovery entry after a deep pullback only when momentum has reconfirmed.
+  RECOVERY_REENTRY_MIN_PULLBACK_PERCENT: 25,
+  RECOVERY_REENTRY_MIN_BUY_SHARE: 0.60,
   MAX_ROUND_TRIP_LOSS_PERCENT: 4, // quoted costs plus the 1% uncertainty reserve
   MAX_QUOTED_ROUND_TRIP_COST_PERCENT: 3,
   MAX_MARKET_DATA_AGE_MS: 35000,
