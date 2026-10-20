@@ -99,15 +99,21 @@ function createMomentumTracker() {
     state.peakPrice = Math.max(state.peakPrice,price);
     state.troughPrice = Math.min(state.troughPrice,price);
     state.pullbackObserved = state.pullbackObserved || price<state.peakPrice;
+    const retracePercent = state.peakPrice>0 ? (state.peakPrice-price)/state.peakPrice*100 : 0;
+    const confirmedDeepRecovery = recovery && state.pullbackObserved && liquidityRetained &&
+      retracePercent >= CONFIG.RECOVERY_REENTRY_MIN_PULLBACK_PERCENT &&
+      currentBuyShare >= CONFIG.RECOVERY_REENTRY_MIN_BUY_SHARE;
     const ready = (continuation || recovery) && activitySufficient && liquidityRetained &&
       currentBuyShare>=CONFIG.MIN_BUY_SHARE_5M;
-    const entryRoute = ready ? (continuation ? "activity_continuation" : "local_recovery") : null;
+    // A genuine deep pullback recovery must stay classified as local_recovery
+    // even when the same snapshot also qualifies as activity continuation.
+    const entryRoute = ready ? (confirmedDeepRecovery ? "local_recovery" :
+      (continuation ? "activity_continuation" : "local_recovery")) : null;
     const reason = !freshWindow ? "waiting_for_fresh_60s_window"
       : !(continuation || recovery) ? "recent_price_not_confirmed_upward"
       : !liquidityRetained ? "liquidity_below_floor"
       : currentBuyShare<CONFIG.MIN_BUY_SHARE_5M ? "buy_share_below_55_percent"
       : !activitySufficient ? "volume_neither_growing_nor_sufficiently_high" : null;
-    const retracePercent = state.peakPrice>0 ? (state.peakPrice-price)/state.peakPrice*100 : 0;
     const reboundFromLowPercent = low>0 ? (price/low-1)*100 : 0;
     const pumpPercent = state.basePrice>0 ? (state.peakPrice/state.basePrice-1)*100 : 0;
     const recovering = !!previous && price>previous.price;
