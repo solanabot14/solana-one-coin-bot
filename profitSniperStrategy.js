@@ -7,6 +7,8 @@ const MIN_TRANSACTIONS_5M = CONFIG.MIN_TRANSACTIONS_5M;
 const MIN_BUY_RATIO_5M = CONFIG.MIN_BUY_SHARE_5M;
 const MAX_ENTRY_MOMENTUM_5M_PERCENT = CONFIG.MAX_ENTRY_MOMENTUM_5M_PERCENT;
 const MAX_ENTRY_MOMENTUM_1H_PERCENT = CONFIG.MAX_ENTRY_MOMENTUM_1H_PERCENT;
+const RECOVERY_REENTRY_MIN_PULLBACK_PERCENT = CONFIG.RECOVERY_REENTRY_MIN_PULLBACK_PERCENT;
+const RECOVERY_REENTRY_MIN_BUY_SHARE = CONFIG.RECOVERY_REENTRY_MIN_BUY_SHARE;
 const HARD_STOP_PERCENT = -6;
 const MIN_EXIT_LIQUIDITY_USD = 1000;
 const MAX_EXIT_LIQUIDITY_DRAWDOWN = 0.25;
@@ -24,6 +26,18 @@ const PROFIT_FLOOR_AFTER_TP1_PERCENT = 0;
 const COMPOUND_RATES = [0.10];
 const MINIMUM_TRADE_USD = 10;
 
+function isConfirmedRecoveryEntry(coin, buyRatio) {
+  const pattern = coin?.momentumPattern;
+  const retracePercent = Number(pattern?.retracePercent);
+  return pattern?.ready === true &&
+    pattern?.recovering === true &&
+    pattern?.pullbackObserved === true &&
+    pattern?.strongActivityContinuation === true &&
+    pattern?.liquidityRetained === true &&
+    Number.isFinite(retracePercent) && retracePercent >= RECOVERY_REENTRY_MIN_PULLBACK_PERCENT &&
+    buyRatio >= RECOVERY_REENTRY_MIN_BUY_SHARE;
+}
+
 function getMomentumFailureReasons(coin, now = Date.now()) {
   if (!coin || typeof coin !== "object") return ["missing_candidate"];
   const failures = [];
@@ -37,6 +51,7 @@ function getMomentumFailureReasons(coin, now = Date.now()) {
   const buyRatio = transactions5m > 0 ? buys5m / transactions5m : 0;
   const momentum5m = Number(coin.priceChange5m);
   const momentum1h = Number(coin.priceChange1h);
+  const confirmedRecoveryEntry = isConfirmedRecoveryEntry(coin, buyRatio);
 
   const ageValid = Number.isFinite(createdAt) && ageMs >= MIN_PAIR_AGE_MS && ageMs <= MAX_PAIR_AGE_MS;
   if (!ageValid) failures.push("age");
@@ -45,9 +60,9 @@ function getMomentumFailureReasons(coin, now = Date.now()) {
   if (!Number.isFinite(transactions5m) || transactions5m < MIN_TRANSACTIONS_5M) failures.push("transactions5m");
   if (buyRatio < MIN_BUY_RATIO_5M) failures.push("buyRatio5m");
   if (!Number.isFinite(momentum5m)) failures.push("momentum5m");
-  if (Number.isFinite(momentum5m) && momentum5m > MAX_ENTRY_MOMENTUM_5M_PERCENT)
+  if (!confirmedRecoveryEntry && Number.isFinite(momentum5m) && momentum5m > MAX_ENTRY_MOMENTUM_5M_PERCENT)
     failures.push("overextendedMomentum5m");
-  if (Number.isFinite(momentum1h) && momentum1h > MAX_ENTRY_MOMENTUM_1H_PERCENT)
+  if (!confirmedRecoveryEntry && Number.isFinite(momentum1h) && momentum1h > MAX_ENTRY_MOMENTUM_1H_PERCENT)
     failures.push("overextendedMomentum1h");
   if (ageValid && coin.momentumPattern?.ready !== true)
     failures.push("momentumPattern");
@@ -143,6 +158,7 @@ function chooseExit({ position, currentPrice, freshData, exitProgress }) {
 module.exports = {
   constants: { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_5M_USD,
     MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M, MAX_ENTRY_MOMENTUM_5M_PERCENT, MAX_ENTRY_MOMENTUM_1H_PERCENT,
+    RECOVERY_REENTRY_MIN_PULLBACK_PERCENT, RECOVERY_REENTRY_MIN_BUY_SHARE,
     HARD_STOP_PERCENT, MIN_EXIT_LIQUIDITY_USD,
     MAX_EXIT_LIQUIDITY_DRAWDOWN,
     TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
