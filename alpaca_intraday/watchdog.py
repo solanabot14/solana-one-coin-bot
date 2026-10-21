@@ -19,10 +19,6 @@ def must_flatten(c,t,opening,close,heartbeat,kill,boot_elapsed):
             if boot_elapsed>c['runtime']['bootstrap_grace_seconds']:
                 return 'missing_heartbeat'
         elif ((t-datetime.fromisoformat(heartbeat['time'])).total_seconds()>c['runtime']['heartbeat_stale_seconds'] or not heartbeat.get('healthy')):
-            # A deploy/restart begins with an intentionally unhealthy heartbeat.
-            # Give the engine its configured bootstrap window to reconcile the
-            # account and establish streams; KILL and the scheduled close remain
-            # immediate, and a missed bootstrap still forces flattening.
             if boot_elapsed>c['runtime']['bootstrap_grace_seconds']:
                 return 'stale_or_unhealthy_heartbeat'
     return None
@@ -34,6 +30,7 @@ def run(c):
     fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
     b = Broker(c,log)
     boot = time.monotonic()
+    last_alarm = None
     while True:
         try:
             t = now()
@@ -45,18 +42,28 @@ def run(c):
                 close = close.replace(tzinfo=ET) if close.tzinfo is None else close
             hbpath = path/'heartbeat.json'
             heartbeat = json.loads(hbpath.read_text()) if hbpath.exists() else None
-            # KILL is an operator latch. HALT-YYYY-MM-DD is a durable incident
-            # record used to block entries, but must not itself retrigger
-            # liquidation every poll after the account is already flat.
             kill = (path/'KILL').exists()
             reason = must_flatten(c,t,opening,close,heartbeat,kill,time.monotonic()-boot)
-            # Positions outside regular hours are always an incident, never accepted.
-            if not reason and (not cal or t<opening or t>=close):
-                if b.read(b.trade.get_all_positions): reason='outside_session_exposure'
+            positions = b.read(b.trade.get_all_positions)
+            orders = b.orders()
+            has_exposure = bool(positions or orders)
+            if not reason and (not cal or t<opening or t>=close) and positions:
+                reason='outside_session_exposure'
             if reason:
-                (path/('HALT-'+stamp(t))).touch()
-                log.event('watchdog_alarm',reason=reason)
-                b.flatten_step('watchdog:'+reason)
+                # Safety incidents latch the session even when currently flat. A
+                # normal scheduled close does not need to create a new incident.
+                if reason != 'scheduled_close':
+                    (path/('HALT-'+stamp(t))).touch()
+                key=(stamp(t),reason)
+                if has_exposure:
+                    log.event('watchdog_alarm',reason=reason)
+                    b.flatten_step('watchdog:'+reason)
+                    last_alarm=key
+                elif reason != 'scheduled_close' and key != last_alarm:
+                    log.event('watchdog_alarm',reason=reason,already_flat=True)
+                    last_alarm=key
+            else:
+                last_alarm=None
         except Exception as e:
             log.event('watchdog_error',error=str(e))
         time.sleep(c['runtime']['watchdog_poll_seconds'])
