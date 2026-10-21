@@ -23,7 +23,7 @@ const SCAN_INTERVAL_MS = CONFIG.WATCHLIST_RECHECK_MS;
 const POSITION_MONITOR_MS = 2000;
 const MINIMUM_LIQUIDITY_LOCK_PERCENT = CONFIG.MIN_LP_LOCK_PERCENT;
 const MAX_PAIR_AGE_MINUTES = CONFIG.MAX_CANDIDATE_AGE_MINUTES;
-const ENTRY_REENTRY_CHANGE_ACTIVATED_AT = "2026-10-20T18:43:00-04:00";
+const ENTRY_REENTRY_CHANGE_ACTIVATED_AT = "2026-10-21T07:00:00-04:00";
 const prebuy = require("./profitSniperPrebuy").createEntryGuard();
 
 function statePath(fileName = "profitSniperTradingData.json") {
@@ -47,12 +47,15 @@ function estimateExecutionCosts({ amountUsd, liquidityUsd }) {
 
 const { qualifiesMomentumCandidate, getMomentumFailureReasons, getBuySizing, chooseExit, selectUniqueMintCandidates } = strategy;
 
-function isConfirmedRecoveryReentry(coin) {
-  const pattern = coin?.momentumPattern;
+function buyShare5m(coin) {
   const buys5m = Number(coin?.buys5m) || 0;
   const sells5m = Number(coin?.sells5m) || 0;
   const transactions5m = buys5m + sells5m;
-  const buyShare = transactions5m > 0 ? buys5m / transactions5m : 0;
+  return transactions5m > 0 ? buys5m / transactions5m : 0;
+}
+
+function isConfirmedRecoveryReentry(coin) {
+  const pattern = coin?.momentumPattern;
   const retracePercent = Number(pattern?.retracePercent);
   return pattern?.ready === true &&
     pattern?.entryRoute === "local_recovery" &&
@@ -60,7 +63,19 @@ function isConfirmedRecoveryReentry(coin) {
     pattern?.pullbackObserved === true &&
     pattern?.liquidityRetained === true &&
     Number.isFinite(retracePercent) && retracePercent >= CONFIG.RECOVERY_REENTRY_MIN_PULLBACK_PERCENT &&
-    buyShare >= CONFIG.RECOVERY_REENTRY_MIN_BUY_SHARE;
+    buyShare5m(coin) >= CONFIG.RECOVERY_REENTRY_MIN_BUY_SHARE;
+}
+
+function isConfirmedFreshMomentumReentry(coin) {
+  const pattern = coin?.momentumPattern;
+  return pattern?.ready === true &&
+    pattern?.entryRoute === "activity_continuation" &&
+    pattern?.strongActivityContinuation === true &&
+    pattern?.liquidityRetained === true &&
+    pattern?.volumeIncreasing === true &&
+    Number(pattern?.risingSteps) >= 3 &&
+    Number(pattern?.confirmationSpanMs) >= CONFIG.RECOVERY_CONFIRMATION_SPAN_MS &&
+    buyShare5m(coin) >= Math.max(CONFIG.MIN_BUY_SHARE_5M, 0.65);
 }
 
 let lastEntryDecision = null;
@@ -129,8 +144,6 @@ async function discoverCandidates(options = {}) {
     candidates.push({ key, coin, failures, ageMs, wasWatchlisted: wasOnWatchlist });
   }
 
-  // Discovery feeds rotate quickly. Keep promising exact pools warm with fresh
-  // DexScreener quotes so a temporary feed omission cannot erase confirmation.
   const missingRecovery = recoveryWatchlist.missing(currentKeys, now);
   if (missingRecovery.length) {
     const uniqueByMint = new Map();
@@ -180,12 +193,12 @@ async function discoverCandidates(options = {}) {
   for (const item of candidates) {
     const { coin, key, ageMs, wasWatchlisted } = item;
     const confirmedRecoveryReentry = isConfirmedRecoveryReentry(coin);
+    const confirmedFreshMomentumReentry = isConfirmedFreshMomentumReentry(coin);
+    const confirmedReentryOverride = confirmedRecoveryReentry || confirmedFreshMomentumReentry;
     let failures = [...item.failures];
     if (confirmedRecoveryReentry) {
       failures = failures.filter(reason => reason !== "overextendedMomentum5m" && reason !== "overextendedMomentum1h");
     }
-    // Observe the pool during momentum warmup, so both independent windows
-    // mature together. Entry still requires current momentum and stable reserves.
     const poolStability = entryGuard.observe(coin, now);
     const watch = ageWatchlist.get(key);
     if (watch) {
@@ -194,11 +207,11 @@ async function discoverCandidates(options = {}) {
         failures = [...new Set([...failures, "ageWatchlistExpired"])];
       } else if (Number(coin.liquidityUsd) < watch.initialLiquidityUsd * (1 - CONFIG.WATCHLIST_MAX_LIQUIDITY_DROP)) {
         ageWatchlist.delete(key);
-        failures = [...new Set([...failures, "watchlistLiquidityDroppedOver30Percent"])];
+        failures = [...new Set([...failures, "watchlistLiquidityDroppedOver10Percent"])];
       }
     }
-    if (stoppedMints.has(coin.tokenAddress) && !confirmedRecoveryReentry) failures.push("stopLossReentryBlocked");
-    if ((buysByMint.get(coin.tokenAddress) || 0) >= CONFIG.MAX_TOKEN_ATTEMPTS && !confirmedRecoveryReentry)
+    if (stoppedMints.has(coin.tokenAddress) && !confirmedReentryOverride) failures.push("stopLossReentryBlocked");
+    if ((buysByMint.get(coin.tokenAddress) || 0) >= CONFIG.MAX_TOKEN_ATTEMPTS && !confirmedReentryOverride)
       failures.push("maxTokenAttempts");
     if (!failures.length) {
       if (!poolStability.ready) failures.push("poolStability");
@@ -242,6 +255,7 @@ async function discoverCandidates(options = {}) {
         reason: pattern.reason || null
       },
       confirmedRecoveryReentry,
+      confirmedFreshMomentumReentry,
       fromAgeWatchlist: wasWatchlisted,
       fromRecoveryWatchlist: !!coin.recoveryWatchlistRecheck,
       reason: failures.length ? [...new Set(failures)].join(",") : "entry_candidate_selected"
@@ -252,13 +266,12 @@ async function discoverCandidates(options = {}) {
         reasons: [...(coin.reasons || []), "Direct Sniper entry gates passed",
           "CONFIRMED ACTIVITY ENTRY: " + (coin.momentumPattern?.entryRoute || "unknown"),
           ...(confirmedRecoveryReentry ? ["CONFIRMED RECOVERY REENTRY OVERRIDE"] : []),
+          ...(confirmedFreshMomentumReentry ? ["CONFIRMED FRESH MOMENTUM REENTRY OVERRIDE"] : []),
           ...(wasWatchlisted ? ["AGE WATCHLIST REENTRY"] : []),
           "Exact identity: Solana mint " + coin.tokenAddress + "; pool " + coin.pairAddress] });
     }
   }
 
-  // Process cached watchlist items absent from this scan without fabricating fresh
-  // market data. They remain pending and cannot enter until a fresh scan sees them.
   for (const [key, item] of ageWatchlist) {
     if (currentKeys.has(key)) continue;
     if (now - item.addedAt > CONFIG.WATCHLIST_MAX_AGE_MS) {
@@ -267,8 +280,7 @@ async function discoverCandidates(options = {}) {
     }
   }
 
-  const qualified = selectUniqueMintCandidates(entries
-    .sort(compareHourly)).sort(compareHourly);
+  const qualified = selectUniqueMintCandidates(entries.sort(compareHourly)).sort(compareHourly);
   recordRejections(now, rejectedGates);
   const scanState = poolDiscovery.getScanDiagnostics();
   lastScanDiagnostics = {
@@ -286,15 +298,13 @@ async function discoverCandidates(options = {}) {
     rejectionCountsLifetime: { ...cumulativeRejectionCounts },
     ageWatchlistPending: ageWatchlist.size,
     recoveryWatchlistPending: recoveryWatchlist.size(),
-    recoveryWatchlistDirectRechecks: recoveryWatchlist.values()
-      .reduce((sum, item) => sum + item.directRechecks, 0),
+    recoveryWatchlistDirectRechecks: recoveryWatchlist.values().reduce((sum, item) => sum + item.directRechecks, 0),
     ageWatchlistRechecks,
-    entriesFromAgeWatchlist: history.filter(row => row?.type === "BUY" &&
-      (row.entryReasons || []).includes("AGE WATCHLIST REENTRY")).length,
+    entriesFromAgeWatchlist: history.filter(row => row?.type === "BUY" && (row.entryReasons || []).includes("AGE WATCHLIST REENTRY")).length,
     evaluations: logs,
     selectedByScore: qualified.slice(0, MAX_OPEN_POSITIONS).map(coin => ({
       symbol: coin.symbol || null, tokenAddress: coin.tokenAddress, pairAddress: coin.pairAddress,
-      score: Number(coin.score) || 0, hourlyActivity:hourlyRank(coin),
+      score: Number(coin.score) || 0, hourlyActivity: hourlyRank(coin),
       fromAgeWatchlist: (coin.reasons || []).includes("AGE WATCHLIST REENTRY")
     })),
     error: scanState?.error || null
@@ -319,7 +329,7 @@ if (reconciliation.reason === "account-differs-from-audited-ledger") {
   console.error("Profit Sniper reconciliation skipped: saved account changed; scanner must stay paused.");
 }
 const trader = createPaperTrader(statePath(), fs, {
-  strategyVersion: "Paper-Profit-Sniper-original-10-20",
+  strategyVersion: "Paper-Profit-Sniper-fresh-momentum-reentry-10-21",
   startingBalance: 200,
   sessionResetId: SESSION_RESET_ID,
   maxOpenPositions: MAX_OPEN_POSITIONS,
@@ -351,9 +361,6 @@ const bot = createBot({
   acceptedSignals: ["ORDER FLOW BUY"],
   requireLiquidityLock: true,
   allowUnknownLiquidityLock: false,
-  // Sniper already enforces fresh momentum, max attempts and stop-loss bans.
-  // The inherited V3.1 reentry filter imposes a conflicting <4% 5m cap and
-  // another two observations with 25% rolling-volume acceleration.
   useReentryGuards: false,
   useSimpleCooldown: false,
   exitDecision: chooseExit,
@@ -437,7 +444,8 @@ function getStatus() {
       lastEntryDecision,
       reentryPolicy: { inheritedV31FilterEnabled: false, maximumTokenAttempts: CONFIG.MAX_TOKEN_ATTEMPTS,
         stopLossReentryBlocked: true, confirmedLocalRecoveryOverride: true,
-        confirmedRecoveryBypassesAttemptLimit: true, changeActivatedAt: ENTRY_REENTRY_CHANGE_ACTIVATED_AT,
+        confirmedFreshMomentumOverride: true, confirmedRecoveryBypassesAttemptLimit: true,
+        confirmedFreshMomentumBypassesAttemptLimit: true, changeActivatedAt: ENTRY_REENTRY_CHANGE_ACTIVATED_AT,
         openMintDuplicatesBlocked: true },
       poolStability: entryGuard.getStatus(),
       ageWatchlistPending: ageWatchlist.size,
@@ -489,10 +497,10 @@ module.exports = {
     highVolume5mUsd: CONFIG.HIGH_VOLUME_5M_USD,
     highTransactions5m: CONFIG.HIGH_TRANSACTIONS_5M,
     maxRoundTripLossPercent: CONFIG.MAX_ROUND_TRIP_LOSS_PERCENT,
-    maxQuotedRoundTripCostPercent:CONFIG.MAX_QUOTED_ROUND_TRIP_COST_PERCENT,
-    roundTripUncertaintyReservePercent:CONFIG.ROUND_TRIP_SLIPPAGE_BUFFER_PERCENT,
-    maximumMarketDataAgeMs:CONFIG.MAX_MARKET_DATA_AGE_MS,
-    maximumExecutionQuoteAgeMs:CONFIG.MAX_EXECUTION_QUOTE_AGE_MS,
+    maxQuotedRoundTripCostPercent: CONFIG.MAX_QUOTED_ROUND_TRIP_COST_PERCENT,
+    roundTripUncertaintyReservePercent: CONFIG.ROUND_TRIP_SLIPPAGE_BUFFER_PERCENT,
+    maximumMarketDataAgeMs: CONFIG.MAX_MARKET_DATA_AGE_MS,
+    maximumExecutionQuoteAgeMs: CONFIG.MAX_EXECUTION_QUOTE_AGE_MS,
     maximumRetracePercent: null,
     recoveryMinimumBuyShare: CONFIG.RECOVERY_MIN_BUY_SHARE,
     recoveryConfirmationSpanMs: CONFIG.RECOVERY_CONFIRMATION_SPAN_MS,
@@ -517,6 +525,3 @@ module.exports = {
     minimumTradeUsd: MINIMUM_TRADE_USD
   }
 };
-
-
-
