@@ -1,4 +1,5 @@
 // All new Profit Sniper entry controls live here; exits remain in profitSniperStrategy.js.
+// Deployment trigger after merging the Profit Sniper fix into main.
 module.exports = Object.freeze({
   MIN_PAIR_AGE_MS: 5 * 60 * 1000,
   MAX_PAIR_AGE_MS: 24 * 60 * 60 * 1000,
