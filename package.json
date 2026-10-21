@@ -1,23 +1,8 @@
 {
-  "name": "solana-one-coin-bot",
+  "name": "one-coin-bot-clean",
   "version": "1.0.0",
-  "description": "",
-  "main": "dashboard.js",
+  "private": true,
   "scripts": {
-    "start": "node dashboard.js",
-    "test": "node --test",
-    "test:all": "node --test"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "dependencies": {
-    "axios": "^1.20.0",
-    "better-sqlite3": "^13.0.3",
-    "dotenv": "^18.0.1"
-  },
-  "engines": {
-    "node": "24.x"
+    "start": "node dashboard.js"
   }
 }
