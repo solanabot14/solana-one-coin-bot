@@ -9,18 +9,19 @@ def fixture(tmp_path):
     op=datetime(2026,10,15,9,30,tzinfo=ET)
     rows=[]
     for d in range(10,0,-1):
-        for i in range(-20,11):
+        for i in range(-20,16):
             t=op-timedelta(days=d)+timedelta(minutes=i)
             rows.append([t.isoformat(),'ABC',10,10.1,9.9,10,100,10])
-    for i in range(-20,11):
+    for i in range(-20,16):
         t=op+timedelta(minutes=i)
         o,h,l,cl,v=10,10.1,9.9,10,300 if i>=0 else 100
-        if i==5: o,h,l,cl,v=10,10.25,10,10.2,1000
-        elif i==6: o,h,l,cl,v=10.21,10.35,10.2,10.3,10000
-        elif i==7: o,h,l,cl,v=10.3,10.6,10.3,10.5,10000
-        elif i==8: o,h,l,cl,v=10.5,10.8,10.4,10.7,10000
-        elif i==9: o,h,l,cl,v=10.7,10.8,10.2,10.4,10000
-        elif i==10: o,h,l,cl,v=10.4,10.5,10.2,10.3,10000
+        if 5<=i<=9: o,h,l,cl,v=10.01,10.08,9.99,10.04,350
+        elif i==10: o,h,l,cl,v=10.08,10.14,10.06,10.12,1000
+        elif i==11: o,h,l,cl,v=10.13,10.22,10.10,10.18,5000
+        elif i==12: o,h,l,cl,v=10.18,10.45,10.16,10.40,10000
+        elif i==13: o,h,l,cl,v=10.40,10.60,10.35,10.55,10000
+        elif i==14: o,h,l,cl,v=10.55,10.58,10.30,10.35,10000
+        elif i==15: o,h,l,cl,v=10.35,10.40,10.25,10.30,10000
         rows.append([t.isoformat(),'ABC',o,h,l,cl,v,cl])
     rows.append([op.replace(hour=15,minute=45).isoformat(),'ABC',10.3,10.4,10.2,10.3,10000,10.3])
     path=tmp_path/'bars.csv'
