@@ -31,12 +31,18 @@ replace('const COIN_COOLDOWN_MS = 30 * 60 * 1000;', 'const COIN_COOLDOWN_MS = 60
 replace('const STRATEGY_VERSION = "COINBASE_INTRADAY_MOMENTUM_V5";', 'const STRATEGY_VERSION = "COINBASE_SELECTIVE_MOMENTUM_V6";', 'version');
 replace('const ATR_STOP_MULTIPLE = 1.4;', 'const ATR_STOP_MULTIPLE = 1.35;', 'ATR stop');
 
-// A winner must have enough room to clear Coinbase trading costs. Reject marginal moves.
-replace(
-  'const feeAndSlippageRoundTripPercent=(2*FEE_RATE+2*SLIPPAGE_RATE)*100;',
-  'const feeAndSlippageRoundTripPercent=(2*FEE_RATE+2*SLIPPAGE_RATE)*100;',
-  'cost hurdle anchor'
-);
+replace('24h USD volume below $5M', '24h USD volume below $20M', 'volume reason');
+replace('24h trend below +1%', '24h trend below +1.5%', 'daily reason');
+replace('24h gain above +30% chase limit', '24h gain above +18% chase limit', 'chase reason');
+replace('15m relative volume below 1.5x', '15m relative volume below 2.0x', 'RVOL reason');
+replace('Momentum score below 70', 'Momentum score below 82', 'score reason');
+replace('TAKE PROFIT +3% (50%)', 'TAKE PROFIT +5% (60%)', 'TP1 label');
+replace('TAKE PROFIT +5% (30%)', 'TAKE PROFIT +8% (25%)', 'TP2 label');
+replace('RUNNER TRAILING STOP 2%', 'RUNNER TRAILING STOP 2.5%', 'runner label');
+replace('MOMENTUM DECAY EXIT 10-15M', 'MOMENTUM DECAY EXIT 12-20M', 'decay label');
+replace('TIME STOP 25M UNDER +1%', 'TIME STOP 60M UNDER +1%', 'time label');
+replace('Coinbase Bot paper sustained momentum V5 · liquid USD/USDC · 15m/1h momentum + relative volume + VWAP + EMA + structure · spike rejection · 50% at +3%, 30% at +5%, 20% runner · ATR stop 1.5%-2.5% · momentum-decay exit · 25m max hold', 'Coinbase Bot paper selective momentum V6 · liquid USD/USDC · 15m/1h momentum + RVOL + VWAP + EMA + structure · spike rejection · 60% at +5%, 25% at +8%, 15% runner · ATR stop 1.5%-2.5% · cost-aware selective entries · 60m max hold', 'position strategy label');
+replace('Paper-only sustained-momentum rotation. Liquid Coinbase USD/USDC pairs; 15m/1h trend, >=1.5x relative volume, VWAP, EMA9>EMA21, continuation/retest/reclaim, spike rejection and BTC/news/spread guards. Max 6 positions but no forced fills. Exit 50% at +3%, 30% at +5%, trail 20% by 2%; ATR stop 1.5%-2.5%; momentum-decay exit after 10-15m; 25m stale-trade exit; 30m coin cooldown.', 'Paper-only selective momentum V6. Liquid Coinbase USD/USDC pairs; 1h >=1%, 15m positive, >=2x relative volume, VWAP, EMA9>EMA21, continuation/retest/reclaim, spike rejection and BTC/news/spread guards. Max 6 positions but no forced fills. Exit 60% at +5%, 25% at +8%, trail 15% by 2.5%; ATR stop 1.5%-2.5%; momentum-decay validation after 12m; 60m stale-trade exit; 60m coin cooldown.', 'dashboard strategy label');
 
 fs.writeFileSync(p, s);
 console.log("COINBASE_V6_PREPARED", { version: "COINBASE_SELECTIVE_MOMENTUM_V6" });
