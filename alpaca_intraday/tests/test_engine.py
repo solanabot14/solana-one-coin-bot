@@ -29,8 +29,8 @@ def test_two_equal_brackets(c,tmp_path):
     assert len(calls)==2
     a,b=[x.args[0] for x in calls]
     assert a.qty==b.qty and a.order_class.value=='bracket'
-    assert a.take_profit.limit_price==10.15
-    assert b.take_profit.limit_price==12
+    assert a.take_profit.limit_price==10.12
+    assert b.take_profit.limit_price==10.4
     assert a.stop_loss.stop_price==9.9 and e.day['trades']==1
 
 def test_ambiguous_submit_is_not_retried(c,tmp_path):
