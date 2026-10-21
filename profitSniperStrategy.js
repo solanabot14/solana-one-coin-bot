@@ -1,32 +1,36 @@
 const CONFIG = require("./profitSniperConfig");
+
 const MAX_PAIR_AGE_MS = CONFIG.MAX_PAIR_AGE_MS;
 const MIN_PAIR_AGE_MS = CONFIG.MIN_PAIR_AGE_MS;
 const MIN_LIQUIDITY_USD = CONFIG.MIN_LIQUIDITY_USD;
 const MIN_VOLUME_5M_USD = CONFIG.MIN_VOLUME_5M_USD;
 const MIN_TRANSACTIONS_5M = CONFIG.MIN_TRANSACTIONS_5M;
 const MIN_BUY_RATIO_5M = CONFIG.MIN_BUY_SHARE_5M;
-// Paper-test trend context gate. Historical Sniper entries with a negative
-// 1h change were materially loss-making; do not infer a 5m trend filter from
-// the same sample because negative-5m recovery entries also produced winners.
+const MAX_ENTRY_MOMENTUM_5M_PERCENT = CONFIG.MAX_ENTRY_MOMENTUM_5M_PERCENT;
+const MAX_ENTRY_MOMENTUM_1H_PERCENT = CONFIG.MAX_ENTRY_MOMENTUM_1H_PERCENT;
 const MIN_ENTRY_PRICE_CHANGE_1H_PERCENT = 0;
+
 const HARD_STOP_PERCENT = -5;
 const MIN_EXIT_LIQUIDITY_USD = 1000;
-const MAX_EXIT_LIQUIDITY_DRAWDOWN = 0.25;
+const MAX_EXIT_LIQUIDITY_DRAWDOWN = 0.20;
 const BLOCKED_TOKEN_ADDRESSES = new Set(["EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J"]);
+
 const TAKE_PROFIT_1_PERCENT = 15;
 const TAKE_PROFIT_1_SELL_PERCENT = 60;
-// The single target sells 90% of the original position. The final 10% is
-// managed as a runner once that sale is recorded.
 const TAKE_PROFIT_2_PERCENT = 20;
 const TAKE_PROFIT_2_SELL_PERCENT = 30;
-const TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT = TAKE_PROFIT_1_SELL_PERCENT + TAKE_PROFIT_2_SELL_PERCENT;
-const TRAILING_STOP_PERCENT = 8;
-
+const TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT =
+  TAKE_PROFIT_1_SELL_PERCENT + TAKE_PROFIT_2_SELL_PERCENT;
+const TRAILING_STOP_PERCENT = 6;
+const EARLY_PROFIT_PROTECTION_ACTIVATION_PERCENT = 6;
+const EARLY_PROFIT_PROTECTION_PULLBACK_PERCENT = 4;
+const PROFIT_FLOOR_AFTER_TP1_PERCENT = 0;
 const COMPOUND_RATES = [0.10];
-const MINIMUM_TRADE_USD = 20;
+const MINIMUM_TRADE_USD = 10;
 
 function getMomentumFailureReasons(coin, now = Date.now()) {
   if (!coin || typeof coin !== "object") return ["missing_candidate"];
+
   const failures = [];
   const createdAt = Number(coin.pairCreatedAt);
   const ageMs = now - createdAt;
@@ -39,24 +43,34 @@ function getMomentumFailureReasons(coin, now = Date.now()) {
   const momentum5m = Number(coin.priceChange5m);
   const momentum1h = Number(coin.priceChange1h);
 
-  const ageValid = Number.isFinite(createdAt) && ageMs >= MIN_PAIR_AGE_MS && ageMs <= MAX_PAIR_AGE_MS;
+  const ageValid = Number.isFinite(createdAt) &&
+    ageMs >= MIN_PAIR_AGE_MS && ageMs <= MAX_PAIR_AGE_MS;
+
   if (!ageValid) failures.push("age");
   if (!Number.isFinite(liquidity) || liquidity < MIN_LIQUIDITY_USD) failures.push("liquidity");
   if (!Number.isFinite(volume5m) || volume5m < MIN_VOLUME_5M_USD) failures.push("volume5m");
   if (!Number.isFinite(transactions5m) || transactions5m < MIN_TRANSACTIONS_5M) failures.push("transactions5m");
   if (buyRatio < MIN_BUY_RATIO_5M) failures.push("buyRatio5m");
   if (!Number.isFinite(momentum5m)) failures.push("momentum5m");
+
   if (Number.isFinite(momentum1h) && momentum1h < MIN_ENTRY_PRICE_CHANGE_1H_PERCENT)
     failures.push("momentum1hDowntrend");
+  if (Number.isFinite(momentum5m) && momentum5m > MAX_ENTRY_MOMENTUM_5M_PERCENT)
+    failures.push("overextendedMomentum5m");
+  if (Number.isFinite(momentum1h) && momentum1h > MAX_ENTRY_MOMENTUM_1H_PERCENT)
+    failures.push("overextendedMomentum1h");
+
   if (ageValid && coin.momentumPattern?.ready !== true)
     failures.push("momentumPattern");
   if (coin.momentumPattern?.observedAt !== undefined &&
-      (!Number.isFinite(Number(coin.momentumPattern.observedAt)) || now-Number(coin.momentumPattern.observedAt)>75000))
+      (!Number.isFinite(Number(coin.momentumPattern.observedAt)) ||
+       now - Number(coin.momentumPattern.observedAt) > 75000))
     failures.push("staleMomentumConfirmation");
   if (!coin.tokenAddress) failures.push("tokenAddress");
   if (coin.chainId !== "solana") failures.push("chainId");
   if (!coin.pairAddress) failures.push("pairAddress");
   if (BLOCKED_TOKEN_ADDRESSES.has(coin.tokenAddress)) failures.push("blockedTokenAddress");
+
   return failures;
 }
 
@@ -81,17 +95,15 @@ function selectUniqueMintCandidates(candidates = []) {
 }
 
 function getBuySizing(state = {}) {
-  const positions = Array.isArray(state.positions) ? state.positions : (state.position ? [state.position] : []);
+  const positions = Array.isArray(state.positions)
+    ? state.positions
+    : (state.position ? [state.position] : []);
   const equity = Number(state.cashBalance || 0) +
     positions.reduce((sum, position) => sum + Number(position.amountInvested || 0), 0);
-  const completedAndOpenBuys = Array.isArray(state.history)
-    ? state.history.filter(row => row?.type === "BUY").length
-    : 0;
-  const compoundRate = COMPOUND_RATES[completedAndOpenBuys % COMPOUND_RATES.length];
+  const compoundRate = COMPOUND_RATES[0];
   return {
     amountInvested: Math.max(MINIMUM_TRADE_USD, equity * compoundRate),
-    compoundRate,
-    compoundStep: completedAndOpenBuys % COMPOUND_RATES.length
+    compoundRate
   };
 }
 
@@ -116,7 +128,8 @@ function wholeTradeNetPnlAtExit(position, history, currentPrice, liquidityUsd, e
     priceUsd: currentPrice,
     position
   });
-  if (!exitCosts || !Number.isFinite(Number(exitCosts.feesUsd)) || !Number.isFinite(Number(exitCosts.slippageUsd))) return null;
+  if (!exitCosts || !Number.isFinite(Number(exitCosts.feesUsd)) ||
+      !Number.isFinite(Number(exitCosts.slippageUsd))) return null;
 
   const initialCosts = initialBuy.entryExecutionCosts || {};
   const remainingCosts = position.remainingEntryCosts || {
@@ -129,48 +142,110 @@ function wholeTradeNetPnlAtExit(position, history, currentPrice, liquidityUsd, e
   return Number.isFinite(projectedNetPnl) ? { projectedNetPnl, originalCostBasis } : null;
 }
 
-function chooseExit({ position, currentPrice, freshData, exitProgress, history, estimateExecutionCosts }) {
+function chooseExit({ position, currentPrice, freshData, exitProgress }) {
   const liquidityRaw = freshData?.liquidityUsd;
   const currentLiquidity = Number(liquidityRaw);
+
   if (liquidityRaw !== null && liquidityRaw !== undefined &&
       Number.isFinite(currentLiquidity) && currentLiquidity <= MIN_EXIT_LIQUIDITY_USD)
     return { percent: 100, writeOff: true, reason: "EMERGENCY WRITE-OFF: NO EXECUTABLE LIQUIDITY" };
+
   const entryLiquidity = Number(position?.entryLiquidityUsd);
   if (Number.isFinite(currentLiquidity) && currentLiquidity > MIN_EXIT_LIQUIDITY_USD &&
       entryLiquidity > 0 && currentLiquidity < entryLiquidity * (1 - MAX_EXIT_LIQUIDITY_DRAWDOWN))
-    return { percent: 100, reason: "EMERGENCY EXIT: POOL LIQUIDITY DOWN 25%" };
-  const entryPrice = Number(position?.entryPrice), price = Number(currentPrice);
+    return { percent: 100, reason: "EMERGENCY EXIT: POOL LIQUIDITY DOWN 20%" };
+
+  const entryPrice = Number(position?.entryPrice);
+  const price = Number(currentPrice);
   if (!(entryPrice > 0) || !(price > 0)) return null;
+
   if (Number.isFinite(currentLiquidity) && currentLiquidity > 0 &&
       Number(position.quantity) * price >= currentLiquidity / 2)
     return { percent: 100, writeOff: true, reason: "UNEXECUTABLE QUOTE: POSITION EXCEEDS POOL CAPACITY" };
+
   const profitPercent = (price - entryPrice) / entryPrice * 100;
   const soldPercent = Number.isFinite(Number(exitProgress?.soldPercent))
     ? Number(exitProgress.soldPercent)
-    : (position.secondTakeProfitDone ? TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT : position.firstTakeProfitDone ? TAKE_PROFIT_1_SELL_PERCENT : 0);
-  if (profitPercent <= HARD_STOP_PERCENT) return { percent: 100, triggerPrice: entryPrice * (1 + HARD_STOP_PERCENT / 100), reason: "HARD STOP -5%" };
-  if (soldPercent + 1e-6 >= TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT) {
-    const high = Number(position.highestPrice);
-    const pullback = high > 0 ? (high - price) / high * 100 : 0;
-    return pullback >= TRAILING_STOP_PERCENT
-      ? { percent: 100, triggerPrice: high * (1 - TRAILING_STOP_PERCENT / 100), reason: `TRAILING STOP -${TRAILING_STOP_PERCENT}% FROM HIGH` } : null;
+    : (position.secondTakeProfitDone
+      ? TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT
+      : position.firstTakeProfitDone ? TAKE_PROFIT_1_SELL_PERCENT : 0);
+
+  const high = Number(position.highestPrice);
+  const highProfitPercent = high > 0 ? (high - entryPrice) / entryPrice * 100 : profitPercent;
+  const pullbackFromHighPercent = high > 0 ? (high - price) / high * 100 : 0;
+
+  if (highProfitPercent + 1e-9 >= EARLY_PROFIT_PROTECTION_ACTIVATION_PERCENT &&
+      pullbackFromHighPercent + 1e-9 >= EARLY_PROFIT_PROTECTION_PULLBACK_PERCENT) {
+    return {
+      percent: 100,
+      triggerPrice: high * (1 - EARLY_PROFIT_PROTECTION_PULLBACK_PERCENT / 100),
+      reason: `EARLY PROFIT PROTECTION -${EARLY_PROFIT_PROTECTION_PULLBACK_PERCENT}% FROM HIGH AFTER +${EARLY_PROFIT_PROTECTION_ACTIVATION_PERCENT}% PEAK`
+    };
   }
-  if (soldPercent + 1e-6 < TAKE_PROFIT_1_SELL_PERCENT && profitPercent + 1e-9 >= TAKE_PROFIT_1_PERCENT)
-    return { targetOriginalPositionPercent: TAKE_PROFIT_1_SELL_PERCENT, triggerPrice: entryPrice * (1 + TAKE_PROFIT_1_PERCENT / 100), reason: "TAKE PROFIT - SELL 60% OF ORIGINAL POSITION AT +15%", takeProfit: "firstTakeProfitDone" };
+
+  if (profitPercent <= HARD_STOP_PERCENT)
+    return {
+      percent: 100,
+      triggerPrice: entryPrice * (1 + HARD_STOP_PERCENT / 100),
+      reason: "HARD STOP -5%"
+    };
+
+  if (soldPercent + 1e-6 < TAKE_PROFIT_1_SELL_PERCENT &&
+      profitPercent + 1e-9 >= TAKE_PROFIT_1_PERCENT)
+    return {
+      targetOriginalPositionPercent: TAKE_PROFIT_1_SELL_PERCENT,
+      triggerPrice: entryPrice * (1 + TAKE_PROFIT_1_PERCENT / 100),
+      reason: "TAKE PROFIT 1 - SELL 60% OF ORIGINAL POSITION AT +15%",
+      takeProfit: "firstTakeProfitDone"
+    };
+
   if (soldPercent + 1e-6 >= TAKE_PROFIT_1_SELL_PERCENT &&
       soldPercent + 1e-6 < TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT &&
       profitPercent + 1e-9 >= TAKE_PROFIT_2_PERCENT)
-    return { targetOriginalPositionPercent: TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT, triggerPrice: entryPrice * (1 + TAKE_PROFIT_2_PERCENT / 100), reason: "TAKE PROFIT - SELL 30% OF ORIGINAL POSITION AT +20%", takeProfit: "secondTakeProfitDone" };
+    return {
+      targetOriginalPositionPercent: TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT,
+      triggerPrice: entryPrice * (1 + TAKE_PROFIT_2_PERCENT / 100),
+      reason: "TAKE PROFIT 2 - SELL 30% OF ORIGINAL POSITION AT +20%",
+      takeProfit: "secondTakeProfitDone"
+    };
+
+  if (soldPercent + 1e-6 >= TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT &&
+      pullbackFromHighPercent >= TRAILING_STOP_PERCENT)
+    return {
+      percent: 100,
+      triggerPrice: high * (1 - TRAILING_STOP_PERCENT / 100),
+      reason: `TRAILING STOP -${TRAILING_STOP_PERCENT}% FROM HIGH`
+    };
+
   return null;
 }
 
 module.exports = {
-  constants: { MAX_PAIR_AGE_MS, MIN_PAIR_AGE_MS, MIN_LIQUIDITY_USD, MIN_VOLUME_5M_USD,
-    MIN_TRANSACTIONS_5M, MIN_BUY_RATIO_5M,
-    HARD_STOP_PERCENT, MIN_EXIT_LIQUIDITY_USD, MIN_ENTRY_PRICE_CHANGE_1H_PERCENT,
+  constants: {
+    MAX_PAIR_AGE_MS,
+    MIN_PAIR_AGE_MS,
+    MIN_LIQUIDITY_USD,
+    MIN_VOLUME_5M_USD,
+    MIN_TRANSACTIONS_5M,
+    MIN_BUY_RATIO_5M,
+    MAX_ENTRY_MOMENTUM_5M_PERCENT,
+    MAX_ENTRY_MOMENTUM_1H_PERCENT,
+    MIN_ENTRY_PRICE_CHANGE_1H_PERCENT,
+    HARD_STOP_PERCENT,
+    MIN_EXIT_LIQUIDITY_USD,
     MAX_EXIT_LIQUIDITY_DRAWDOWN,
-    TAKE_PROFIT_1_PERCENT, TAKE_PROFIT_1_SELL_PERCENT, TAKE_PROFIT_2_PERCENT,
-    TAKE_PROFIT_2_SELL_PERCENT, TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT, TRAILING_STOP_PERCENT, COMPOUND_RATES, MINIMUM_TRADE_USD },
+    TAKE_PROFIT_1_PERCENT,
+    TAKE_PROFIT_1_SELL_PERCENT,
+    TAKE_PROFIT_2_PERCENT,
+    TAKE_PROFIT_2_SELL_PERCENT,
+    TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT,
+    TRAILING_STOP_PERCENT,
+    EARLY_PROFIT_PROTECTION_ACTIVATION_PERCENT,
+    EARLY_PROFIT_PROTECTION_PULLBACK_PERCENT,
+    PROFIT_FLOOR_AFTER_TP1_PERCENT,
+    COMPOUND_RATES,
+    MINIMUM_TRADE_USD
+  },
   qualifiesMomentumCandidate,
   selectUniqueMintCandidates,
   getMomentumFailureReasons,
@@ -178,6 +253,3 @@ module.exports = {
   chooseExit,
   wholeTradeNetPnlAtExit
 };
-
-
-
