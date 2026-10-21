@@ -67,28 +67,37 @@ function createMomentumTracker() {
     if (!previous || now > previous.at)
       state.samples.push({at:now,price,buys5m,sells5m,volume5m,liquidity});
     state.samples = state.samples.filter(item => now-item.at <= CONFIG.RECOVERY_CONFIRMATION_SPAN_MS+75000);
-    const anchor = state.samples.findLastIndex(item => item.at <= now-CONFIG.RECOVERY_CONFIRMATION_SPAN_MS);
-    const samples = anchor >= 0 ? state.samples.slice(anchor) : state.samples;
-    const span = samples.length > 1 ? now-samples[0].at : 0;
-    const risingSteps = samples.slice(1).filter((item,index)=>item.price>samples[index].price).length;
-    const noGap = samples.slice(1).every((item,index)=>item.at-samples[index].at<=75000);
-    const freshWindow = samples.length>=3 && span>=CONFIG.RECOVERY_CONFIRMATION_SPAN_MS && noGap;
-    const lows = samples.map(item=>item.price);
+
+    const recoveryAnchor = state.samples.findLastIndex(item => item.at <= now-CONFIG.RECOVERY_CONFIRMATION_SPAN_MS);
+    const recoverySamples = recoveryAnchor >= 0 ? state.samples.slice(recoveryAnchor) : state.samples;
+    const recoverySpan = recoverySamples.length > 1 ? now-recoverySamples[0].at : 0;
+    const recoveryRisingSteps = recoverySamples.slice(1).filter((item,index)=>item.price>recoverySamples[index].price).length;
+    const recoveryNoGap = recoverySamples.slice(1).every((item,index)=>item.at-recoverySamples[index].at<=75000);
+    const recoveryFreshWindow = recoverySamples.length>=3 && recoverySpan>=CONFIG.RECOVERY_CONFIRMATION_SPAN_MS && recoveryNoGap;
+
+    const normalAnchor = state.samples.findLastIndex(item => item.at <= now-CONFIG.NORMAL_CONFIRMATION_SPAN_MS);
+    const normalSamples = normalAnchor >= 0 ? state.samples.slice(normalAnchor) : state.samples;
+    const normalSpan = normalSamples.length > 1 ? now-normalSamples[0].at : 0;
+    const normalRisingSteps = normalSamples.slice(1).filter((item,index)=>item.price>normalSamples[index].price).length;
+    const normalNoGap = normalSamples.slice(1).every((item,index)=>item.at-normalSamples[index].at<=75000);
+    const normalFreshWindow = normalSamples.length>=2 && normalSpan>=CONFIG.NORMAL_CONFIRMATION_SPAN_MS && normalNoGap;
+
+    const lows = recoverySamples.map(item=>item.price);
     const low = Math.min(...lows);
     const lowIndex = lows.lastIndexOf(low);
-    const afterLow = samples.slice(lowIndex);
+    const afterLow = recoverySamples.slice(lowIndex);
     const recoverySteps = afterLow.slice(1).filter((item,index)=>item.price>afterLow[index].price).length;
     const notFalling = previous && price>=previous.price;
-    const ordinaryContinuation = freshWindow && notFalling && price>samples[0].price && risingSteps>=2;
-    const recovery = freshWindow && notFalling && price>low && recoverySteps>=2;
+    const ordinaryContinuation = normalFreshWindow && notFalling && price>normalSamples[0].price && normalRisingSteps>=1;
+    const recovery = recoveryFreshWindow && notFalling && price>low && recoverySteps>=2;
     const transactions = buys5m+sells5m;
     const currentBuyShare = transactions>0 ? buys5m/transactions : 0;
-    const volumeIncreasing = samples.length>=3 && Number.isFinite(volume5m) && volume5m>samples[0].volume5m;
+    const volumeIncreasing = normalSamples.length>=2 && Number.isFinite(volume5m) && volume5m>normalSamples[0].volume5m;
     const highVolume = volume5m>=CONFIG.HIGH_VOLUME_5M_USD && transactions>=CONFIG.HIGH_TRANSACTIONS_5M;
     // A cached flat snapshot should not demand a second uptick after a genuine
-    // upward move. Keep the full window, net upward direction and strong flow.
-    const strongActivityContinuation = freshWindow && !!previous && price>previous.price &&
-      price>samples[0].price && risingSteps>=1 && highVolume &&
+    // upward move. Keep the net upward direction and strong flow.
+    const strongActivityContinuation = normalFreshWindow && !!previous && price>previous.price &&
+      price>normalSamples[0].price && normalRisingSteps>=1 && highVolume &&
       currentBuyShare>=CONFIG.STRONG_ACTIVITY_MIN_BUY_SHARE;
     const continuation = ordinaryContinuation || strongActivityContinuation;
     const activitySufficient = volume5m>=CONFIG.MIN_VOLUME_5M_USD && transactions>=CONFIG.MIN_TRANSACTIONS_5M &&
@@ -109,16 +118,16 @@ function createMomentumTracker() {
     // even when the same snapshot also qualifies as activity continuation.
     const entryRoute = ready ? (confirmedDeepRecovery ? "local_recovery" :
       (continuation ? "activity_continuation" : "local_recovery")) : null;
-    const reason = !freshWindow ? "waiting_for_fresh_60s_window"
+    const reason = !(normalFreshWindow || recoveryFreshWindow) ? "waiting_for_fresh_confirmation_window"
       : !(continuation || recovery) ? "recent_price_not_confirmed_upward"
       : !liquidityRetained ? "liquidity_below_floor"
-      : currentBuyShare<CONFIG.MIN_BUY_SHARE_5M ? "buy_share_below_55_percent"
+      : currentBuyShare<CONFIG.MIN_BUY_SHARE_5M ? "buy_share_below_60_percent"
       : !activitySufficient ? "volume_neither_growing_nor_sufficiently_high" : null;
     const reboundFromLowPercent = low>0 ? (price/low-1)*100 : 0;
-    const pumpPercent = state.basePrice>0 ? (state.peakPrice/state.basePrice-1)*100 : 0;
     const recovering = !!previous && price>previous.price;
-    const confirmationSpanMs = span;
-    const flowSpanMs = span;
+    const confirmationSpanMs = entryRoute === "local_recovery" ? recoverySpan : normalSpan;
+    const risingSteps = entryRoute === "local_recovery" ? recoveryRisingSteps : normalRisingSteps;
+    const flowSpanMs = confirmationSpanMs;
     const flowBuys = null, flowSells = null;
     state.pumpSeen = state.pumpSeen || price>state.basePrice;
 
@@ -145,5 +154,3 @@ function createMomentumTracker() {
 }
 
 module.exports = { createMomentumTracker };
-
-
