@@ -66,7 +66,7 @@ def test_wait_actual_fill(c,sample):
 
 def test_time_stop(c,sample):
     op,bars,_=sample
-    p=dict(entry=10.2,stop=9.9,distance=.3,entered=op.isoformat(),tp_done=False)
+    p=dict(entry=10.12,stop=9.9,distance=.3,entered=op.isoformat(),tp_done=False)
     assert managed_exit(p,bars,op+timedelta(minutes=21),c['strategy'])[0]=='flat_time_stop'
 
 def test_stats():
