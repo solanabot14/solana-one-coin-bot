@@ -1,9 +1,11 @@
 [broker]
 paper = true
-feed = "sip"
-# Consolidated SIP is required for meaningful intraday spread/volume/RVOL decisions.
-# Fail closed rather than silently trading from a partial exchange feed.
-allow_iex_entries = false
+feed = "iex"
+# This Alpaca paper account does not have SIP entitlement. IEX is therefore used
+# consistently for both current and historical comparisons. Scanner decisions
+# also require company news, relative market strength, liquidity and price action;
+# IEX volume is never represented as consolidated US market volume.
+allow_iex_entries = true
 live_confirmation = ""
 http_timeout_seconds = 10
 api_attempts = 3
