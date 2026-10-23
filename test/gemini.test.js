@@ -69,6 +69,23 @@ test("RugCheck pool accounts are excluded before summing top holder concentratio
   for (let i = 0; i < 10; i++) topHolders.push({ address: "holder-" + i, owner: "holder-" + i, pct: 4 });
   assert.equal(extractTop10Concentration({ topHolders, knownAccounts: { "pool-account": { name: "AMM Pool", type: "AMM" } } }), 40);
 });
+test("Gemini can remove an invalid closed paper position and reverse its full realized P&L", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gemini-ledger-correction-"));
+  try {
+    const trader = createGeminiTrader(path.join(dir, "state.json"));
+    trader.buy(candidate({ tokenAddress: "FakeMint", symbol: "FAKE" }), 10);
+    const positionId = trader.getState().position.id;
+    trader.sell(1.2, 95, "TP +15% SELL 95%");
+    const falseClose = trader.sell(1000, 5, "MANUAL CLOSE");
+    const before = trader.getState().cashUsd;
+    const result = trader.removeClosedPosition({ positionId, triggerSellId: falseClose.trade.id, tokenAddress: "FakeMint", symbol: "FAKE", minimumRealizedPnlUsd: 1 });
+    assert.equal(result.success, true);
+    assert.equal(result.removedRows, 3);
+    assert.ok(Math.abs(trader.getState().cashUsd - 200) < 1e-9);
+    assert.equal(trader.getState().history.length, 0);
+    assert.ok(before > 1000);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
 test("Gemini paper sells allocate 50%, then 30%, leaving 20% runner", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gemini-test-"));
   try {
