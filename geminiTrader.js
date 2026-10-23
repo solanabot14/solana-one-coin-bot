@@ -80,6 +80,25 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     console.log("[" + (reason.startsWith("TP") ? "SELL " + reason : "SELL") + "] Gemini PAPER", p.symbol, reason, "$" + value.toFixed(2));
     return { success: true, trade };
   }
+  function removeClosedPosition({ positionId, triggerSellId, tokenAddress, symbol, minimumRealizedPnlUsd = 0 }) {
+    if (!positionId || !triggerSellId || !tokenAddress || !symbol) return { success: false, reason: "invalid correction target" };
+    if (state.position?.id === positionId) return { success: false, reason: "position is still open" };
+    const trigger = state.history.find(row => row.type === "SELL" && row.id === triggerSellId && row.positionId === positionId && row.tokenAddress === tokenAddress && row.symbol === symbol);
+    const buy = state.history.find(row => row.type === "BUY" && row.id === positionId && row.tokenAddress === tokenAddress && row.symbol === symbol);
+    if (!trigger || !buy) return { success: false, reason: "target records not found" };
+    const rows = state.history.filter(row => row.positionId === positionId || (row.type === "BUY" && row.id === positionId));
+    const sells = rows.filter(row => row.type === "SELL");
+    if (!sells.length || sells.some(row => !Number.isFinite(Number(row.pnlUsd)))) return { success: false, reason: "incomplete trade history" };
+    const realizedPnlUsd = sells.reduce((total, row) => total + Number(row.pnlUsd), 0);
+    if (!Number.isFinite(realizedPnlUsd) || realizedPnlUsd < minimumRealizedPnlUsd || state.cashUsd < realizedPnlUsd) return { success: false, reason: "correction amount failed validation" };
+    const next = structuredClone(state);
+    next.cashUsd = Number((next.cashUsd - realizedPnlUsd).toFixed(12));
+    next.history = next.history.filter(row => row.positionId !== positionId && !(row.type === "BUY" && row.id === positionId));
+    next.ledgerCorrections = Array.isArray(next.ledgerCorrections) ? next.ledgerCorrections : [];
+    next.ledgerCorrections.unshift({ type: "INVALID_PAPER_POSITION_REMOVED", positionId, symbol, tokenAddress, removedRows: rows.length, removedRealizedPnlUsd: realizedPnlUsd, time: new Date().toISOString() });
+    commit(next);
+    return { success: true, removedRows: rows.length, removedRealizedPnlUsd: realizedPnlUsd, cashUsd: next.cashUsd };
+  }
   function updatePosition(patch) {
     if (!state.position || state.position.id !== patch?.id) return false;
     const next = structuredClone(state);
@@ -96,8 +115,21 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     console.log("[REJECTED: " + reason + "] Gemini", candidate.symbol || candidate.tokenAddress || "unknown");
   }
   function setScanTime() { const next = structuredClone(state); next.lastScanAt = new Date().toISOString(); commit(next); }
-  return { getSizing, buy, sell, recordRejection, setScanTime, updatePosition, getState: () => structuredClone(state), file };
+  return { getSizing, buy, sell, removeClosedPosition, recordRejection, setScanTime, updatePosition, getState: () => structuredClone(state), file };
 }
 let instance;
-const current = () => instance ||= createGeminiTrader();
+const current = () => {
+  if (!instance) {
+    instance = createGeminiTrader();
+    const correction = instance.removeClosedPosition({
+      positionId: "01eea25e-e79a-43f5-8514-157b018e6f08",
+      triggerSellId: "3d8c998e-d7e1-4059-8294-6a0a7b11b448",
+      tokenAddress: "8fDi5agbC6HaqjFjMkRzzApcZEse5BR3RtfL9QsmoJxA",
+      symbol: "BiuBiuBiu",
+      minimumRealizedPnlUsd: 30000
+    });
+    if (correction.success) console.warn("[GEMINI LEDGER CORRECTION]", JSON.stringify(correction));
+  }
+  return instance;
+};
 module.exports = { createGeminiTrader, defaultFile, getSizing: (...a) => current().getSizing(...a), getState: (...a) => current().getState(...a), buy: (...a) => current().buy(...a), sell: (...a) => current().sell(...a), recordRejection: (...a) => current().recordRejection(...a), setScanTime: (...a) => current().setScanTime(...a), updatePosition: (...a) => current().updatePosition(...a) };
