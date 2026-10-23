@@ -40,7 +40,7 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
       symbol: candidate.symbol || "Unknown", name: candidate.name || candidate.symbol || "Unknown",
       entryPrice: price, quantity: size / price, originalQuantity: size / price, originalCostUsd: size,
       amountInvestedUsd: size, entryTime: new Date().toISOString(), highestPrice: price,
-      tp1Done: false, tp2Done: false, remainingPercent: 100, strategy: "Gemini Paper v2: TP20 / SL8 / 10–12.5% cash",
+      tp1Done: false, tp2Done: false, remainingPercent: 100, strategy: "Gemini Paper v3: sell 95% at +15% / trail final 5% by 8% / SL8 / 10–12.5% cash",
       sizingPercent: sizing.percent,
       entryDetails: candidate.geminiDetails || {}
     };
@@ -72,7 +72,7 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
       reason, time: new Date().toISOString(), mode: "PAPER"
     };
     next.history.unshift(trade);
-    if (reason === "TP1 +50%") next.position.tp1Done = true;
+    if (reason === "TP1 +50%" || reason === "TP +15% SELL 95%") next.position.tp1Done = true;
     if (reason === "TP2 +100%") next.position.tp2Done = true;
     if (next.position) next.position.remainingPercent = Math.max(0, next.position.quantity / next.position.originalQuantity * 100);
     if (next.position.quantity <= p.originalQuantity * 0.000001) next.position = null;
