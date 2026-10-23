@@ -55,6 +55,22 @@ function createJanMvpBot({
   const livePositionSnapshots = new Map();
   const isActive = session => activeSession === session && !session.signal.aborted;
 
+  // Latest full exit at a loss for this token, from persisted SWARM execution rows (any slot).
+  function lastLossExitAt(tokenAddress) {
+    let latest = 0;
+    for (const row of trader.getState().executions) {
+      if (row.type !== "SELL" || row.tokenAddress !== tokenAddress) continue;
+      if (!(Number(row.percentSold) >= 100) || !(Number(row.pnl) < 0)) continue;
+      const at = Date.parse(row.time);
+      if (Number.isFinite(at) && at > latest) latest = at;
+    }
+    return latest;
+  }
+  function inReentryCooldown(tokenAddress) {
+    const exitedAt = lastLossExitAt(tokenAddress);
+    return exitedAt > 0 && Date.now() - exitedAt < TOKEN_COOLDOWN_MS;
+  }
+
   async function notifyMilestones(closedTrade, milestones) {
     for (const milestone of milestones || []) {
       const state = trader.getDashboardState();
@@ -107,6 +123,7 @@ function createJanMvpBot({
     const og = getOgPortfolio();
     const position = og?.position;
     if (!position || !isActive(session)) return;
+    if (inReentryCooldown(position.tokenAddress)) return;
     if (tokenLossGuard.lossStreak(position.tokenAddress) >= 2) {
       if (!blockedMirrorNotices.has(position.tokenAddress)) {
         blockedMirrorNotices.add(position.tokenAddress);
@@ -202,6 +219,10 @@ function createJanMvpBot({
       while (candidateIndex < usable.length) {
         const candidate = usable[candidateIndex++];
         if (occupied.has(candidate.tokenAddress)) continue;
+        if (inReentryCooldown(candidate.tokenAddress)) {
+          console.log(`SWARM REENTRY COOLDOWN | ${candidate.symbol} | skipped | loss exit within ${TOKEN_COOLDOWN_MS / 60000} minutes`);
+          continue;
+        }
         if (!tokenLossGuard.allows(candidate)) continue;
         const lock = await checkLiquidityLock(candidate.tokenAddress);
         if (!lock?.allowed || Number(lock.lockedPercent) < 85) {
@@ -212,7 +233,24 @@ function createJanMvpBot({
         break;
       }
       if (!coin) break;
-      const result = trader.buy(slot.id, coin, { source: "SWARM_V31_DISCOVERY" });
+
+      let freshQuote = null;
+      try {
+        freshQuote = await getTokenData(coin.tokenAddress, { signal: session.signal, pairAddress: coin.pairAddress || undefined });
+      } catch (error) {
+        if (isActive(session)) console.warn("SWARM ENTRY QUOTE | " + coin.symbol + " | skipped | " + error.message);
+        continue;
+      }
+      if (!isActive(session)) return;
+      const freshPrice = Number(freshQuote?.priceUsd);
+      if (!(freshPrice > 0) || (freshQuote.tokenAddress && freshQuote.tokenAddress !== coin.tokenAddress) ||
+          occupied.has(coin.tokenAddress) || inReentryCooldown(coin.tokenAddress)) {
+        console.log("SWARM ENTRY QUOTE | " + coin.symbol + " | skipped | no fresh price or state changed");
+        continue;
+      }
+      const entryCoin = { ...coin, priceUsd: freshPrice };
+
+      const result = trader.buy(slot.id, entryCoin, { source: "SWARM_V31_DISCOVERY" });
       if (result.success) {
         occupied.add(coin.tokenAddress);
         console.log(`SWARM BUY | Slot ${slot.id} | ${coin.symbol} | ${Number(result.trade.amountInvested).toFixed(2)}`);
@@ -413,6 +451,7 @@ function createJanMvpBot({
       };
     },
     getState: () => trader.getState(),
+    isReentryBlocked: inReentryCooldown,
     closeAllPositions
   };
 }
