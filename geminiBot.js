@@ -1,4 +1,4 @@
-const { getGeckoPools, getDexProfiles, getDexPairs, getPairDetails } = require("./geminiSources");
+const { getGeckoPools, getDexProfiles, getDexPairs, getPairDetails, getGeckoTokenQuote } = require("./geminiSources");
 const { retry } = require("./geminiHttp");
 const { evaluateCandidate } = require("./geminiFilter");
 const traderDefault = require("./geminiTrader");
@@ -31,8 +31,8 @@ function slippageFor(pair) {
   const change = Math.abs(Number(pair?.priceChange?.m5) || 0);
   return Math.min(1000, Math.max(200, 200 + Math.round(change * 20) + Math.max(0, 15 - tx) * 20));
 }
-function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetcher = getGeckoPools, profileFetcher = getDexProfiles, pairFetcher = getDexPairs, pairDetails = getPairDetails, filter = evaluateCandidate } = {}) {
-  let lastMonitorAt = null, lastQuoteAt = null;
+function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetcher = getGeckoPools, profileFetcher = getDexProfiles, pairFetcher = getDexPairs, pairDetails = getPairDetails, tokenQuoteFallback = getGeckoTokenQuote, filter = evaluateCandidate } = {}) {
+  let lastMonitorAt = null, lastQuoteAt = null, lastQuoteFailureAt = null;
   let session = null, scanInterval = null, monitorInterval = null, busyScan = false, busyMonitor = false, lastError = null;
   const isActive = s => session === s && !s.controller.signal.aborted;
   async function candidateForPool(pool, signal) {
@@ -99,16 +99,40 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
       lastMonitorAt = new Date().toISOString();
       const p = trader.getState().position;
       if (!p) return;
-      const pair = p.pairAddress ? await pairDetails(p.pairAddress, s.controller.signal) : null;
-      const price = Number(pair?.priceUsd || (await (async () => {
-        const pairs = await pairFetcher(p.tokenAddress, s.controller.signal);
-        return pairs.sort((a,b)=>(Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0]?.priceUsd;
-      })()));
-      if (!isActive(s) || !Number.isFinite(price) || price <= 0) return;
+      let pair = null;
+      if (p.pairAddress) {
+        try { pair = await pairDetails(p.pairAddress, s.controller.signal); }
+        catch (error) { console.warn("[INFO] Gemini pair quote failed; trying alternate sources", error.message); }
+      }
+      let price = Number(pair?.priceUsd);
+      if (!(price > 0) || !Number.isFinite(price)) {
+        try {
+          const pairs = await pairFetcher(p.tokenAddress, s.controller.signal);
+          const selectedPair = pairs.sort((a,b)=>(Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0] || null;
+          price = Number(selectedPair?.priceUsd);
+        } catch (error) { console.warn("[INFO] Gemini token quote failed; trying GeckoTerminal", error.message); }
+      }
+      let fallbackQuote = null;
+      if (!(price > 0) || !Number.isFinite(price)) {
+        try { fallbackQuote = await tokenQuoteFallback(p.tokenAddress, s.controller.signal); }
+        catch (error) { console.warn("[INFO] Gemini GeckoTerminal quote failed", error.message); }
+        price = Number(fallbackQuote?.priceUsd);
+      }
+      if (!isActive(s) || !Number.isFinite(price) || price <= 0) {
+        const now = Date.now();
+        if (isActive(s) && (!lastQuoteFailureAt || now - lastQuoteFailureAt > 60_000)) {
+          lastQuoteFailureAt = now;
+          console.warn("[INFO] Gemini position has no quote from DexScreener or GeckoTerminal; keeping position open", p.symbol, p.tokenAddress);
+        }
+        return;
+      }
       lastQuoteAt = new Date().toISOString();
       lastError = null;
       const latest = trader.getState().position;
       if (!latest || latest.id !== p.id) return;
+      if (fallbackQuote?.pairAddress && fallbackQuote.pairAddress !== latest.pairAddress) {
+        trader.updatePosition?.({ ...latest, pairAddress: fallbackQuote.pairAddress });
+      }
       if (price > latest.highestPrice) {
         const state = trader.getState();
         state.position.highestPrice = price;
@@ -142,7 +166,7 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
     scanInterval = monitorInterval = null;
     console.log("[INFO] Gemini Bot stopped; saved paper position retained.");
   }
-  return { start, stop, getStatus: () => !!session, getLastError: () => lastError, getDiagnostics: () => ({ lastMonitorAt, lastQuoteAt, lastScanAt: trader.getState().lastScanAt, activity: trader.getState().position ? "MONITORING POSITION" : "SCANNING" }), scan: () => scan(session), monitor: () => monitor(session) };
+  return { start, stop, getStatus: () => !!session, getLastError: () => lastError, getDiagnostics: () => ({ lastMonitorAt, lastQuoteAt, lastQuoteFailureAt, lastScanAt: trader.getState().lastScanAt, activity: trader.getState().position ? "MONITORING POSITION" : "SCANNING" }), scan: () => scan(session), monitor: () => monitor(session) };
 }
 module.exports = { createGeminiBot, ...createGeminiBot() };
 

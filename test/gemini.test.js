@@ -68,3 +68,34 @@ test("Gemini paper sells allocate 50%, then 30%, leaving 20% runner", () => {
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+
+test("Gemini monitor uses GeckoTerminal when DexScreener cannot quote the open position", async () => {
+  let position = {
+    id: "open-1", tokenAddress: "Mint", pairAddress: "old-pair", symbol: "STUCK",
+    entryPrice: 1, quantity: 10, originalQuantity: 10, originalCostUsd: 10,
+    amountInvestedUsd: 10, entryTime: new Date(Date.now() - 20 * 60_000).toISOString(),
+    highestPrice: 1, remainingPercent: 100
+  };
+  let fallbackCalls = 0;
+  let sold = null;
+  const trader = {
+    getState: () => ({ position: position && { ...position }, lastScanAt: null }),
+    updatePosition: patch => { position = { ...position, ...patch }; },
+    sell: (price, percent, reason) => { sold = { price, percent, reason }; return { success: true }; },
+    setScanTime() {}, recordRejection() {}
+  };
+  const fakeTimers = { setInterval: () => 1, clearInterval() {} };
+  const bot = require("../geminiBot").createGeminiBot({
+    trader, timers: fakeTimers,
+    pairDetails: async () => { throw new Error("pair unavailable"); },
+    pairFetcher: async () => { throw new Error("token lookup unavailable"); },
+    tokenQuoteFallback: async () => { fallbackCalls++; return { priceUsd: 1.25, pairAddress: "live-pair", quoteProvider: "GeckoTerminal" }; },
+    poolFetcher: async () => [], profileFetcher: async () => [], filter: async () => ({ accepted: false })
+  });
+  bot.start();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  bot.stop();
+  assert.equal(fallbackCalls, 1);
+  assert.equal(position.pairAddress, "live-pair");
+  assert.deepEqual(sold, { price: 1.25, percent: 100, reason: "TP +20% FULL EXIT" });
+});
