@@ -28,6 +28,18 @@ const MOMENTUM_EXIT_STRONG_5M = -1;
 const MOMENTUM_EXIT_BUY_RATIO = 0.45;
 const MOMENTUM_EXIT_MIN_TRANSACTIONS = 10;
 
+// A token is in cooldown after any full loss exit (pnl < 0), across all slots.
+// Reads the persisted SWARM execution log, which sell() saves before any refill.
+function tokenCooldownActive(executions, tokenAddress, now = Date.now(), cooldownMs = TOKEN_COOLDOWN_MS) {
+  if (!tokenAddress || !Array.isArray(executions)) return false;
+  return executions.some(row => {
+    if (!row || row.type !== "SELL" || row.tokenAddress !== tokenAddress) return false;
+    if (!(Number(row.percentSold) >= 100) || !(Number(row.pnl) < 0)) return false;
+    const elapsed = now - Date.parse(row.time);
+    return Number.isFinite(elapsed) && elapsed >= 0 && elapsed < cooldownMs;
+  });
+}
+
 function createJanMvpBot({
   trader = createJanMvpTrader(),
   getTokenData = market.getTokenData,
@@ -54,6 +66,12 @@ function createJanMvpBot({
   let candidateCacheAt = 0;
   const livePositionSnapshots = new Map();
   const isActive = session => activeSession === session && !session.signal.aborted;
+
+  async function freshEntryPrice(coin, session) {
+    const quote = await getTokenData(coin.tokenAddress, { signal: session.signal, pairAddress: coin.pairAddress || undefined });
+    const priceUsd = Number(quote && quote.priceUsd);
+    return priceUsd > 0 && Number.isFinite(priceUsd) ? priceUsd : null;
+  }
 
   async function notifyMilestones(closedTrade, milestones) {
     for (const milestone of milestones || []) {
@@ -114,6 +132,7 @@ function createJanMvpBot({
       }
       return;
     }
+    if (tokenCooldownActive(trader.getState().executions, position.tokenAddress)) return;
     blockedMirrorNotices.delete(position.tokenAddress);
 
     const sourceOgPositionId = ogPositionId(position);
@@ -146,6 +165,10 @@ function createJanMvpBot({
       buys5m: Number(position.entryBuys5m) || 0,
       sells5m: Number(position.entrySells5m) || 0
     };
+
+    const mirrorPrice = await freshEntryPrice(coin, session);
+    if (!isActive(session) || !mirrorPrice) return;
+    coin.priceUsd = mirrorPrice;
 
     const result = trader.buy(slot.id, coin, {
       source: "OG_MIRROR",
@@ -195,6 +218,7 @@ function createJanMvpBot({
       !occupied.has(coin.tokenAddress)
     );
 
+    const executions = trader.getState().executions;
     let candidateIndex = 0;
     for (const slot of slots) {
       if (!isActive(session)) return;
@@ -202,13 +226,23 @@ function createJanMvpBot({
       while (candidateIndex < usable.length) {
         const candidate = usable[candidateIndex++];
         if (occupied.has(candidate.tokenAddress)) continue;
+        if (tokenCooldownActive(executions, candidate.tokenAddress)) {
+          console.log(`SWARM TOKEN COOLDOWN | ${candidate.symbol} | skipped | loss exit within ${TOKEN_COOLDOWN_MS / 60000} minutes`);
+          continue;
+        }
         if (!tokenLossGuard.allows(candidate)) continue;
         const lock = await checkLiquidityLock(candidate.tokenAddress);
         if (!lock?.allowed || Number(lock.lockedPercent) < 85) {
           console.log("SWARM LP LOCK GATE | " + candidate.symbol + " | skipped | " + (lock?.reason || "LOCK_STATUS_UNAVAILABLE"));
           continue;
         }
-        coin = candidate;
+        const freshPrice = await freshEntryPrice(candidate, session);
+        if (!isActive(session)) return;
+        if (!freshPrice) {
+          console.log(`SWARM ENTRY PRICE | ${candidate.symbol} | skipped | no fresh quote`);
+          continue;
+        }
+        coin = { ...candidate, priceUsd: freshPrice };
         break;
       }
       if (!coin) break;
@@ -417,4 +451,4 @@ function createJanMvpBot({
   };
 }
 
-module.exports = { createJanMvpBot, ...createJanMvpBot() };
+module.exports = { createJanMvpBot, tokenCooldownActive, TOKEN_COOLDOWN_MS, ...createJanMvpBot() };
