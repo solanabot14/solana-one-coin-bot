@@ -33,6 +33,7 @@ function slippageFor(pair) {
 }
 function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetcher = getGeckoPools, profileFetcher = getDexProfiles, pairFetcher = getDexPairs, pairDetails = getPairDetails, tokenQuoteFallback = getGeckoTokenQuote, filter = evaluateCandidate } = {}) {
   let lastMonitorAt = null, lastQuoteAt = null, lastQuoteFailureAt = null;
+  const lastPriceByPositionId = new Map();
   let session = null, scanInterval = null, monitorInterval = null, busyScan = false, busyMonitor = false, lastError = null;
   const isActive = s => session === s && !s.controller.signal.aborted;
   async function candidateForPool(pool, signal) {
@@ -130,6 +131,7 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
       lastError = null;
       const latest = trader.getState().position;
       if (!latest || latest.id !== p.id) return;
+      lastPriceByPositionId.set(latest.id, price);
       if (fallbackQuote?.pairAddress && fallbackQuote.pairAddress !== latest.pairAddress) {
         trader.updatePosition?.({ ...latest, pairAddress: fallbackQuote.pairAddress });
       }
@@ -166,7 +168,7 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
     scanInterval = monitorInterval = null;
     console.log("[INFO] Gemini Bot stopped; saved paper position retained.");
   }
-  return { start, stop, getStatus: () => !!session, getLastError: () => lastError, getDiagnostics: () => ({ lastMonitorAt, lastQuoteAt, lastQuoteFailureAt, lastScanAt: trader.getState().lastScanAt, activity: trader.getState().position ? "MONITORING POSITION" : "SCANNING" }), scan: () => scan(session), monitor: () => monitor(session) };
+  return { start, stop, getStatus: () => !!session, getLastError: () => lastError, lastKnownPrice: positionId => lastPriceByPositionId.get(positionId) || 0, getDiagnostics: () => ({ lastMonitorAt, lastQuoteAt, lastQuoteFailureAt, lastScanAt: trader.getState().lastScanAt, activity: trader.getState().position ? "MONITORING POSITION" : "SCANNING" }), scan: () => scan(session), monitor: () => monitor(session) };
 }
 module.exports = { createGeminiBot, ...createGeminiBot() };
 
