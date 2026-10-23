@@ -48,21 +48,21 @@ async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety
   if (Number(holders.top10Percent) >= MAX_TOP10_PERCENT)
     return reject("Top 10 Concentration At or Above 35%", { top10Percent: Number(holders.top10Percent) });
 
-  let liquidity;
-  try { liquidity = await liquidityLock(candidate.tokenAddress, signal); }
+  let lockStatus;
+  try { lockStatus = await liquidityLock(candidate.tokenAddress, signal); }
   catch (error) { return reject("Liquidity Lock Check Failed", { error: error.message }); }
-  if (!liquidity?.verified || !Number.isFinite(Number(liquidity.lockedPercent)))
-    return reject("Liquidity Lock Data Unverified", { reason: liquidity?.reason || "No verified LP lock percentage" });
-  if (Number(liquidity.lockedPercent) < MIN_LP_LOCKED_PERCENT)
+  if (!lockStatus?.verified || !Number.isFinite(Number(lockStatus.lockedPercent)))
+    return reject("Liquidity Lock Data Unverified", { reason: lockStatus?.reason || "No verified LP lock percentage" });
+  if (Number(lockStatus.lockedPercent) < MIN_LP_LOCKED_PERCENT)
     return reject("Insufficient LP Locked or Burned", {
-      lpLockedPercent: Number(liquidity.lockedPercent),
+      lpLockedPercent: Number(lockStatus.lockedPercent),
       minimum: MIN_LP_LOCKED_PERCENT
     });
 
   return {
     accepted: true,
     reason: "All Gemini safety checks passed",
-    details: { liquidityUsd: liquidity, lpLockedPercent: Number(liquidity.lockedPercent), poolAgeMs: age, transactions5m: tx, buyRatio, priceChange5m, top10Percent: Number(holders.top10Percent) },
+    details: { liquidityUsd: liquidity, lpLockedPercent: Number(lockStatus.lockedPercent), poolAgeMs: age, transactions5m: tx, buyRatio, priceChange5m, top10Percent: Number(holders.top10Percent) },
     mintSafety: mint
   };
 }
