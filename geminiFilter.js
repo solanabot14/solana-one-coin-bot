@@ -1,4 +1,4 @@
-const { getMintSafety, getHolderConcentration } = require("./geminiSources");
+const { getMintSafety, getHolderConcentration, getLiquidityLock } = require("./geminiSources");
 
 const MIN_LIQUIDITY_USD = 5000;
 const MIN_POOL_AGE_MS = 2 * 60 * 1000;
@@ -6,9 +6,10 @@ const MAX_POOL_AGE_MS = 120 * 60 * 1000;
 const MIN_TRANSACTIONS_5M = 15;
 const MIN_BUY_RATIO_5M = 0.55;
 const MAX_TOP10_PERCENT = 35;
+const MIN_LP_LOCKED_PERCENT = 95;
 const MIN_PRICE_CHANGE_5M = 0;
 
-async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety, holderConcentration = getHolderConcentration } = {}) {
+async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety, holderConcentration = getHolderConcentration, liquidityLock = getLiquidityLock } = {}) {
   const reject = (reason, details = {}) => ({ accepted: false, reason, details });
   const priceChange5m = Number(candidate.priceChange5m);
   if (!Number.isFinite(priceChange5m)) return reject("5m Price Trend Unverified");
@@ -47,10 +48,21 @@ async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety
   if (Number(holders.top10Percent) >= MAX_TOP10_PERCENT)
     return reject("Top 10 Concentration At or Above 35%", { top10Percent: Number(holders.top10Percent) });
 
+  let lockStatus;
+  try { lockStatus = await liquidityLock(candidate.tokenAddress, signal); }
+  catch (error) { return reject("Liquidity Lock Check Failed", { error: error.message }); }
+  if (!lockStatus?.verified || !Number.isFinite(Number(lockStatus.lockedPercent)))
+    return reject("Liquidity Lock Data Unverified", { reason: lockStatus?.reason || "No verified LP lock percentage" });
+  if (Number(lockStatus.lockedPercent) < MIN_LP_LOCKED_PERCENT)
+    return reject("Insufficient LP Locked or Burned", {
+      lpLockedPercent: Number(lockStatus.lockedPercent),
+      minimum: MIN_LP_LOCKED_PERCENT
+    });
+
   return {
     accepted: true,
     reason: "All Gemini safety checks passed",
-    details: { liquidityUsd: liquidity, poolAgeMs: age, transactions5m: tx, buyRatio, priceChange5m, top10Percent: Number(holders.top10Percent) },
+    details: { liquidityUsd: liquidity, lpLockedPercent: Number(lockStatus.lockedPercent), poolAgeMs: age, transactions5m: tx, buyRatio, priceChange5m, top10Percent: Number(holders.top10Percent) },
     mintSafety: mint
   };
 }
@@ -62,5 +74,6 @@ module.exports = {
   MAX_POOL_AGE_MS,
   MIN_TRANSACTIONS_5M,
   MIN_BUY_RATIO_5M,
-  MAX_TOP10_PERCENT
+  MAX_TOP10_PERCENT,
+  MIN_LP_LOCKED_PERCENT
 };

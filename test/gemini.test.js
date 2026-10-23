@@ -20,13 +20,28 @@ function candidate(overrides = {}) {
 }
 const safeDeps = {
   mintSafety: async () => ({ verified: true, mintRevoked: true, freezeDisabled: true }),
-  holderConcentration: async () => ({ verified: true, top10Percent: 34.9 })
+  holderConcentration: async () => ({ verified: true, top10Percent: 34.9 }),
+  liquidityLock: async () => ({ verified: true, lockedPercent: 100 })
 };
 
 test("Gemini accepts only a candidate passing all strict safety checks", async () => {
   const result = await evaluateCandidate(candidate(), safeDeps);
   assert.equal(result.accepted, true);
   assert.equal(result.details.transactions5m, 15);
+});
+test("Gemini rejects candidates without a strong verified LP lock", async () => {
+  const lowLock = await evaluateCandidate(candidate(), {
+    ...safeDeps, liquidityLock: async () => ({ verified: true, lockedPercent: 94.99 })
+  });
+  assert.equal(lowLock.accepted, false);
+  assert.equal(lowLock.reason, "Insufficient LP Locked or Burned");
+  assert.equal(lowLock.details.minimum, 95);
+
+  const unknownLock = await evaluateCandidate(candidate(), {
+    ...safeDeps, liquidityLock: async () => ({ verified: false, reason: "report unavailable" })
+  });
+  assert.equal(unknownLock.accepted, false);
+  assert.equal(unknownLock.reason, "Liquidity Lock Data Unverified");
 });
 test("Gemini rejects missing authority evidence and excessive holder concentration", async () => {
   assert.equal((await evaluateCandidate(candidate(), { ...safeDeps, mintSafety: async () => ({ verified: false }) })).accepted, false);

@@ -57,6 +57,33 @@ async function getHolderConcentration(tokenAddress, signal) {
   return { verified: concentration != null, top10Percent: concentration };
 }
 
+// RugCheck summary reports the share of LP value locked or burned. Cache briefly to
+// avoid repeated summary requests while scanning the same candidate.
+const liquidityLockCache = new Map();
+const LIQUIDITY_LOCK_CACHE_MS = 30_000;
+async function getLiquidityLock(tokenAddress, signal) {
+  if (!tokenAddress) return { verified: false, reason: "Liquidity lock mint missing" };
+  const key = String(tokenAddress);
+  const cached = liquidityLockCache.get(key);
+  if (cached && Date.now() - cached.at < LIQUIDITY_LOCK_CACHE_MS) return cached.result;
+
+  let result;
+  try {
+    const { data } = await retry(() => axios.get(
+      RUGCHECK_BASE + encodeURIComponent(key) + "/report/summary",
+      { timeout: 12000, signal, headers: { accept: "application/json" } }
+    ));
+    const lockedPercent = Number(data?.lpLockedPct);
+    result = Number.isFinite(lockedPercent) && lockedPercent >= 0 && lockedPercent <= 100
+      ? { verified: true, lockedPercent }
+      : { verified: false, reason: "RugCheck liquidity lock percentage unavailable" };
+  } catch (error) {
+    result = { verified: false, reason: "RugCheck liquidity lock check failed", error: error.message };
+  }
+  liquidityLockCache.set(key, { at: Date.now(), result });
+  return result;
+}
+
 const geckoTokenQuoteCache = new Map();
 const GECKO_TOKEN_QUOTE_CACHE_MS = 30_000;
 
@@ -160,4 +187,4 @@ async function getPairDetails(pairAddress, signal) {
   return Array.isArray(data?.pairs) ? data.pairs[0] || null : null;
 }
 
-module.exports = { getMintSafety, getHolderConcentration, extractTop10Concentration, getGeckoPools, getGeckoTokenQuote, getDexProfiles, getDexPairs, getPairDetails };
+module.exports = { getMintSafety, getHolderConcentration, getLiquidityLock, extractTop10Concentration, getGeckoPools, getGeckoTokenQuote, getDexProfiles, getDexPairs, getPairDetails };
