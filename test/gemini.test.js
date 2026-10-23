@@ -76,7 +76,7 @@ test("Gemini can remove an invalid closed paper position and reverse its full re
     trader.buy(candidate({ tokenAddress: "FakeMint", symbol: "FAKE" }), 10);
     const positionId = trader.getState().position.id;
     trader.sell(1.2, 95, "TP +15% SELL 95%");
-    const falseClose = trader.sell(1000, 5, "MANUAL CLOSE");
+    const falseClose = trader.sell(3000, 5, "MANUAL CLOSE");
     const before = trader.getState().cashUsd;
     const result = trader.removeClosedPosition({ positionId, triggerSellId: falseClose.trade.id, tokenAddress: "FakeMint", symbol: "FAKE", minimumRealizedPnlUsd: 1 });
     assert.equal(result.success, true);
