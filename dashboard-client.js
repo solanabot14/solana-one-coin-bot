@@ -210,7 +210,7 @@
     return '<tr class="click-row" data-open-system="'+s.id+'"><td><div class="system-name"><span class="system-mark">'+systemIcon(s.id)+'</span>'+esc(s.label)+' <span class="badge">PAPER</span></div></td><td>'+int(m.trades)+'</td><td>'+int(m.wins)+'</td><td>'+int(m.losses)+'</td><td>'+metric(m.winRate,function(x){return x.toFixed(1)+'%';})+'</td><td>'+money(m.grossProfit)+'</td><td>−'+money(m.grossLoss)+'</td><td class="'+signClass(m.netPnl)+'">'+money(m.netPnl)+'</td><td>'+pct(m.returnPercent)+'</td><td>'+money(m.averageTrade)+'</td><td>'+money(m.averageWin)+'</td><td>'+money(m.averageLoss)+'</td><td>'+metric(m.profitFactor,function(x){return x===Infinity?'∞':x.toFixed(2);})+'</td><td>'+money(m.best)+'</td><td>'+money(m.worst)+'</td><td>'+duration(m.averageHoldMs)+'</td><td>'+money(m.capitalDeployed)+'</td><td><span class="status-line '+(s.running?'':'offline')+'"><i></i>'+(s.running?'RUNNING':'STOPPED')+'</span></td></tr>';
   }
   function dexScreenerAddress(position, live) {
-    return position.pairAddress || live.pairAddress || position.tokenAddress || live.tokenAddress || position.mint || live.mint || position.tokenMint || live.tokenMint || '';
+    return position.tokenAddress || live.tokenAddress || position.mint || live.mint || position.tokenMint || live.tokenMint || position.pairAddress || live.pairAddress || '';
   }
   function transactionDexScreenerAddress(trade) {
     var source=trade.sourceRecord||{}, base=trade.baseToken||source.baseToken||{}, token=trade.token&&typeof trade.token==='object'?trade.token:{};
@@ -228,9 +228,10 @@
     return '';
   }
   function transactionDexScreenerLink(trade) {
-    if(trade.systemId==='outcome')return {href:'https://www.coinbase.com/price/'+encodeURIComponent(String(trade.symbol||trade.token||'').toLowerCase()),label:'VIEW COINBASE ↗',hint:'Coinbase asset market'};if(trade.systemId==='stock') return {href:'https://finance.yahoo.com/quote/'+encodeURIComponent(trade.symbol||trade.sourceRecord?.symbol||''),label:'VIEW STOCK ↗',hint:'View this stock or ETF.'};
+    if(trade.systemId==='stock') return {href:'https://finance.yahoo.com/quote/'+encodeURIComponent(trade.symbol||trade.sourceRecord?.symbol||''),label:'VIEW STOCK ↗',hint:'View this stock or ETF.'};
     var address=transactionDexScreenerAddress(trade);
-    if(address) return {href:'https://dexscreener.com/solana/'+encodeURIComponent(address),label:'OPEN DEXSCREENER ↗',hint:'Opens this token or pair directly on DexScreener.'};
+    if(address) return {href:'https://dexscreener.com/solana/'+encodeURIComponent(address),label:'OPEN COIN ON DEXSCREENER ↗',hint:'Opens this coin directly on DexScreener.'};
+    if(trade.systemId==='outcome')return {href:'https://www.coinbase.com/price/'+encodeURIComponent(String(trade.symbol||trade.token||'').toLowerCase()),label:'VIEW COINBASE ↗',hint:'Coinbase asset market'};
     var source=trade.sourceRecord||{};
     var query=trade.symbol||trade.tokenSymbol||trade.token||trade.name||trade.tokenName||source.symbol||source.tokenSymbol||source.token||source.name||source.tokenName||'';
     query=String(query).trim();
@@ -241,8 +242,8 @@
   function livePositionRow(source, item, swarmId) {
     var position=item.position||item, live=item.live||item, address=dexScreenerAddress(position,live);
     var token=position.symbol||position.name||position.tokenSymbol||live.symbol||'-';
-    var link=address?'<a class="dex-link" href="https://dexscreener.com/solana/'+encodeURIComponent(address)+'" target="_blank" rel="noopener noreferrer">OPEN DEXSCREENER ↗</a>':'<span class="dex-unavailable">LINK UNAVAILABLE</span>';
-    if(source==='Coinbase Bot')link='<a class="dex-link" href="https://www.coinbase.com/advanced-trade/spot/'+encodeURIComponent(position.productId||position.tokenAddress||token+'-USD')+'" target="_blank" rel="noopener noreferrer">VIEW COINBASE ↗</a>';if(source==='Stock Bot')link='<a class="dex-link" href="https://finance.yahoo.com/quote/'+encodeURIComponent(token)+'" target="_blank" rel="noopener noreferrer">VIEW STOCK ↗</a>';
+    var link=address?'<a class="dex-link" href="https://dexscreener.com/solana/'+encodeURIComponent(address)+'" target="_blank" rel="noopener noreferrer">OPEN COIN ON DEXSCREENER ↗</a>':'<span class="dex-unavailable">LINK UNAVAILABLE</span>';
+    if(source==='Coinbase Bot'&&!address)link='<a class="dex-link" href="https://www.coinbase.com/advanced-trade/spot/'+encodeURIComponent(position.productId||token+'-USD')+'" target="_blank" rel="noopener noreferrer">VIEW COINBASE ↗</a>';if(source==='Stock Bot')link='<a class="dex-link" href="https://finance.yahoo.com/quote/'+encodeURIComponent(token)+'" target="_blank" rel="noopener noreferrer">VIEW STOCK ↗</a>';
     var pnl=live.pnl!==undefined?live.pnl:position.pnl;
     var currentPrice=live.currentPrice??live.priceUsd??position.currentPrice??position.priceUsd;
     var closeButton=source==='Profit Sniper'&&position.id?'<button type="button" class="control-button" data-control="profit-sniper/close-position?positionId='+encodeURIComponent(position.id)+'">CLOSE PAPER POSITION</button>':'';
