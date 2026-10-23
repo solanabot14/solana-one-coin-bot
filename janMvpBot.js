@@ -169,6 +169,7 @@ function createJanMvpBot({
     const mirrorPrice = await freshEntryPrice(coin, session);
     if (!isActive(session) || !mirrorPrice) return;
     coin.priceUsd = mirrorPrice;
+    if (tokenCooldownActive(trader.getState().executions, position.tokenAddress)) return;
 
     const result = trader.buy(slot.id, coin, {
       source: "OG_MIRROR",
@@ -240,6 +241,10 @@ function createJanMvpBot({
         if (!isActive(session)) return;
         if (!freshPrice) {
           console.log(`SWARM ENTRY PRICE | ${candidate.symbol} | skipped | no fresh quote`);
+          continue;
+        }
+        if (tokenCooldownActive(trader.getState().executions, candidate.tokenAddress)) {
+          console.log(`SWARM TOKEN COOLDOWN | ${candidate.symbol} | skipped | loss exit during quote fetch`);
           continue;
         }
         coin = { ...candidate, priceUsd: freshPrice };

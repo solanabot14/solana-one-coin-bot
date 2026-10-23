@@ -43,6 +43,14 @@ test("partial sell does not block", () => {
   assert.equal(tokenCooldownActive([lossExit({ percentSold: 25, pnl: -1 })], TOKEN, now), false);
 });
 
+test("loss SELL appended between first check and buy is caught on re-check", () => {
+  const executions = [];
+  const now = Date.parse("2026-10-23T04:30:00.000Z");
+  assert.equal(tokenCooldownActive(executions, TOKEN, now), false);
+  executions.push(lossExit());
+  assert.equal(tokenCooldownActive(executions, TOKEN, now), true);
+});
+
 test("empty executions does not block", () => {
   const now = Date.parse("2026-10-23T04:30:00.000Z");
   assert.equal(tokenCooldownActive([], TOKEN, now), false);
