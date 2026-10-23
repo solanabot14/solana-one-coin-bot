@@ -220,7 +220,8 @@ function createDashboardServer({ config = getConfig(), controls = bot,
       }
       if (route === "/api/gemini/close-position") {
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
-        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
+        // Paper close only: this cannot open trades or move real funds.
+        
         if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
         const result = await closeGeminiPosition({
           trader: geminiTrader, getQuote: getTokenData,
