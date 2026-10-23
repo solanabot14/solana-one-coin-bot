@@ -246,7 +246,7 @@
     if(source==='Coinbase Bot'&&!address)link='<a class="dex-link" href="https://www.coinbase.com/advanced-trade/spot/'+encodeURIComponent(position.productId||token+'-USD')+'" target="_blank" rel="noopener noreferrer">VIEW COINBASE ↗</a>';if(source==='Stock Bot')link='<a class="dex-link" href="https://finance.yahoo.com/quote/'+encodeURIComponent(token)+'" target="_blank" rel="noopener noreferrer">VIEW STOCK ↗</a>';
     var pnl=live.pnl!==undefined?live.pnl:position.pnl;
     var currentPrice=live.currentPrice??live.priceUsd??position.currentPrice??position.priceUsd;
-    var closeButton=source==='Profit Sniper'&&position.id?'<button type="button" class="control-button" data-control="profit-sniper/close-position?positionId='+encodeURIComponent(position.id)+'">CLOSE PAPER POSITION</button>':'';
+    var closeButton=source==='Gemini Bot'&&position.id?'<button type="button" class="control-button" data-control="gemini/close-position">CLOSE GEMINI PAPER POSITION</button>':source==='Profit Sniper'&&position.id?'<button type="button" class="control-button" data-control="profit-sniper/close-position?positionId='+encodeURIComponent(position.id)+'">CLOSE PAPER POSITION</button>':'';
     return '<tr><td class="text-left">'+esc(source)+'</td><td class="text-left">'+esc(swarmId||position.genesisId||'-')+'</td><td class="text-left"><strong>'+esc(token)+'</strong><div class="live-token-address">'+(address?esc(address):'No token/pair address recorded')+'</div>'+(live.quoteWarning?'<div class="live-token-address quote-warning">ALT POOL QUOTE · VERIFY</div>':'')+'</td><td>'+money(position.amountInvested??position.amountInvestedUsd??position.invested??position.costBasisUsd??position.currentValue)+'</td><td>'+tradePrice(position.entryPrice??position.buyPrice)+'</td><td>'+tradePrice(currentPrice)+'</td><td class="'+signClass(pnl)+'">'+money(pnl)+'</td><td>'+pct(live.pnlPercent??position.pnlPercent)+'</td><td>'+duration(live.holdTimeMs??position.holdTimeMs)+'</td><td>'+link+(closeButton?'<div>'+closeButton+'</div>':'')+'</td></tr>';
   }
   function liveTradingPanel() {
@@ -745,6 +745,8 @@
               : 'Closed '+int(result.closedCount)+' open paper positions.';
           } else if(verb==='gemini/close-position'){
             state.controlNotice=result.message||'Gemini position closed in paper mode.';
+          } else if(verb==='gemini/close-position') {
+            state.controlNotice=result.message||'Gemini paper position closed.';
           } else {
             state.controlNotice=result.writeOff
               ? (result.symbol||'Position')+' closed in paper mode with $0 recovery because no tradable liquidity was available; the slot is free.'
