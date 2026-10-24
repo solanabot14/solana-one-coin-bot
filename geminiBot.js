@@ -10,7 +10,7 @@ const MAX_SLIPPAGE_BPS = Math.min(1000, Math.max(200, Number(process.env.SLIPPAG
 const MAX_DISCOVERY_CANDIDATES = 40;
 
 function poolToCandidate(pool, pair) {
-  const createdAt = pool.poolCreatedAt || pair?.pairCreatedAt || null;
+  const createdAt = pair?.pairCreatedAt || pool.poolCreatedAt || null;
   return {
     tokenAddress: pool.tokenAddress || pair?.baseToken?.address,
     pairAddress: pair?.pairAddress || pool.pairAddress,
@@ -42,10 +42,21 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
     try { pairs = await pairFetcher(pool.tokenAddress, signal); }
     catch (error) { console.warn("[INFO] DexScreener token lookup failed", error.message); }
     const solanaPairs = pairs.filter(p => String(p?.chainId || "solana").toLowerCase() === "solana");
-    const pair = pool.pairAddress
+    const hasComplete5mData = p =>
+      Number.isFinite(Number(p?.priceChange?.m5)) &&
+      Number.isFinite(Number(p?.volume?.m5)) &&
+      Number.isFinite(Number(p?.txns?.m5?.buys)) &&
+      Number.isFinite(Number(p?.txns?.m5?.sells));
+    const completePairs = solanaPairs.filter(hasComplete5mData);
+    const ranked = list => [...list].sort((a, b) =>
+      (Number(b.liquidity?.usd) || 0) - (Number(a.liquidity?.usd) || 0));
+    const exactPair = pool.pairAddress
       ? solanaPairs.find(p => String(p.pairAddress).toLowerCase() === String(pool.pairAddress).toLowerCase())
-        || solanaPairs.sort((a,b) => (Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0]
-      : solanaPairs.sort((a,b) => (Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0];
+      : null;
+    const pair = (exactPair && hasComplete5mData(exactPair) ? exactPair : null)
+      || ranked(completePairs)[0]
+      || exactPair
+      || ranked(solanaPairs)[0];
     if (!pair) return poolToCandidate(pool, null);
     return poolToCandidate(pool, pair);
   }
