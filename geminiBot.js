@@ -47,6 +47,11 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
       Number.isFinite(Number(p?.volume?.m5)) &&
       Number.isFinite(Number(p?.txns?.m5?.buys)) &&
       Number.isFinite(Number(p?.txns?.m5?.sells));
+    const hasCompletePool5mData = p =>
+      Number.isFinite(Number(p?.priceChange5m)) &&
+      Number.isFinite(Number(p?.volume5m)) &&
+      Number.isFinite(Number(p?.buys5m)) &&
+      Number.isFinite(Number(p?.sells5m));
     const completePairs = solanaPairs.filter(hasComplete5mData);
     const ranked = list => [...list].sort((a, b) =>
       (Number(b.liquidity?.usd) || 0) - (Number(a.liquidity?.usd) || 0));
@@ -57,7 +62,8 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
       || ranked(completePairs)[0]
       || exactPair
       || ranked(solanaPairs)[0];
-    if (!pair) return poolToCandidate(pool, null);
+    if (!pair) return hasCompletePool5mData(pool) ? poolToCandidate(pool, null) : null;
+    if (!hasComplete5mData(pair) && !hasCompletePool5mData(pool)) return null;
     return poolToCandidate(pool, pair);
   }
   async function scan(s) {
@@ -87,6 +93,7 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
         if (!isActive(s) || trader.getState().position) break;
         try {
           const candidate = await candidateForPool(pool, s.controller.signal);
+          if (!candidate) continue;
           if (!(candidate.priceUsd > 0)) {
             trader.recordRejection(candidate, "Price Unavailable");
             continue;
