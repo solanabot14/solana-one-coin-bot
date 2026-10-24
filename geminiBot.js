@@ -7,7 +7,9 @@ const SCAN_MS = Number(process.env.GEMINI_SCAN_MS) || 30000;
 const MONITOR_MS = Number(process.env.GEMINI_MONITOR_MS) || 3000;
 const HARD_STOP = -8;
 const MAX_SLIPPAGE_BPS = Math.min(1000, Math.max(200, Number(process.env.SLIPPAGE_BPS) || 300));
-const MAX_DISCOVERY_CANDIDATES = 40;
+const MAX_DISCOVERY_CANDIDATES = 120;
+const MAX_WATCHED_POOLS = 120;
+const WATCH_POOL_MS = 60 * 60 * 1000;
 
 function poolToCandidate(pool, pair) {
   const createdAt = pair?.pairCreatedAt || pool.poolCreatedAt || null;
@@ -35,6 +37,7 @@ function slippageFor(pair) {
 function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetcher = getGeckoPools, tokenQuoteFallback = getGeckoTokenQuote, filter = evaluateCandidate } = {}) {
   let lastMonitorAt = null, lastQuoteAt = null, lastQuoteFailureAt = null;
   const lastPriceByPositionId = new Map();
+  const watchedPools = new Map();
   let session = null, scanInterval = null, monitorInterval = null, busyScan = false, busyMonitor = false, lastError = null;
   const isActive = s => session === s && !s.controller.signal.aborted;
   async function candidateForPool(pool) {
@@ -45,6 +48,36 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
       Number.isFinite(Number(pool?.sells5m));
     return hasComplete5mData ? poolToCandidate(pool, null) : null;
   }
+  function refreshWatchlist(freshPools) {
+    const now = Date.now();
+    for (const pool of freshPools) {
+      if (!pool?.tokenAddress) continue;
+      const existing = watchedPools.get(pool.tokenAddress);
+      watchedPools.set(pool.tokenAddress, {
+        ...existing,
+        ...pool,
+        poolCreatedAt: existing?.poolCreatedAt || pool.poolCreatedAt || null,
+        watchedAt: existing?.watchedAt || now,
+        lastSeenAt: now
+      });
+    }
+    for (const [tokenAddress, pool] of watchedPools) {
+      const createdAt = Date.parse(pool.poolCreatedAt || "");
+      const expired = Number.isFinite(createdAt)
+        ? now - createdAt > WATCH_POOL_MS
+        : now - (pool.watchedAt || now) > WATCH_POOL_MS;
+      if (expired) watchedPools.delete(tokenAddress);
+    }
+    if (watchedPools.size > MAX_WATCHED_POOLS) {
+      const oldest = [...watchedPools.entries()]
+        .sort(([, a], [, b]) => (a.watchedAt || 0) - (b.watchedAt || 0))
+        .slice(0, watchedPools.size - MAX_WATCHED_POOLS);
+      for (const [tokenAddress] of oldest) watchedPools.delete(tokenAddress);
+    }
+    return [...watchedPools.values()]
+      .sort((a, b) => Date.parse(a.poolCreatedAt || "") - Date.parse(b.poolCreatedAt || ""));
+  }
+
   async function scan(s) {
     if (!isActive(s) || busyScan || trader.getState().position) return;
     busyScan = true;
@@ -53,7 +86,8 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
       const geckoResult = await Promise.resolve(poolFetcher(s.controller.signal))
         .then(value => ({ status: "fulfilled", value }))
         .catch(reason => ({ status: "rejected", reason }));
-      const pools = geckoResult.status === "fulfilled" ? geckoResult.value : [];
+      const freshPools = geckoResult.status === "fulfilled" ? geckoResult.value : [];
+      const pools = refreshWatchlist(freshPools);
       if (geckoResult.status === "rejected") console.warn("[INFO] Gemini GeckoTerminal discovery failed", geckoResult.reason?.message);
       const unique = new Map();
       for (const pool of pools) {
@@ -94,7 +128,8 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
       lastError = null;
       trader.setScanTime();
       console.log("[INFO] Gemini scan complete", {
-        geckoCandidates: geckoResult.status === "fulfilled" ? geckoResult.value.length : 0,
+        geckoCandidates: freshPools.length,
+        watchedPools: watchedPools.size,
         uniqueTokens: unique.size,
         passed
       });
