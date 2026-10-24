@@ -3,7 +3,6 @@ const { getMintSafety, getHolderConcentration } = require("./geminiSources");
 const REQUIRED_DEX = "pumpswap";
 const MIN_LIQUIDITY_USD = 10000;
 const MIN_POOL_AGE_MS = 15 * 60 * 1000;
-const MAX_POOL_AGE_MS = 45 * 60 * 1000;
 const MIN_TRANSACTIONS_5M = 30;
 const MIN_VOLUME_5M_USD = 5000;
 const MIN_BUY_RATIO_5M = 0.55;
@@ -26,8 +25,8 @@ async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety
   const created = Date.parse(candidate.poolCreatedAt || "");
   if (!Number.isFinite(created)) return reject("Pool Age Unverified");
   const age = Date.now() - created;
-  if (age < MIN_POOL_AGE_MS || age > MAX_POOL_AGE_MS)
-    return reject("Pool Age Outside 15–45 Minutes", { ageMs: age });
+  if (age < MIN_POOL_AGE_MS)
+    return reject("Pool Age Below 15 Minutes", { ageMs: age, minimum: MIN_POOL_AGE_MS });
 
   const buys = Number(candidate.buys5m) || 0;
   const sells = Number(candidate.sells5m) || 0;
@@ -67,7 +66,6 @@ module.exports = {
   evaluateCandidate,
   MIN_LIQUIDITY_USD,
   MIN_POOL_AGE_MS,
-  MAX_POOL_AGE_MS,
   MIN_TRANSACTIONS_5M,
   MIN_BUY_RATIO_5M,
   MAX_TOP10_PERCENT,
