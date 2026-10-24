@@ -7,13 +7,14 @@ const SCAN_MS = Number(process.env.GEMINI_SCAN_MS) || 30000;
 const MONITOR_MS = Number(process.env.GEMINI_MONITOR_MS) || 3000;
 const HARD_STOP = -8;
 const MAX_SLIPPAGE_BPS = Math.min(1000, Math.max(200, Number(process.env.SLIPPAGE_BPS) || 300));
+const MAX_DISCOVERY_CANDIDATES = 40;
 
 function poolToCandidate(pool, pair) {
   const createdAt = pool.poolCreatedAt || pair?.pairCreatedAt || null;
   return {
     tokenAddress: pool.tokenAddress || pair?.baseToken?.address,
-    pairAddress: pool.pairAddress || pair?.pairAddress,
-    symbol: pair?.baseToken?.symbol || pool.symbol?.split("/")[0] || pool.symbol,
+    pairAddress: pair?.pairAddress || pool.pairAddress,
+    symbol: pair?.baseToken?.symbol || pool.symbol?.split("/")?.[0] || pool.symbol,
     name: pair?.baseToken?.name || pool.symbol,
     priceUsd: Number(pair?.priceUsd ?? pool.priceUsd),
     priceChange5m: Number(pair?.priceChange?.m5 ?? pool.priceChange5m),
@@ -40,9 +41,11 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
     let pairs = [];
     try { pairs = await pairFetcher(pool.tokenAddress, signal); }
     catch (error) { console.warn("[INFO] DexScreener token lookup failed", error.message); }
+    const pumpSwapPairs = pairs.filter(p => String(p?.dexId || "").toLowerCase() === "pumpswap");
     const pair = pool.pairAddress
-      ? pairs.find(p => String(p.pairAddress).toLowerCase() === String(pool.pairAddress).toLowerCase())
-      : pairs.sort((a,b) => (Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0];
+      ? pumpSwapPairs.find(p => String(p.pairAddress).toLowerCase() === String(pool.pairAddress).toLowerCase())
+        || pumpSwapPairs.sort((a,b) => (Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0]
+      : pumpSwapPairs.sort((a,b) => (Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0];
     if (!pair) return poolToCandidate(pool, null);
     return poolToCandidate(pool, pair);
   }
@@ -50,9 +53,24 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
     if (!isActive(s) || busyScan || trader.getState().position) return;
     busyScan = true;
     try {
-      const pools = await poolFetcher(s.controller.signal);
+      // GeckoTerminal supplies brand-new Solana pools while DexScreener profiles add
+      // current discovery coverage. Every candidate is then resolved to its exact
+      // PumpSwap pair before Gemini's existing safety gates can evaluate it.
+      const [geckoResult, profileResult] = await Promise.allSettled([
+        poolFetcher(s.controller.signal),
+        profileFetcher(s.controller.signal)
+      ]);
+      const pools = [
+        ...(geckoResult.status === "fulfilled" ? geckoResult.value : []),
+        ...(profileResult.status === "fulfilled" ? profileResult.value : [])
+      ];
+      if (geckoResult.status === "rejected") console.warn("[INFO] Gemini GeckoTerminal discovery failed", geckoResult.reason?.message);
+      if (profileResult.status === "rejected") console.warn("[INFO] Gemini DexScreener discovery failed", profileResult.reason?.message);
       const unique = new Map();
-      for (const pool of pools) if (pool.tokenAddress && !unique.has(pool.tokenAddress)) unique.set(pool.tokenAddress, pool);
+      for (const pool of pools) {
+        if (pool.tokenAddress && !unique.has(pool.tokenAddress) && unique.size < MAX_DISCOVERY_CANDIDATES)
+          unique.set(pool.tokenAddress, pool);
+      }
       let passed = 0;
       for (const pool of unique.values()) {
         if (!isActive(s) || trader.getState().position) break;
@@ -85,7 +103,12 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
       }
       lastError = null;
       trader.setScanTime();
-      console.log("[INFO] Gemini scan complete", { uniqueTokens: unique.size, passed });
+      console.log("[INFO] Gemini scan complete", {
+        geckoCandidates: geckoResult.status === "fulfilled" ? geckoResult.value.length : 0,
+        dexProfileCandidates: profileResult.status === "fulfilled" ? profileResult.value.length : 0,
+        uniqueTokens: unique.size,
+        passed
+      });
     } catch (error) {
       if (isActive(s)) {
         lastError = error.message;
@@ -138,7 +161,6 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
       if (price > latest.highestPrice) {
         const state = trader.getState();
         state.position.highestPrice = price;
-        // Persist by replacing state through the small state mutation endpoint below.
         trader.updatePosition?.(state.position);
       }
       if (price <= latest.entryPrice * (1 + HARD_STOP / 100)) { trader.sell(price, 100, "HARD STOP -8%"); return; }
@@ -174,4 +196,3 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
   return { start, stop, getStatus: () => !!session, getLastError: () => lastError, lastKnownPrice: positionId => lastPriceByPositionId.get(positionId) || 0, getDiagnostics: () => ({ lastMonitorAt, lastQuoteAt, lastQuoteFailureAt, lastScanAt: trader.getState().lastScanAt, activity: trader.getState().position ? "MONITORING POSITION" : "SCANNING" }), scan: () => scan(session), monitor: () => monitor(session) };
 }
 module.exports = { createGeminiBot, ...createGeminiBot() };
-
