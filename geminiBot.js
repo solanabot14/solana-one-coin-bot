@@ -1,4 +1,4 @@
-const { getGeckoPools, getGeckoTokenQuote } = require("./geminiSources");
+const { getGeckoPools, getDexProfiles, getDexPairs, getPairDetails, getGeckoTokenQuote } = require("./geminiSources");
 const { retry } = require("./geminiHttp");
 const { evaluateCandidate } = require("./geminiFilter");
 const traderDefault = require("./geminiTrader");
@@ -7,12 +7,10 @@ const SCAN_MS = Number(process.env.GEMINI_SCAN_MS) || 30000;
 const MONITOR_MS = Number(process.env.GEMINI_MONITOR_MS) || 3000;
 const HARD_STOP = -8;
 const MAX_SLIPPAGE_BPS = Math.min(1000, Math.max(200, Number(process.env.SLIPPAGE_BPS) || 300));
-const MAX_DISCOVERY_CANDIDATES = 120;
-const MAX_WATCHED_POOLS = 120;
-const WATCH_POOL_MS = 60 * 60 * 1000;
+const MAX_DISCOVERY_CANDIDATES = 40;
 
 function poolToCandidate(pool, pair) {
-  const createdAt = pair?.pairCreatedAt || pool.poolCreatedAt || null;
+  const createdAt = pool.poolCreatedAt || pair?.pairCreatedAt || null;
   return {
     tokenAddress: pool.tokenAddress || pair?.baseToken?.address,
     pairAddress: pair?.pairAddress || pool.pairAddress,
@@ -34,61 +32,40 @@ function slippageFor(pair) {
   const change = Math.abs(Number(pair?.priceChange?.m5) || 0);
   return Math.min(1000, Math.max(200, 200 + Math.round(change * 20) + Math.max(0, 15 - tx) * 20));
 }
-function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetcher = getGeckoPools, tokenQuoteFallback = getGeckoTokenQuote, filter = evaluateCandidate } = {}) {
+function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetcher = getGeckoPools, profileFetcher = getDexProfiles, pairFetcher = getDexPairs, pairDetails = getPairDetails, tokenQuoteFallback = getGeckoTokenQuote, filter = evaluateCandidate } = {}) {
   let lastMonitorAt = null, lastQuoteAt = null, lastQuoteFailureAt = null;
   const lastPriceByPositionId = new Map();
-  const watchedPools = new Map();
   let session = null, scanInterval = null, monitorInterval = null, busyScan = false, busyMonitor = false, lastError = null;
   const isActive = s => session === s && !s.controller.signal.aborted;
-  async function candidateForPool(pool) {
-    const hasComplete5mData =
-      Number.isFinite(Number(pool?.priceChange5m)) &&
-      Number.isFinite(Number(pool?.volume5m)) &&
-      Number.isFinite(Number(pool?.buys5m)) &&
-      Number.isFinite(Number(pool?.sells5m));
-    return hasComplete5mData ? poolToCandidate(pool, null) : null;
+  async function candidateForPool(pool, signal) {
+    let pairs = [];
+    try { pairs = await pairFetcher(pool.tokenAddress, signal); }
+    catch (error) { console.warn("[INFO] DexScreener token lookup failed", error.message); }
+    const solanaPairs = pairs.filter(p => String(p?.chainId || "solana").toLowerCase() === "solana");
+    const pair = pool.pairAddress
+      ? solanaPairs.find(p => String(p.pairAddress).toLowerCase() === String(pool.pairAddress).toLowerCase())
+        || solanaPairs.sort((a,b) => (Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0]
+      : solanaPairs.sort((a,b) => (Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0];
+    if (!pair) return poolToCandidate(pool, null);
+    return poolToCandidate(pool, pair);
   }
-  function refreshWatchlist(freshPools) {
-    const now = Date.now();
-    for (const pool of freshPools) {
-      if (!pool?.tokenAddress) continue;
-      const existing = watchedPools.get(pool.tokenAddress);
-      watchedPools.set(pool.tokenAddress, {
-        ...existing,
-        ...pool,
-        poolCreatedAt: existing?.poolCreatedAt || pool.poolCreatedAt || null,
-        watchedAt: existing?.watchedAt || now,
-        lastSeenAt: now
-      });
-    }
-    for (const [tokenAddress, pool] of watchedPools) {
-      const createdAt = Date.parse(pool.poolCreatedAt || "");
-      const expired = Number.isFinite(createdAt)
-        ? now - createdAt > WATCH_POOL_MS
-        : now - (pool.watchedAt || now) > WATCH_POOL_MS;
-      if (expired) watchedPools.delete(tokenAddress);
-    }
-    if (watchedPools.size > MAX_WATCHED_POOLS) {
-      const oldest = [...watchedPools.entries()]
-        .sort(([, a], [, b]) => (a.watchedAt || 0) - (b.watchedAt || 0))
-        .slice(0, watchedPools.size - MAX_WATCHED_POOLS);
-      for (const [tokenAddress] of oldest) watchedPools.delete(tokenAddress);
-    }
-    return [...watchedPools.values()]
-      .sort((a, b) => Date.parse(a.poolCreatedAt || "") - Date.parse(b.poolCreatedAt || ""));
-  }
-
   async function scan(s) {
     if (!isActive(s) || busyScan || trader.getState().position) return;
     busyScan = true;
     try {
-      // GeckoTerminal is Gemini's sole market-data source for new pool discovery.
-      const geckoResult = await Promise.resolve(poolFetcher(s.controller.signal))
-        .then(value => ({ status: "fulfilled", value }))
-        .catch(reason => ({ status: "rejected", reason }));
-      const freshPools = geckoResult.status === "fulfilled" ? geckoResult.value : [];
-      const pools = refreshWatchlist(freshPools);
+      // GeckoTerminal supplies brand-new Solana pools while DexScreener profiles add
+      // current discovery coverage. Every candidate is then resolved to its exact
+      // PumpSwap pair before Gemini's existing safety gates can evaluate it.
+      const [geckoResult, profileResult] = await Promise.allSettled([
+        poolFetcher(s.controller.signal),
+        profileFetcher(s.controller.signal)
+      ]);
+      const pools = [
+        ...(geckoResult.status === "fulfilled" ? geckoResult.value : []),
+        ...(profileResult.status === "fulfilled" ? profileResult.value : [])
+      ];
       if (geckoResult.status === "rejected") console.warn("[INFO] Gemini GeckoTerminal discovery failed", geckoResult.reason?.message);
+      if (profileResult.status === "rejected") console.warn("[INFO] Gemini DexScreener discovery failed", profileResult.reason?.message);
       const unique = new Map();
       for (const pool of pools) {
         if (pool.tokenAddress && !unique.has(pool.tokenAddress) && unique.size < MAX_DISCOVERY_CANDIDATES)
@@ -98,8 +75,7 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
       for (const pool of unique.values()) {
         if (!isActive(s) || trader.getState().position) break;
         try {
-          const candidate = await candidateForPool(pool);
-          if (!candidate) continue;
+          const candidate = await candidateForPool(pool, s.controller.signal);
           if (!(candidate.priceUsd > 0)) {
             trader.recordRejection(candidate, "Price Unavailable");
             continue;
@@ -128,8 +104,8 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
       lastError = null;
       trader.setScanTime();
       console.log("[INFO] Gemini scan complete", {
-        geckoCandidates: freshPools.length,
-        watchedPools: watchedPools.size,
+        geckoCandidates: geckoResult.status === "fulfilled" ? geckoResult.value.length : 0,
+        dexProfileCandidates: profileResult.status === "fulfilled" ? profileResult.value.length : 0,
         uniqueTokens: unique.size,
         passed
       });
@@ -147,15 +123,30 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
       lastMonitorAt = new Date().toISOString();
       const p = trader.getState().position;
       if (!p) return;
+      let pair = null;
+      if (p.pairAddress) {
+        try { pair = await pairDetails(p.pairAddress, s.controller.signal); }
+        catch (error) { console.warn("[INFO] Gemini pair quote failed; trying alternate sources", error.message); }
+      }
+      let price = Number(pair?.priceUsd);
+      if (!(price > 0) || !Number.isFinite(price)) {
+        try {
+          const pairs = await pairFetcher(p.tokenAddress, s.controller.signal);
+          const selectedPair = pairs.sort((a,b)=>(Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0] || null;
+          price = Number(selectedPair?.priceUsd);
+        } catch (error) { console.warn("[INFO] Gemini token quote failed; trying GeckoTerminal", error.message); }
+      }
       let fallbackQuote = null;
-      try { fallbackQuote = await tokenQuoteFallback(p.tokenAddress, s.controller.signal); }
-      catch (error) { console.warn("[INFO] Gemini GeckoTerminal quote failed", error.message); }
-      const price = Number(fallbackQuote?.priceUsd);
+      if (!(price > 0) || !Number.isFinite(price)) {
+        try { fallbackQuote = await tokenQuoteFallback(p.tokenAddress, s.controller.signal); }
+        catch (error) { console.warn("[INFO] Gemini GeckoTerminal quote failed", error.message); }
+        price = Number(fallbackQuote?.priceUsd);
+      }
       if (!isActive(s) || !Number.isFinite(price) || price <= 0) {
         const now = Date.now();
         if (isActive(s) && (!lastQuoteFailureAt || now - lastQuoteFailureAt > 60_000)) {
           lastQuoteFailureAt = now;
-          console.warn("[INFO] Gemini position has no GeckoTerminal quote; keeping position open", p.symbol, p.tokenAddress);
+          console.warn("[INFO] Gemini position has no quote from DexScreener or GeckoTerminal; keeping position open", p.symbol, p.tokenAddress);
         }
         return;
       }
