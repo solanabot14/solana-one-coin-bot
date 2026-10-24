@@ -41,11 +41,11 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
     let pairs = [];
     try { pairs = await pairFetcher(pool.tokenAddress, signal); }
     catch (error) { console.warn("[INFO] DexScreener token lookup failed", error.message); }
-    const pumpSwapPairs = pairs.filter(p => String(p?.dexId || "").toLowerCase() === "pumpswap");
+    const solanaPairs = pairs.filter(p => String(p?.chainId || "solana").toLowerCase() === "solana");
     const pair = pool.pairAddress
-      ? pumpSwapPairs.find(p => String(p.pairAddress).toLowerCase() === String(pool.pairAddress).toLowerCase())
-        || pumpSwapPairs.sort((a,b) => (Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0]
-      : pumpSwapPairs.sort((a,b) => (Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0];
+      ? solanaPairs.find(p => String(p.pairAddress).toLowerCase() === String(pool.pairAddress).toLowerCase())
+        || solanaPairs.sort((a,b) => (Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0]
+      : solanaPairs.sort((a,b) => (Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0];
     if (!pair) return poolToCandidate(pool, null);
     return poolToCandidate(pool, pair);
   }
