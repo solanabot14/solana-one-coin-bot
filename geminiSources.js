@@ -151,6 +151,11 @@ async function getGeckoPools(signal) {
       poolCreatedAt: a.pool_created_at || a.created_at || null,
       liquidityUsd: Number(a.reserve_in_usd) || 0,
       priceUsd: Number(a.base_token_price_usd) || 0,
+      priceChange5m: Number(
+        a.price_change_percentage?.m5 ??
+        a.price_change_percentage?.["m5"] ??
+        a.price_change_5m
+      ),
       volume5m: Number(a.volume_usd?.m5) || 0,
       buys5m: Number(a.transactions?.m5?.buys) || 0,
       sells5m: Number(a.transactions?.m5?.sells) || 0,
