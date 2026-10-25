@@ -2,6 +2,7 @@ const { getGeckoPools, getDexProfiles, getDexPairs, getPairDetails, getGeckoToke
 const { retry } = require("./geminiHttp");
 const { evaluateCandidate } = require("./geminiFilter");
 const { createExecutionVerifier } = require("./profitSniperExecutionQuote");
+const { createGeminiLiveExecution, USDC } = require("./geminiLiveExecution");
 const traderDefault = require("./geminiTrader");
 
 const SCAN_MS = Number(process.env.GEMINI_SCAN_MS) || 30000;
@@ -36,7 +37,7 @@ function slippageFor(pair) {
   const tx = (Number(pair?.txns?.m5?.buys) || 0) + (Number(pair?.txns?.m5?.sells) || 0);
   const change = Math.abs(Number(pair?.priceChange?.m5) || 0);
   return Math.min(1000, Math.max(200, 200 + Math.round(change * 20) + Math.max(0, 15 - tx) * 20));
-}function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetcher = getGeckoPools, profileFetcher = getDexProfiles, pairFetcher = getDexPairs, pairDetails = getPairDetails, tokenQuoteFallback = getGeckoTokenQuote, filter = evaluateCandidate, sellabilityCheck = createExecutionVerifier() } = {}) {
+}function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetcher = getGeckoPools, profileFetcher = getDexProfiles, pairFetcher = getDexPairs, pairDetails = getPairDetails, tokenQuoteFallback = getGeckoTokenQuote, filter = evaluateCandidate, sellabilityCheck = createExecutionVerifier(), liveExecution = createGeminiLiveExecution() } = {}) {
   let lastMonitorAt = null, lastQuoteAt = null, lastQuoteFailureAt = null;
   const lastPriceByPositionId = new Map();
   let session = null, scanInterval = null, monitorInterval = null, busyScan = false, busyMonitor = false, lastError = null;
@@ -122,7 +123,13 @@ function slippageFor(pair) {
           }
           candidate.geminiDetails = { ...result.details, executionQuote: sellability };
           candidate.slippageBps = slippageFor(candidate);
-          const buy = trader.buy(candidate);
+          let liveAmount;
+          if (liveExecution.status().mode === "LIVE_READY") {
+            const fill = await liveExecution.executeSwap({ inputMint: USDC, outputMint: candidate.tokenAddress, amount: 5_000_000, slippageBps: candidate.slippageBps });
+            candidate.liveExecution = { ...fill, outputAmount: fill.actualOutputAmount || fill.quotedOutputAmount };
+            liveAmount = 5;
+          }
+          const buy = trader.buy(candidate, liveAmount);
           if (buy.success) {
             console.log("[INFO] Gemini paper entry", { symbol: candidate.symbol, mint: candidate.tokenAddress, pair: candidate.pairAddress, liquidityUsd: candidate.liquidityUsd, priceChange5m: candidate.priceChange5m, slippageBps: candidate.slippageBps, tradeSizeUsd: buy.position.originalCostUsd, sizingPercent: buy.position.sizingPercent });
             break;
@@ -206,13 +213,22 @@ function slippageFor(pair) {
       }
       // Exit while a quote and meaningful liquidity still exist, rather than
       // allowing this one-position bot to be trapped at near-zero liquidity.
+      const close = async reason => {
+        if (liveExecution.status().mode !== "LIVE_READY") return trader.sell(price, 100, reason);
+        const raw = latest.liveExecution?.outputAmount;
+        if (!/^\d+$/.test(String(raw || ""))) throw new Error("Live position has no confirmed token amount.");
+        const fill = await liveExecution.executeSwap({ inputMint: latest.tokenAddress, outputMint: USDC, amount: raw, slippageBps: MAX_SLIPPAGE_BPS });
+        const out = Number(fill.actualOutputAmount);
+        if (!Number.isFinite(out) || out < 0) throw new Error("Live exit lacks confirmed USDC output.");
+        return trader.sell((out / 1e6) / latest.quantity, 100, reason, { ...fill, actualOutputAmount: String(out) });
+      };
       if (Number.isFinite(liquidityUsd) && liquidityUsd > 0 && liquidityUsd < exitLiquidityFloorUsd) {
-        trader.sell(price, 100, "LIQUIDITY COLLAPSE EXIT");
+        await close("LIQUIDITY COLLAPSE EXIT");
         return;
       }
-      if (price <= latest.entryPrice * (1 + HARD_STOP / 100)) { trader.sell(price, 100, "HARD STOP -8%"); return; }
+      if (price <= latest.entryPrice * (1 + HARD_STOP / 100)) { await close("HARD STOP -8%"); return; }
       if (price >= latest.entryPrice * 1.15) {
-        trader.sell(price, 100, "TP +15% FULL EXIT");
+        await close("TP +15% FULL EXIT");
         return;
       }
     } catch (error) {
