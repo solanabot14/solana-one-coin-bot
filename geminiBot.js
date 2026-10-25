@@ -10,6 +10,9 @@ const HARD_STOP = -8;
 const MAX_SLIPPAGE_BPS = Math.min(1000, Math.max(200, Number(process.env.SLIPPAGE_BPS) || 300));
 const MAX_DISCOVERY_CANDIDATES = 40;
 const SELLABILITY_TIMEOUT_MS = 10_000;
+// Exit-only guard: do not wait for an open pool to approach zero liquidity.
+const MIN_EXIT_LIQUIDITY_USD = 3000;
+const MAX_LIQUIDITY_DROP_FROM_ENTRY = 0.50;
 
 function poolToCandidate(pool, pair) {
   const createdAt = pool.poolCreatedAt || pair?.pairCreatedAt || null;
@@ -159,11 +162,13 @@ function slippageFor(pair) {
         try { pair = await pairDetails(p.pairAddress, s.controller.signal); }
         catch (error) { console.warn("[INFO] Gemini pair quote failed; trying alternate sources", error.message); }
       }
-      let price = Number(pair?.priceUsd);
+      let quotedPair = pair;
+      let price = Number(quotedPair?.priceUsd);
       if (!(price > 0) || !Number.isFinite(price)) {
         try {
           const pairs = await pairFetcher(p.tokenAddress, s.controller.signal);
           const selectedPair = pairs.sort((a,b)=>(Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0] || null;
+          quotedPair = selectedPair;
           price = Number(selectedPair?.priceUsd);
         } catch (error) { console.warn("[INFO] Gemini token quote failed; trying GeckoTerminal", error.message); }
       }
@@ -185,6 +190,11 @@ function slippageFor(pair) {
       lastError = null;
       const latest = trader.getState().position;
       if (!latest || latest.id !== p.id) return;
+      const liquidityUsd = Number(quotedPair?.liquidity?.usd);
+      const entryLiquidityUsd = Number(latest.entryDetails?.liquidityUsd);
+      const exitLiquidityFloorUsd = Number.isFinite(entryLiquidityUsd) && entryLiquidityUsd > 0
+        ? Math.max(MIN_EXIT_LIQUIDITY_USD, entryLiquidityUsd * (1 - MAX_LIQUIDITY_DROP_FROM_ENTRY))
+        : MIN_EXIT_LIQUIDITY_USD;
       lastPriceByPositionId.set(latest.id, price);
       if (fallbackQuote?.pairAddress && fallbackQuote.pairAddress !== latest.pairAddress) {
         trader.updatePosition?.({ ...latest, pairAddress: fallbackQuote.pairAddress });
@@ -193,6 +203,12 @@ function slippageFor(pair) {
         const state = trader.getState();
         state.position.highestPrice = price;
         trader.updatePosition?.(state.position);
+      }
+      // Exit while a quote and meaningful liquidity still exist, rather than
+      // allowing this one-position bot to be trapped at near-zero liquidity.
+      if (Number.isFinite(liquidityUsd) && liquidityUsd > 0 && liquidityUsd < exitLiquidityFloorUsd) {
+        trader.sell(price, 100, "LIQUIDITY COLLAPSE EXIT");
+        return;
       }
       if (price <= latest.entryPrice * (1 + HARD_STOP / 100)) { trader.sell(price, 100, "HARD STOP -8%"); return; }
       if (price >= latest.entryPrice * 1.15) {
