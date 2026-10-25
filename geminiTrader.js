@@ -43,6 +43,7 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     const size = Math.min(Number(amountUsd ?? sizing.amountUsd), state.cashUsd);
     if (!(price > 0) || !(size > 0) || !candidate.tokenAddress) return { success: false, error: "Invalid paper buy" };
     const next = structuredClone(state);
+    const mode = candidate.liveExecution?.executionMode === "LIVE" ? "LIVE" : "PAPER";
     const pos = {
       id: randomUUID(), tokenAddress: candidate.tokenAddress, pairAddress: candidate.pairAddress || null,
       symbol: candidate.symbol || "Unknown", name: candidate.name || candidate.symbol || "Unknown",
@@ -50,14 +51,14 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
       amountInvestedUsd: size, entryTime: new Date().toISOString(), highestPrice: price,
       tp1Done: false, tp2Done: false, remainingPercent: 100, strategy: "Gemini Paper v3: sell 95% at +15% / trail final 5% by 8% / SL8 / 10–12.5% cash",
       sizingPercent: sizing.percent,
-      entryDetails: candidate.geminiDetails || {}, liveExecution: candidate.liveExecution || null,
+      entryDetails: candidate.geminiDetails || {}, liveExecution: candidate.liveExecution || null, mode,
       liveSizingStep: candidate.liveExecution ? getLiveSizing().step : null
     };
     next.cashUsd -= size; next.position = pos;
     next.nextSizingStep = sizing.step === 0 ? 1 : 0;
-    next.history.unshift({ type: "BUY", ...structuredClone(pos), time: pos.entryTime, amountUsd: size, mode: "PAPER" });
+    next.history.unshift({ type: "BUY", ...structuredClone(pos), time: pos.entryTime, amountUsd: size, mode });
     commit(next);
-    console.log("[BUY TRIGGERED] Gemini PAPER", pos.symbol, size.toFixed(2), "USD");
+    console.log("[BUY TRIGGERED] Gemini " + mode, pos.symbol, size.toFixed(2), "USD");
     return { success: true, position: structuredClone(pos) };
   }
   function sell(priceUsd, percentOriginal, reason, execution = null) {
@@ -92,7 +93,7 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     if (next.position) next.position.remainingPercent = Math.max(0, next.position.quantity / next.position.originalQuantity * 100);
     if (next.position.quantity <= p.originalQuantity * 0.000001) next.position = null;
     commit(next);
-    console.log("[" + (reason.startsWith("TP") ? "SELL " + reason : "SELL") + "] Gemini PAPER", p.symbol, reason, "$" + value.toFixed(2));
+    console.log("[" + (reason.startsWith("TP") ? "SELL " + reason : "SELL") + "] Gemini " + trade.mode, p.symbol, reason, "$" + value.toFixed(2));
     return { success: true, trade };
   }
   // A paper position with confirmed zero liquidity has no defensible sale

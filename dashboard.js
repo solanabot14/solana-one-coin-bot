@@ -350,7 +350,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
             priceUnavailable: !!position && !live,
             totalPnlPercent: position && !live ? null : (geminiState.startingBalanceUsd > 0 ? geminiAnalytics.totalPnlUsd / geminiState.startingBalanceUsd * 100 : 0),
             completedTrades, history,
-            livePositions: position ? [{ position, live, pnl: live?.pnl ?? null }] : [],
+            livePositions: position ? [{ position, live, pnl: live?.pnl ?? null, mode: position.mode || (position.liveExecution?.executionMode === "LIVE" ? "LIVE" : "PAPER") }] : [],
             running: geminiBot.getStatus(), lastScanAt: geminiState.lastScanAt
             ,liveExecution: { ...geminiLiveExecution.status(), ...geminiLiveControl.getStatus() }
           };

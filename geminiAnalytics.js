@@ -24,7 +24,7 @@ function buildGeminiAnalytics(state, live = null) {
     const lastExit = g.sells.reduce((latest, x) => Date.parse(x.time) > Date.parse(latest.time) ? x : latest, g.sells[0]);
     const holdTimeMs = Math.max(0, Date.parse(lastExit.time) - Date.parse(entryTime));
     return {
-      positionId: g.positionId, symbol: g.symbol, tokenAddress: buy.tokenAddress || g.sells[0].tokenAddress,
+      positionId: g.positionId, mode: buy.mode === "LIVE" || g.sells.some(x => x.mode === "LIVE") ? "LIVE" : "PAPER", symbol: g.symbol, tokenAddress: buy.tokenAddress || g.sells[0].tokenAddress,
       entryLiquidityUsd: buy.entryLiquidityUsd ?? buy.entryDetails?.liquidityUsd ?? null,
       pairAddress: buy.pairAddress || g.sells[0].pairAddress, entryPrice,
       averageExitPrice: soldQty > 0 ? saleValue / soldQty : null,

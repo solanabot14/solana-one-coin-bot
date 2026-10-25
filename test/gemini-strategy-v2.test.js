@@ -41,9 +41,10 @@ test("cash sizing alternates 10, 12.5, 10 and survives restart", t => {
 });
 test("live sizing advances 5, 5.50, 5.63 and resets to 5 after the third win or any loss", t => {
   const {trader} = fixture(t);
-  const liveCandidate = {...candidate, liveExecution:{outputAmount:"100"}};
+  const liveCandidate = {...candidate, liveExecution:{outputAmount:"100",executionMode:"LIVE"}};
   assert.equal(trader.getLiveSizing().amountUsd,5);
   trader.buy(liveCandidate,5);
+  assert.equal(trader.getState().history[0].mode,"LIVE");
   trader.sell(1.1,100,"TP +15% FULL EXIT",{actualOutputAmount:"5500000"});
   assert.equal(trader.getLiveSizing().amountUsd,5.5);
   trader.buy(liveCandidate,5.5);
