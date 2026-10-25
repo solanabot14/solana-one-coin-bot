@@ -164,13 +164,10 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
         trader.updatePosition?.(state.position);
       }
       if (price <= latest.entryPrice * (1 + HARD_STOP / 100)) { trader.sell(price, 100, "HARD STOP -8%"); return; }
-      if (!latest.tp1Done && price >= latest.entryPrice * 1.15) {
-        trader.sell(price, 95, "TP +15% SELL 95%");
+      if (price >= latest.entryPrice * 1.15) {
+        trader.sell(price, 100, "TP +15% FULL EXIT");
         return;
       }
-      const runner = trader.getState().position;
-      if (runner?.tp1Done && price <= runner.highestPrice * 0.92)
-        trader.sell(price, 100, "TRAILING STOP -8% (5% RUNNER)");
     } catch (error) {
       if (isActive(s)) { lastError = error.message; console.error("[INFO] Gemini monitor failed", error.message); }
     } finally { busyMonitor = false; }
@@ -181,7 +178,7 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
     lastError = null;
     const s = { controller: new AbortController() };
     session = s;
-    console.log("[INFO] Gemini Bot started in PAPER mode; sell 95% at +15%, trail final 5% by 8%; stop -8%; sizing 10% / 12.5% of cash.");
+    console.log("[INFO] Gemini Bot started in PAPER mode; sell 100% at +15%; stop -8%; sizing 10% / 12.5% of cash.");
     scanInterval = timers.setInterval(() => void scan(s), SCAN_MS);
     monitorInterval = timers.setInterval(() => void monitor(s), MONITOR_MS);
     void scan(s); void monitor(s);
