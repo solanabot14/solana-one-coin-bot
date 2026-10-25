@@ -10,9 +10,7 @@ const MAX_SLIPPAGE_BPS = Math.min(1000, Math.max(200, Number(process.env.SLIPPAG
 const MAX_DISCOVERY_CANDIDATES = 40;
 
 function poolToCandidate(pool, pair) {
-  // The resolved market is authoritative: discovery feeds can carry an older or
-  // incomplete pool timestamp when a token has more than one Solana market.
-  const createdAt = pair?.pairCreatedAt || pool.poolCreatedAt || null;
+  const createdAt = pool.poolCreatedAt || pair?.pairCreatedAt || null;
   return {
     tokenAddress: pool.tokenAddress || pair?.baseToken?.address,
     pairAddress: pair?.pairAddress || pool.pairAddress,
@@ -44,25 +42,10 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
     try { pairs = await pairFetcher(pool.tokenAddress, signal); }
     catch (error) { console.warn("[INFO] DexScreener token lookup failed", error.message); }
     const solanaPairs = pairs.filter(p => String(p?.chainId || "solana").toLowerCase() === "solana");
-    const exact = pool.pairAddress
+    const pair = pool.pairAddress
       ? solanaPairs.find(p => String(p.pairAddress).toLowerCase() === String(pool.pairAddress).toLowerCase())
-      : null;
-    // Prefer a market with all of the fields Gemini evaluates. Previously an
-    // exact/new-pool market with incomplete 5m data hid another valid Solana
-    // market for the same mint, producing repeated “trend unverified” rejections.
-    const completeness = p => [
-      Number(p?.priceUsd) > 0,
-      Number.isFinite(Number(p?.priceChange?.m5)),
-      Number(p?.liquidity?.usd) > 0,
-      Number(p?.txns?.m5?.buys) + Number(p?.txns?.m5?.sells) > 0,
-      Number(p?.volume?.m5) > 0,
-      Number(p?.pairCreatedAt) > 0
-    ].filter(Boolean).length;
-    const ranked = [...solanaPairs].sort((a, b) =>
-      completeness(b) - completeness(a) ||
-      (Number(b.liquidity?.usd) || 0) - (Number(a.liquidity?.usd) || 0)
-    );
-    const pair = exact && completeness(exact) === 6 ? exact : ranked[0];
+        || solanaPairs.sort((a,b) => (Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0]
+      : solanaPairs.sort((a,b) => (Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0];
     if (!pair) return poolToCandidate(pool, null);
     return poolToCandidate(pool, pair);
   }
