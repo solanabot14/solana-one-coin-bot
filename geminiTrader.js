@@ -81,6 +81,27 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     console.log("[" + (reason.startsWith("TP") ? "SELL " + reason : "SELL") + "] Gemini PAPER", p.symbol, reason, "$" + value.toFixed(2));
     return { success: true, trade };
   }
+  // A paper position with confirmed zero liquidity has no defensible sale
+  // value. Close it at zero instead of leaving the bot permanently blocked.
+  function writeOff(reason) {
+    const p = state.position;
+    if (!p) return { success: false, error: "No open position" };
+    const basis = Number(p.amountInvestedUsd);
+    const next = structuredClone(state);
+    const trade = {
+      type: "SELL", id: randomUUID(), positionId: p.id, tokenAddress: p.tokenAddress,
+      pairAddress: p.pairAddress, symbol: p.symbol, entryPrice: p.entryPrice, exitPrice: 0,
+      maxGainPercent: p.entryPrice > 0 ? (Number(p.highestPrice || p.entryPrice) / p.entryPrice - 1) * 100 : 0,
+      quantity: p.quantity, amountUsd: 0, costBasisUsd: basis, pnlUsd: -basis,
+      pnlPercent: -100, percentOfOriginalSold: p.originalQuantity > 0 ? p.quantity / p.originalQuantity * 100 : 100,
+      reason, time: new Date().toISOString(), mode: "PAPER", writeOff: true
+    };
+    next.history.unshift(trade);
+    next.position = null;
+    commit(next);
+    console.warn("[PAPER WRITE-OFF] Gemini", p.symbol, reason);
+    return { success: true, trade };
+  }
   function removeClosedPosition({ positionId, triggerSellId, tokenAddress, symbol, minimumRealizedPnlUsd = 0 }) {
     if (!positionId || !triggerSellId || !tokenAddress || !symbol) return { success: false, reason: "invalid correction target" };
     if (state.position?.id === positionId) return { success: false, reason: "position is still open" };
@@ -116,7 +137,7 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     console.log("[REJECTED: " + reason + "] Gemini", candidate.symbol || candidate.tokenAddress || "unknown");
   }
   function setScanTime() { const next = structuredClone(state); next.lastScanAt = new Date().toISOString(); commit(next); }
-  return { getSizing, buy, sell, removeClosedPosition, recordRejection, setScanTime, updatePosition, getState: () => structuredClone(state), file };
+  return { getSizing, buy, sell, writeOff, removeClosedPosition, recordRejection, setScanTime, updatePosition, getState: () => structuredClone(state), file };
 }
 let instance;
 const current = () => {
@@ -133,4 +154,4 @@ const current = () => {
   }
   return instance;
 };
-module.exports = { createGeminiTrader, defaultFile, getSizing: (...a) => current().getSizing(...a), getState: (...a) => current().getState(...a), buy: (...a) => current().buy(...a), sell: (...a) => current().sell(...a), recordRejection: (...a) => current().recordRejection(...a), setScanTime: (...a) => current().setScanTime(...a), updatePosition: (...a) => current().updatePosition(...a) };
+module.exports = { createGeminiTrader, defaultFile, getSizing: (...a) => current().getSizing(...a), getState: (...a) => current().getState(...a), buy: (...a) => current().buy(...a), sell: (...a) => current().sell(...a), writeOff: (...a) => current().writeOff(...a), recordRejection: (...a) => current().recordRejection(...a), setScanTime: (...a) => current().setScanTime(...a), updatePosition: (...a) => current().updatePosition(...a) };
