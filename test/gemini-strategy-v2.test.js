@@ -39,6 +39,23 @@ test("cash sizing alternates 10, 12.5, 10 and survives restart", t => {
   restored.sell(1,100,"TEST");
   assert.equal(createGeminiTrader(file).getSizing().percent,10);
 });
+test("live sizing advances 5, 5.50, 5.63 and resets to 5 after the third win or any loss", t => {
+  const {trader} = fixture(t);
+  const liveCandidate = {...candidate, liveExecution:{outputAmount:"100"}};
+  assert.equal(trader.getLiveSizing().amountUsd,5);
+  trader.buy(liveCandidate,5);
+  trader.sell(1.1,100,"TP +15% FULL EXIT",{actualOutputAmount:"5500000"});
+  assert.equal(trader.getLiveSizing().amountUsd,5.5);
+  trader.buy(liveCandidate,5.5);
+  trader.sell(1.1,100,"TP +15% FULL EXIT",{actualOutputAmount:"6050000"});
+  assert.equal(trader.getLiveSizing().amountUsd,5.63);
+  trader.buy(liveCandidate,5.63);
+  trader.sell(1.1,100,"TP +15% FULL EXIT",{actualOutputAmount:"6193000"});
+  assert.equal(trader.getLiveSizing().amountUsd,5);
+  trader.buy(liveCandidate,5);
+  trader.sell(0.9,100,"HARD STOP -8%",{actualOutputAmount:"4500000"});
+  assert.equal(trader.getLiveSizing().amountUsd,5);
+});
 test("monitor holds below 15 percent and exits all at 15 percent", async t => {
   const {trader} = fixture(t);
   trader.buy(candidate);
