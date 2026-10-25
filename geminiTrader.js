@@ -28,6 +28,14 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     const percent = step === 0 ? 10 : 12.5;
     return { step, percent, amountUsd: state.cashUsd * percent / 100 };
   }
+  // Live-only sizing is deliberately capped for the $20 wallet test.  It is
+  // not a percentage of account equity: 5.00 -> 5.50 -> 5.63 -> 5.00.
+  function getLiveSizing() {
+    const cycle = [5, 5.5, 5.63];
+    const step = Number.isInteger(state.liveSizingStep) && state.liveSizingStep >= 0 && state.liveSizingStep < cycle.length
+      ? state.liveSizingStep : 0;
+    return { step, amountUsd: cycle[step] };
+  }
   function buy(candidate, amountUsd) {
     if (state.position) return { success: false, error: "Gemini already has an open position" };
     const price = Number(candidate.priceUsd);
@@ -42,7 +50,8 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
       amountInvestedUsd: size, entryTime: new Date().toISOString(), highestPrice: price,
       tp1Done: false, tp2Done: false, remainingPercent: 100, strategy: "Gemini Paper v3: sell 95% at +15% / trail final 5% by 8% / SL8 / 10–12.5% cash",
       sizingPercent: sizing.percent,
-      entryDetails: candidate.geminiDetails || {}, liveExecution: candidate.liveExecution || null
+      entryDetails: candidate.geminiDetails || {}, liveExecution: candidate.liveExecution || null,
+      liveSizingStep: candidate.liveExecution ? getLiveSizing().step : null
     };
     next.cashUsd -= size; next.position = pos;
     next.nextSizingStep = sizing.step === 0 ? 1 : 0;
@@ -73,6 +82,11 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
       reason, time: new Date().toISOString(), mode: execution ? "LIVE" : "PAPER", execution
     };
     next.history.unshift(trade);
+    if (execution && p.liveExecution) {
+      // Only advance after a net profitable, confirmed live close. A loss
+      // returns the next trade to the $5 base size.
+      next.liveSizingStep = trade.pnlUsd > 0 ? (getLiveSizing().step + 1) % 3 : 0;
+    }
     if (reason === "TP1 +50%" || reason === "TP +15% SELL 95%") next.position.tp1Done = true;
     if (reason === "TP2 +100%") next.position.tp2Done = true;
     if (next.position) next.position.remainingPercent = Math.max(0, next.position.quantity / next.position.originalQuantity * 100);
@@ -137,7 +151,7 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     console.log("[REJECTED: " + reason + "] Gemini", candidate.symbol || candidate.tokenAddress || "unknown");
   }
   function setScanTime() { const next = structuredClone(state); next.lastScanAt = new Date().toISOString(); commit(next); }
-  return { getSizing, buy, sell, writeOff, removeClosedPosition, recordRejection, setScanTime, updatePosition, getState: () => structuredClone(state), file };
+  return { getSizing, getLiveSizing, buy, sell, writeOff, removeClosedPosition, recordRejection, setScanTime, updatePosition, getState: () => structuredClone(state), file };
 }
 let instance;
 const current = () => {
@@ -172,4 +186,4 @@ const current = () => {
   }
   return instance;
 };
-module.exports = { createGeminiTrader, defaultFile, getSizing: (...a) => current().getSizing(...a), getState: (...a) => current().getState(...a), buy: (...a) => current().buy(...a), sell: (...a) => current().sell(...a), writeOff: (...a) => current().writeOff(...a), recordRejection: (...a) => current().recordRejection(...a), setScanTime: (...a) => current().setScanTime(...a), updatePosition: (...a) => current().updatePosition(...a) };
+module.exports = { createGeminiTrader, defaultFile, getSizing: (...a) => current().getSizing(...a), getLiveSizing: (...a) => current().getLiveSizing(...a), getState: (...a) => current().getState(...a), buy: (...a) => current().buy(...a), sell: (...a) => current().sell(...a), writeOff: (...a) => current().writeOff(...a), recordRejection: (...a) => current().recordRejection(...a), setScanTime: (...a) => current().setScanTime(...a), updatePosition: (...a) => current().updatePosition(...a) };
