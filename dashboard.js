@@ -13,6 +13,7 @@ const geminiBot = require("./geminiBot");
 const geminiTrader = require("./geminiTrader");
 const { closeGeminiPosition } = require("./geminiManualClose");
 const { buildGeminiAnalytics } = require("./geminiAnalytics");
+const geminiLiveExecution = require("./geminiLiveExecution");
 const outcomeBot = require("./outcomeBot");
 const stockBot = require("./stockBot");
 require("./retiredBotCleanup").purgeLocalData();
@@ -343,6 +344,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
             completedTrades, history,
             livePositions: position ? [{ position, live, pnl: live?.pnl ?? null }] : [],
             running: geminiBot.getStatus(), lastScanAt: geminiState.lastScanAt
+            ,liveExecution: geminiLiveExecution.status()
           };
         })();
         const [v31, candleBreakout, profitSniperData] = await Promise.all([
