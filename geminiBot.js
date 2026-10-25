@@ -1,6 +1,7 @@
 const { getGeckoPools, getDexProfiles, getDexPairs, getPairDetails, getGeckoTokenQuote } = require("./geminiSources");
 const { retry } = require("./geminiHttp");
 const { evaluateCandidate } = require("./geminiFilter");
+const { createExecutionVerifier } = require("./profitSniperExecutionQuote");
 const traderDefault = require("./geminiTrader");
 
 const SCAN_MS = Number(process.env.GEMINI_SCAN_MS) || 30000;
@@ -8,6 +9,7 @@ const MONITOR_MS = Number(process.env.GEMINI_MONITOR_MS) || 3000;
 const HARD_STOP = -8;
 const MAX_SLIPPAGE_BPS = Math.min(1000, Math.max(200, Number(process.env.SLIPPAGE_BPS) || 300));
 const MAX_DISCOVERY_CANDIDATES = 40;
+const SELLABILITY_TIMEOUT_MS = 10_000;
 
 function poolToCandidate(pool, pair) {
   const createdAt = pool.poolCreatedAt || pair?.pairCreatedAt || null;
@@ -31,12 +33,28 @@ function slippageFor(pair) {
   const tx = (Number(pair?.txns?.m5?.buys) || 0) + (Number(pair?.txns?.m5?.sells) || 0);
   const change = Math.abs(Number(pair?.priceChange?.m5) || 0);
   return Math.min(1000, Math.max(200, 200 + Math.round(change * 20) + Math.max(0, 15 - tx) * 20));
-}
-function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetcher = getGeckoPools, profileFetcher = getDexProfiles, pairFetcher = getDexPairs, pairDetails = getPairDetails, tokenQuoteFallback = getGeckoTokenQuote, filter = evaluateCandidate } = {}) {
+}function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetcher = getGeckoPools, profileFetcher = getDexProfiles, pairFetcher = getDexPairs, pairDetails = getPairDetails, tokenQuoteFallback = getGeckoTokenQuote, filter = evaluateCandidate, sellabilityCheck = createExecutionVerifier() } = {}) {
   let lastMonitorAt = null, lastQuoteAt = null, lastQuoteFailureAt = null;
   const lastPriceByPositionId = new Map();
   let session = null, scanInterval = null, monitorInterval = null, busyScan = false, busyMonitor = false, lastError = null;
   const isActive = s => session === s && !s.controller.signal.aborted;
+  async function verifyFullPositionExit(candidate, amountUsd, parentSignal) {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    parentSignal?.addEventListener("abort", abort, { once: true });
+    const timeout = timers.setTimeout ? timers.setTimeout(() => controller.abort(), SELLABILITY_TIMEOUT_MS) : setTimeout(() => controller.abort(), SELLABILITY_TIMEOUT_MS);
+    try {
+      const result = await sellabilityCheck(candidate, { amountUsd, signal: controller.signal });
+      if (controller.signal.aborted && !parentSignal?.aborted)
+        return { allowed: false, reason: "SELLABILITY_CHECK_TIMEOUT" };
+      return result?.allowed ? result : { allowed: false, reason: result?.reason || "FULL_POSITION_EXIT_UNAVAILABLE", details: result };
+    } catch (error) {
+      return { allowed: false, reason: "FULL_POSITION_EXIT_UNAVAILABLE", details: { error: error.message } };
+    } finally {
+      parentSignal?.removeEventListener("abort", abort);
+      if (timers.clearTimeout) timers.clearTimeout(timeout); else clearTimeout(timeout);
+    }
+  }
   async function candidateForPool(pool, signal) {
     let pairs = [];
     try { pairs = await pairFetcher(pool.tokenAddress, signal); }
@@ -86,7 +104,20 @@ function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetc
             continue;
           }
           passed++;
-          candidate.geminiDetails = result.details;
+          // This is deliberately the final entry gate. It checks the exact paper
+          // position size and confirms that the entire received token amount can
+          // be routed back to USDC now. A failed or slow quote rejects only this
+          // candidate; scanning immediately continues with the next one.
+          const sizing = trader.getSizing?.();
+          const sellability = await verifyFullPositionExit(candidate, sizing?.amountUsd, s.controller.signal);
+          if (!sellability.allowed) {
+            trader.recordRejection(candidate, "Full Position Exit Unavailable", {
+              reason: sellability.reason,
+              sellability: sellability.details || sellability
+            });
+            continue;
+          }
+          candidate.geminiDetails = { ...result.details, executionQuote: sellability };
           candidate.slippageBps = slippageFor(candidate);
           const buy = trader.buy(candidate);
           if (buy.success) {
