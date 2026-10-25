@@ -14,6 +14,7 @@ const geminiTrader = require("./geminiTrader");
 const { closeGeminiPosition } = require("./geminiManualClose");
 const { buildGeminiAnalytics } = require("./geminiAnalytics");
 const geminiLiveExecution = require("./geminiLiveExecution");
+const geminiLiveControl = require("./geminiLiveControl");
 const outcomeBot = require("./outcomeBot");
 const stockBot = require("./stockBot");
 require("./retiredBotCleanup").purgeLocalData();
@@ -251,6 +252,13 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         if (route.endsWith("/start")) geminiBot.start(); else geminiBot.stop();
         return json(res, { running: geminiBot.getStatus(), error: geminiBot.getLastError() });
       }
+      if (route === "/api/gemini/live/start" || route === "/api/gemini/live/stop") {
+        if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
+        if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
+        if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        const result = route.endsWith("/start") ? geminiLiveControl.start() : geminiLiveControl.stop();
+        return json(res, result, result.success ? 200 : 409);
+      }
       if (route === "/api/start" || route === "/api/stop") {
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
         if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
@@ -344,7 +352,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
             completedTrades, history,
             livePositions: position ? [{ position, live, pnl: live?.pnl ?? null }] : [],
             running: geminiBot.getStatus(), lastScanAt: geminiState.lastScanAt
-            ,liveExecution: geminiLiveExecution.status()
+            ,liveExecution: { ...geminiLiveExecution.status(), ...geminiLiveControl.getStatus() }
           };
         })();
         const [v31, candleBreakout, profitSniperData] = await Promise.all([
