@@ -170,6 +170,7 @@ function slippageFor(pair) {
         catch (error) { console.warn("[INFO] Gemini pair quote failed; trying alternate sources", error.message); }
       }
       let quotedPair = pair;
+      const primaryLiquidityUsd = Number(pair?.liquidity?.usd);
       let price = Number(quotedPair?.priceUsd);
       if (!(price > 0) || !Number.isFinite(price)) {
         try {
@@ -185,6 +186,29 @@ function slippageFor(pair) {
         catch (error) { console.warn("[INFO] Gemini GeckoTerminal quote failed", error.message); }
         price = Number(fallbackQuote?.priceUsd);
       }
+      const quotedLiquidityUsd = Number(quotedPair?.liquidity?.usd);
+      // Preserve an explicit zero from the original pair even if an alternate
+      // lookup has no pair to return.
+      const liquidityUsd = Number.isFinite(quotedLiquidityUsd) ? quotedLiquidityUsd : primaryLiquidityUsd;
+      const hasConfirmedZeroLiquidity = Number.isFinite(liquidityUsd) && liquidityUsd <= 0;
+      const latest = trader.getState().position;
+      if (!latest || latest.id !== p.id) return;
+      // A reported zero is materially different from a temporarily missing
+      // quote.  Paper trading must realize this as a full loss and release the
+      // single Gemini slot; otherwise it can remain stuck forever.
+      if (hasConfirmedZeroLiquidity) {
+        if (liveExecution.status().mode === "LIVE_READY") {
+          // In live mode do not fabricate a sale.  Attempt the real swap; a
+          // failed swap leaves the actual asset open rather than hiding it.
+          const raw = latest.liveExecution?.outputAmount;
+          if (!/^\d+$/.test(String(raw || ""))) throw new Error("Live position has no confirmed token amount.");
+          const fill = await liveExecution.executeSwap({ inputMint: latest.tokenAddress, outputMint: USDC, amount: raw, slippageBps: MAX_SLIPPAGE_BPS });
+          const out = Number(fill.actualOutputAmount);
+          if (!Number.isFinite(out) || out < 0) throw new Error("Live exit lacks confirmed USDC output.");
+          return trader.sell((out / 1e6) / latest.quantity, 100, "LIQUIDITY COLLAPSE EXIT — ZERO LIQUIDITY", { ...fill, actualOutputAmount: String(out) });
+        }
+        return trader.writeOff("LIQUIDITY COLLAPSE EXIT — ZERO LIQUIDITY");
+      }
       if (!isActive(s) || !Number.isFinite(price) || price <= 0) {
         const now = Date.now();
         if (isActive(s) && (!lastQuoteFailureAt || now - lastQuoteFailureAt > 60_000)) {
@@ -195,9 +219,6 @@ function slippageFor(pair) {
       }
       lastQuoteAt = new Date().toISOString();
       lastError = null;
-      const latest = trader.getState().position;
-      if (!latest || latest.id !== p.id) return;
-      const liquidityUsd = Number(quotedPair?.liquidity?.usd);
       const entryLiquidityUsd = Number(latest.entryDetails?.liquidityUsd);
       const exitLiquidityFloorUsd = Number.isFinite(entryLiquidityUsd) && entryLiquidityUsd > 0
         ? Math.max(MIN_EXIT_LIQUIDITY_USD, entryLiquidityUsd * (1 - MAX_LIQUIDITY_DROP_FROM_ENTRY))
