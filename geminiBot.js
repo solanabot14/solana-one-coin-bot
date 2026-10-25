@@ -125,9 +125,12 @@ function slippageFor(pair) {
           candidate.slippageBps = slippageFor(candidate);
           let liveAmount;
           if (liveExecution.status().mode === "LIVE_READY") {
-            const fill = await liveExecution.executeSwap({ inputMint: USDC, outputMint: candidate.tokenAddress, amount: 5_000_000, slippageBps: candidate.slippageBps });
+            const liveSizing = trader.getLiveSizing?.() || { step: 0, amountUsd: 5 };
+            const liveRawAmount = Math.round(liveSizing.amountUsd * 1e6);
+            const fill = await liveExecution.executeSwap({ inputMint: USDC, outputMint: candidate.tokenAddress, amount: liveRawAmount, slippageBps: candidate.slippageBps });
             candidate.liveExecution = { ...fill, outputAmount: fill.actualOutputAmount || fill.quotedOutputAmount };
-            liveAmount = 5;
+            candidate.liveSizing = liveSizing;
+            liveAmount = liveSizing.amountUsd;
           }
           const buy = trader.buy(candidate, liveAmount);
           if (buy.success) {
