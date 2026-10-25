@@ -42,7 +42,7 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
       amountInvestedUsd: size, entryTime: new Date().toISOString(), highestPrice: price,
       tp1Done: false, tp2Done: false, remainingPercent: 100, strategy: "Gemini Paper v3: sell 95% at +15% / trail final 5% by 8% / SL8 / 10–12.5% cash",
       sizingPercent: sizing.percent,
-      entryDetails: candidate.geminiDetails || {}
+      entryDetails: candidate.geminiDetails || {}, liveExecution: candidate.liveExecution || null
     };
     next.cashUsd -= size; next.position = pos;
     next.nextSizingStep = sizing.step === 0 ? 1 : 0;
@@ -51,13 +51,14 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     console.log("[BUY TRIGGERED] Gemini PAPER", pos.symbol, size.toFixed(2), "USD");
     return { success: true, position: structuredClone(pos) };
   }
-  function sell(priceUsd, percentOriginal, reason) {
+  function sell(priceUsd, percentOriginal, reason, execution = null) {
     const p = state.position;
     const price = Number(priceUsd);
     if (!p || !(price > 0) || !(percentOriginal > 0)) return { success: false, error: "No valid open position" };
     const qty = Math.min(p.quantity, p.originalQuantity * percentOriginal / 100);
     if (!(qty > 0)) return { success: false, error: "No remaining quantity" };
-    const value = qty * price;
+    const actualUsdc = Number(execution?.actualOutputAmount) / 1e6;
+    const value = Number.isFinite(actualUsdc) && actualUsdc >= 0 ? actualUsdc : qty * price;
     const basis = p.originalCostUsd * (qty / p.originalQuantity);
     const next = structuredClone(state);
     next.cashUsd += value;
@@ -69,7 +70,7 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
       maxGainPercent: p.entryPrice > 0 ? (Number(p.highestPrice || p.entryPrice) / p.entryPrice - 1) * 100 : 0,
       quantity: qty, amountUsd: value, costBasisUsd: basis, pnlUsd: value - basis,
       pnlPercent: (price / p.entryPrice - 1) * 100, percentOfOriginalSold: qty / p.originalQuantity * 100,
-      reason, time: new Date().toISOString(), mode: "PAPER"
+      reason, time: new Date().toISOString(), mode: execution ? "LIVE" : "PAPER", execution
     };
     next.history.unshift(trade);
     if (reason === "TP1 +50%" || reason === "TP +15% SELL 95%") next.position.tp1Done = true;
