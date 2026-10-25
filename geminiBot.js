@@ -128,7 +128,7 @@ function slippageFor(pair) {
             const liveSizing = trader.getLiveSizing?.() || { step: 0, amountUsd: 5 };
             const liveRawAmount = Math.round(liveSizing.amountUsd * 1e6);
             const fill = await liveExecution.executeSwap({ inputMint: USDC, outputMint: candidate.tokenAddress, amount: liveRawAmount, slippageBps: candidate.slippageBps });
-            candidate.liveExecution = { ...fill, outputAmount: fill.actualOutputAmount || fill.quotedOutputAmount };
+            candidate.liveExecution = { ...fill, executionMode: "LIVE", outputAmount: fill.actualOutputAmount || fill.quotedOutputAmount };
             candidate.liveSizing = liveSizing;
             liveAmount = liveSizing.amountUsd;
           }
@@ -200,12 +200,12 @@ function slippageFor(pair) {
       // quote.  Paper trading must realize this as a full loss and release the
       // single Gemini slot; otherwise it can remain stuck forever.
       if (hasConfirmedZeroLiquidity) {
-        if (liveExecution.status().mode === "LIVE_READY") {
+        if (latest.liveExecution?.executionMode === "LIVE") {
           // In live mode do not fabricate a sale.  Attempt the real swap; a
           // failed swap leaves the actual asset open rather than hiding it.
           const raw = latest.liveExecution?.outputAmount;
           if (!/^\d+$/.test(String(raw || ""))) throw new Error("Live position has no confirmed token amount.");
-          const fill = await liveExecution.executeSwap({ inputMint: latest.tokenAddress, outputMint: USDC, amount: raw, slippageBps: MAX_SLIPPAGE_BPS });
+          const fill = await liveExecution.executeSwap({ inputMint: latest.tokenAddress, outputMint: USDC, amount: raw, slippageBps: MAX_SLIPPAGE_BPS, purpose: "exit" });
           const out = Number(fill.actualOutputAmount);
           if (!Number.isFinite(out) || out < 0) throw new Error("Live exit lacks confirmed USDC output.");
           return trader.sell((out / 1e6) / latest.quantity, 100, "LIQUIDITY COLLAPSE EXIT — ZERO LIQUIDITY", { ...fill, actualOutputAmount: String(out) });
@@ -238,10 +238,10 @@ function slippageFor(pair) {
       // Exit while a quote and meaningful liquidity still exist, rather than
       // allowing this one-position bot to be trapped at near-zero liquidity.
       const close = async reason => {
-        if (liveExecution.status().mode !== "LIVE_READY") return trader.sell(price, 100, reason);
+        if (latest.liveExecution?.executionMode !== "LIVE") return trader.sell(price, 100, reason);
         const raw = latest.liveExecution?.outputAmount;
         if (!/^\d+$/.test(String(raw || ""))) throw new Error("Live position has no confirmed token amount.");
-        const fill = await liveExecution.executeSwap({ inputMint: latest.tokenAddress, outputMint: USDC, amount: raw, slippageBps: MAX_SLIPPAGE_BPS });
+        const fill = await liveExecution.executeSwap({ inputMint: latest.tokenAddress, outputMint: USDC, amount: raw, slippageBps: MAX_SLIPPAGE_BPS, purpose: "exit" });
         const out = Number(fill.actualOutputAmount);
         if (!Number.isFinite(out) || out < 0) throw new Error("Live exit lacks confirmed USDC output.");
         return trader.sell((out / 1e6) / latest.quantity, 100, reason, { ...fill, actualOutputAmount: String(out) });
