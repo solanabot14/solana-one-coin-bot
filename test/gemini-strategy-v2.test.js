@@ -11,6 +11,7 @@ Module._load = function(request, parent, isMain) {
     if (request === "./geminiSources") return {};
     if (request === "./geminiHttp") return {};
     if (request === "./geminiFilter") return {};
+    if (request === "./profitSniperExecutionQuote") return { createExecutionVerifier: () => async () => ({ allowed: true }) };
   }
   return originalLoad.call(this, request, parent, isMain);
 };
@@ -38,22 +39,22 @@ test("cash sizing alternates 10, 12.5, 10 and survives restart", t => {
   restored.sell(1,100,"TEST");
   assert.equal(createGeminiTrader(file).getSizing().percent,10);
 });
-test("monitor holds below 20 percent and exits all at 20 percent", async t => {
+test("monitor holds below 15 percent and exits all at 15 percent", async t => {
   const {trader} = fixture(t);
   trader.buy(candidate);
-  let price = 1.199;
+  let price = 1.149;
   const bot = createGeminiBot({trader,timers:{setInterval:()=>1,clearInterval:()=>{}},
     poolFetcher:async()=>[],pairDetails:async()=>({priceUsd:price})});
   bot.start(); t.after(()=>bot.stop());
   await new Promise(resolve=>setImmediate(resolve));
   assert.ok(trader.getState().position);
-  price = 1.2;
+  price = 1.15;
   await bot.monitor();
   assert.equal(trader.getState().position,null);
   const sale = trader.getState().history[0];
-  assert.equal(sale.reason,"TP +20% FULL EXIT");
+  assert.equal(sale.reason,"TP +15% FULL EXIT");
   assert.equal(sale.percentOfOriginalSold,100);
-  assert.equal(trader.getState().cashUsd,204);
+  assert.equal(trader.getState().cashUsd,203);
 });
 test("new full exit closes remainder of an existing partial position", async t => {
   const {trader} = fixture(t);
@@ -81,4 +82,20 @@ test("monitor holds above -8 percent and closes all at -8 percent", async t => {
   assert.equal(trader.getState().history[0].reason,"HARD STOP -8%");
   assert.equal(trader.getState().history[0].percentOfOriginalSold,100);
   assert.ok(Math.abs(trader.getState().cashUsd - 198.4) < 1e-9);
+});
+
+test("monitor exits before a position can be trapped by a liquidity collapse", async t => {
+  const {trader} = fixture(t);
+  trader.buy({...candidate, geminiDetails:{liquidityUsd:10000}});
+  let pair = {priceUsd:1,liquidity:{usd:10000}};
+  const bot = createGeminiBot({trader,timers:{setInterval:()=>1,clearInterval:()=>{}},
+    poolFetcher:async()=>[],pairDetails:async()=>pair});
+  bot.start(); t.after(()=>bot.stop());
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.ok(trader.getState().position);
+  pair = {priceUsd:0.99,liquidity:{usd:2999}};
+  await bot.monitor();
+  assert.equal(trader.getState().position,null);
+  assert.equal(trader.getState().history[0].reason,"LIQUIDITY COLLAPSE EXIT");
+  assert.equal(trader.getState().history[0].percentOfOriginalSold,100);
 });
