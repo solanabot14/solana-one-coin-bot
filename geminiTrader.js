@@ -151,6 +151,24 @@ const current = () => {
       minimumRealizedPnlUsd: 30000
     });
     if (correction.success) console.warn("[GEMINI LEDGER CORRECTION]", JSON.stringify(correction));
+    // Remove only the proven invalid paper print: the Oct 25 Dig record used a
+    // mismatched market quote and falsely reported $1,191.45 from a $42.62 buy.
+    // The timestamp guard prevents this correction from touching any later Dig trade.
+    const invalidDigSell = instance.getState().history.find(row =>
+      row.type === "SELL" && row.mode === "PAPER" && row.symbol === "Dig" &&
+      row.reason === "TP +15% FULL EXIT" && String(row.time || "").startsWith("2026-10-25T20:07:") &&
+      Number(row.amountUsd) > 1000
+    );
+    if (invalidDigSell) {
+      const digCorrection = instance.removeClosedPosition({
+        positionId: invalidDigSell.positionId,
+        triggerSellId: invalidDigSell.id,
+        tokenAddress: invalidDigSell.tokenAddress,
+        symbol: "Dig",
+        minimumRealizedPnlUsd: 1000
+      });
+      if (digCorrection.success) console.warn("[GEMINI INVALID DIG PAPER TRADE REMOVED]", JSON.stringify(digCorrection));
+    }
   }
   return instance;
 };
