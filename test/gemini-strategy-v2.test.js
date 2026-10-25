@@ -99,3 +99,21 @@ test("monitor exits before a position can be trapped by a liquidity collapse", a
   assert.equal(trader.getState().history[0].reason,"LIQUIDITY COLLAPSE EXIT");
   assert.equal(trader.getState().history[0].percentOfOriginalSold,100);
 });
+
+test("confirmed zero liquidity writes off the paper position and releases Gemini to scan again", async t => {
+  const {trader} = fixture(t);
+  trader.buy({...candidate, geminiDetails:{liquidityUsd:10000}});
+  let pair = {priceUsd:1,liquidity:{usd:10000}};
+  const bot = createGeminiBot({trader,timers:{setInterval:()=>1,clearInterval:()=>{}},
+    poolFetcher:async()=>[],pairDetails:async()=>pair});
+  bot.start(); t.after(()=>bot.stop());
+  await new Promise(resolve=>setImmediate(resolve));
+  pair = {priceUsd:0,liquidity:{usd:0}};
+  await bot.monitor();
+  assert.equal(trader.getState().position,null);
+  const sale = trader.getState().history[0];
+  assert.equal(sale.reason,"LIQUIDITY COLLAPSE EXIT — ZERO LIQUIDITY");
+  assert.equal(sale.amountUsd,0);
+  assert.equal(sale.pnlPercent,-100);
+  assert.equal(sale.writeOff,true);
+});
