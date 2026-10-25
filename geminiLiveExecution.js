@@ -7,7 +7,10 @@ const SOL = "So11111111111111111111111111111111111111112";
 const API = "https://api.jup.ag/swap/v2";
 
 function configured(env = process.env) {
-  return env.GEMINI_LIVE_ENABLED === "true" && !!env.GEMINI_LIVE_PRIVATE_KEY;
+  // Live entry is controlled only by the protected dashboard switch.  A
+  // deployment/restart defaults to off because the persisted switch defaults
+  // to false.  An environment variable alone can never arm this wallet.
+  return require("./geminiLiveControl").isEnabled() && !!env.GEMINI_LIVE_PRIVATE_KEY;
 }
 
 function status(env = process.env) {
@@ -20,7 +23,7 @@ function status(env = process.env) {
     walletAddress: env.GEMINI_LIVE_WALLET_ADDRESS || null,
     tradeSizeUsd: 5,
     maxOpenPositions: 1,
-    reason: configured(env) ? null : "Live execution is disabled until an explicit Railway secret is configured."
+    reason: configured(env) ? null : "Live trading is off or the signing key is not configured."
   };
 }
 
@@ -38,13 +41,17 @@ function signerFromSecret(secret) {
 }
 
 function createGeminiLiveExecution({ env = process.env, fetchImpl = globalThis.fetch } = {}) {
-  function requireEnabled() {
-    if (!configured(env)) throw new Error("Live execution is disabled.");
+  function requireSigningKey() {
+    if (!env.GEMINI_LIVE_PRIVATE_KEY) throw new Error("GEMINI_LIVE_PRIVATE_KEY is not configured.");
     const signer = signerFromSecret(env.GEMINI_LIVE_PRIVATE_KEY);
     if (env.GEMINI_LIVE_WALLET_ADDRESS && signer.publicKey.toBase58() !== env.GEMINI_LIVE_WALLET_ADDRESS) {
       throw new Error("Configured wallet address does not match the signing key.");
     }
     return signer;
+  }
+  function requireEnabled() {
+    if (!configured(env)) throw new Error("Live entry is disabled.");
+    return requireSigningKey();
   }
 
   async function request(path, options = {}) {
@@ -54,8 +61,10 @@ function createGeminiLiveExecution({ env = process.env, fetchImpl = globalThis.f
     return body;
   }
 
-  async function executeSwap({ inputMint, outputMint, amount, slippageBps = 300 }) {
-    const signer = requireEnabled();
+  async function executeSwap({ inputMint, outputMint, amount, slippageBps = 300, purpose = "entry" }) {
+    // Turning the dashboard switch off blocks new buys, but never abandons a
+    // real position that still needs a real exit transaction.
+    const signer = purpose === "exit" ? requireSigningKey() : requireEnabled();
     if (!inputMint || !outputMint || outputMint === inputMint) throw new Error("Unsupported live swap request.");
     if (!Number.isSafeInteger(Number(amount)) || Number(amount) <= 0) throw new Error("Invalid live swap amount.");
     const order = await request("/order?" + new URLSearchParams({ inputMint, outputMint, amount: String(amount), taker: signer.publicKey.toBase58(), slippageBps: String(slippageBps) }));
