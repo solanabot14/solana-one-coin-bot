@@ -64,8 +64,23 @@ function createGeminiLiveExecution({ env = process.env, fetchImpl = globalThis.f
     const transaction = VersionedTransaction.deserialize(Buffer.from(order.transaction, "base64"));
     transaction.sign([signer]);
     const submitted = await request("/execute", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ signedTransaction: Buffer.from(transaction.serialize()).toString("base64"), requestId: order.requestId }) });
-    if (!submitted.signature || submitted.status === "Failed") throw new Error(submitted.error || "Jupiter did not confirm the transaction.");
-    return { signature: submitted.signature, inputMint, outputMint, inputAmount: String(amount), quotedOutputAmount: String(order.outAmount), actualOutputAmount: submitted.outputAmount ? String(submitted.outputAmount) : null, status: submitted.status || "Success" };
+    // Jupiter V2 reports the wallet-reflected fill in totalOutputAmount.  Never
+    // use the quote (or a route-only amount) as the live fill: that could make
+    // the next sell request use a token amount the wallet does not actually own.
+    if (submitted.status !== "Success" || Number(submitted.code) !== 0 || !submitted.signature)
+      throw new Error(submitted.error || "Jupiter did not confirm the transaction.");
+    if (!/^\d+$/.test(String(submitted.totalOutputAmount || "")))
+      throw new Error("Jupiter confirmation did not include the wallet-reflected output amount.");
+    return {
+      signature: submitted.signature,
+      inputMint,
+      outputMint,
+      inputAmount: String(amount),
+      quotedOutputAmount: String(order.outAmount),
+      actualOutputAmount: String(submitted.totalOutputAmount),
+      actualInputAmount: /^\d+$/.test(String(submitted.totalInputAmount || "")) ? String(submitted.totalInputAmount) : null,
+      status: submitted.status
+    };
   }
 
   return { status: () => status(env), executeSwap };
