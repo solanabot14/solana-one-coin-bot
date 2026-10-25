@@ -1,31 +1,22 @@
-const { getMintSafety, getHolderConcentration, getLiquidityLock } = require("./geminiSources");
+const { getMintSafety, getHolderConcentration } = require("./geminiSources");
 
 const MIN_LIQUIDITY_USD = 10000;
-const MIN_LIQUIDITY_LOCK_PERCENT = 95;
 const MIN_POOL_AGE_MS = 15 * 60 * 1000;
 const MIN_TRANSACTIONS_5M = 30;
 const MIN_VOLUME_5M_USD = 5000;
 const MIN_BUY_RATIO_5M = 0.55;
 const MAX_TOP10_PERCENT = 35;
-const MIN_PRICE_CHANGE_5M = 0;
+const MIN_PRICE_CHANGE_5M = 2;
 
 async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety, holderConcentration = getHolderConcentration } = {}) {
   const reject = (reason, details = {}) => ({ accepted: false, reason, details });
   const priceChange5m = Number(candidate.priceChange5m);
   if (!Number.isFinite(priceChange5m)) return reject("5m Price Trend Unverified");
-  if (priceChange5m <= MIN_PRICE_CHANGE_5M)
-    return reject("5m Momentum Not Positive", { priceChange5m, minimumExclusive: MIN_PRICE_CHANGE_5M });
+  if (priceChange5m < MIN_PRICE_CHANGE_5M)
+    return reject("5m Momentum Below +2%", { priceChange5m, minimum: MIN_PRICE_CHANGE_5M });
   const liquidity = Number(candidate.liquidityUsd);
   if (!Number.isFinite(liquidity) || liquidity < MIN_LIQUIDITY_USD)
     return reject("Low Liquidity", { liquidityUsd: liquidity || 0, minimum: MIN_LIQUIDITY_USD });
-
-  let liquidityLock;
-  try { liquidityLock = await getLiquidityLock(candidate.tokenAddress, signal); }
-  catch (error) { return reject("Liquidity Lock Check Failed", { error: error.message }); }
-  if (!liquidityLock?.verified || !Number.isFinite(Number(liquidityLock.lockedPercent)))
-    return reject("Liquidity Lock Unverified");
-  if (Number(liquidityLock.lockedPercent) < MIN_LIQUIDITY_LOCK_PERCENT)
-    return reject("Liquidity Lock Below 95%", { lockedPercent: Number(liquidityLock.lockedPercent), minimum: MIN_LIQUIDITY_LOCK_PERCENT });
 
   const created = Date.parse(candidate.poolCreatedAt || "");
   if (!Number.isFinite(created)) return reject("Pool Age Unverified");
@@ -62,7 +53,7 @@ async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety
   return {
     accepted: true,
     reason: "Solana pair passed Gemini safety checks",
-    details: { dexId: candidate.dexId || null, liquidityUsd: liquidity, liquidityLockedPercent: Number(liquidityLock.lockedPercent), poolAgeMs: age, transactions5m: tx, volume5mUsd: volume5m, buyRatio, priceChange5m, top10Percent: Number(holders.top10Percent) },
+    details: { dexId: candidate.dexId || null, liquidityUsd: liquidity, poolAgeMs: age, transactions5m: tx, volume5mUsd: volume5m, buyRatio, priceChange5m, top10Percent: Number(holders.top10Percent) },
     mintSafety: mint
   };
 }
@@ -70,7 +61,6 @@ async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety
 module.exports = {
   evaluateCandidate,
   MIN_LIQUIDITY_USD,
-  MIN_LIQUIDITY_LOCK_PERCENT,
   MIN_POOL_AGE_MS,
   MIN_TRANSACTIONS_5M,
   MIN_BUY_RATIO_5M,
