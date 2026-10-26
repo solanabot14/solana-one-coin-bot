@@ -55,9 +55,21 @@ function createJanMvpBot({
   const livePositionSnapshots = new Map();
   const isActive = session => activeSession === session && !session.signal.aborted;
 
-  async function notifyMilestones() {
-    // Routine Swarm slot milestones are trade notifications and stay muted with the other bot updates.
-    return { sent: false, reason: "routine bot trade notifications muted" };
+  async function notifyMilestones(closedTrade, milestones) {
+    for (const milestone of milestones || []) {
+      const state = trader.getDashboardState();
+      const slot = state.slots.find(s => s.id === closedTrade.slotId);
+      const nextTarget = slot?.currentTarget;
+      await notifier.sendTelegramMessage([
+        "SWARM | SLOT MILESTONE",
+        `Slot: ${closedTrade.slotId}`,
+        `Reached: ${Number(milestone).toFixed(2)}`,
+        `Balance: ${Number(closedTrade.endingBalance).toFixed(2)}`,
+        nextTarget == null ? "Next target: COMPLETE" : `Next target: ${Number(nextTarget).toFixed(2)}`,
+        `Coin: ${closedTrade.symbol}`,
+        `Trade return: ${Number(closedTrade.returnPercent).toFixed(2)}%`
+      ].join("\n"));
+    }
   }
 
   function notifySwarmSell(execution, position) {
