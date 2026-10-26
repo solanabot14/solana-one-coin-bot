@@ -16,17 +16,18 @@ const MAX_EXIT_LIQUIDITY_DRAWDOWN = 0.20;
 const BLOCKED_TOKEN_ADDRESSES = new Set(["EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J"]);
 
 const TAKE_PROFIT_1_PERCENT = 15;
-const TAKE_PROFIT_1_SELL_PERCENT = 60;
-const TAKE_PROFIT_2_PERCENT = 20;
-const TAKE_PROFIT_2_SELL_PERCENT = 30;
+const TAKE_PROFIT_1_SELL_PERCENT = 100;
+const TAKE_PROFIT_2_PERCENT = 0;
+const TAKE_PROFIT_2_SELL_PERCENT = 0;
 const TAKE_PROFIT_2_CUMULATIVE_ORIGINAL_POSITION_PERCENT =
   TAKE_PROFIT_1_SELL_PERCENT + TAKE_PROFIT_2_SELL_PERCENT;
 const TRAILING_STOP_PERCENT = 6;
 const EARLY_PROFIT_PROTECTION_ACTIVATION_PERCENT = 8;
 const EARLY_PROFIT_PROTECTION_PULLBACK_PERCENT = 5;
 const PROFIT_FLOOR_AFTER_TP1_PERCENT = 0;
-const COMPOUND_RATES = [0.10];
-const MINIMUM_TRADE_USD = 10;
+const COMPOUND_RATES = [0, 0.10, 0.125];
+const BASE_TRADE_USD = 5;
+const MINIMUM_TRADE_USD = 5;
 
 function getMomentumFailureReasons(coin, now = Date.now()) {
   if (!coin || typeof coin !== "object") return ["missing_candidate"];
@@ -100,9 +101,10 @@ function getBuySizing(state = {}) {
     : (state.position ? [state.position] : []);
   const equity = Number(state.cashBalance || 0) +
     positions.reduce((sum, position) => sum + Number(position.amountInvested || 0), 0);
-  const compoundRate = COMPOUND_RATES[0];
+  const completedBuys = (state.history || []).filter(row => row?.type === "BUY").length;
+  const compoundRate = COMPOUND_RATES[completedBuys % COMPOUND_RATES.length];
   return {
-    amountInvested: Math.max(MINIMUM_TRADE_USD, equity * compoundRate),
+    amountInvested: Number((BASE_TRADE_USD * (1 + compoundRate)).toFixed(2)),
     compoundRate
   };
 }
@@ -195,7 +197,7 @@ function chooseExit({ position, currentPrice, freshData, exitProgress }) {
     return {
       targetOriginalPositionPercent: TAKE_PROFIT_1_SELL_PERCENT,
       triggerPrice: entryPrice * (1 + TAKE_PROFIT_1_PERCENT / 100),
-      reason: "TAKE PROFIT 1 - SELL 60% OF ORIGINAL POSITION AT +15%",
+      reason: "TAKE PROFIT 1 - SELL 100% OF ORIGINAL POSITION AT +15%",
       takeProfit: "firstTakeProfitDone"
     };
 

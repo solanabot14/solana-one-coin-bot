@@ -53,10 +53,13 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, {
 	maxOpenPositions = null,
 	startingBalance = 100,
 	sessionResetId = null,
+	minimumBuyUsd = MINIMUM_BUY_USD,
 	estimateExecutionCosts = null
 } = {}) {
 	const positionLimit = Number.isInteger(maxOpenPositions) && maxOpenPositions > 0 ? maxOpenPositions : 2;
 	const stateValidationLimit = Math.max(3, positionLimit);
+	const buyMinimum = Number.isFinite(Number(minimumBuyUsd)) && Number(minimumBuyUsd) > 0
+		? Number(minimumBuyUsd) : MINIMUM_BUY_USD;
 	let state = {
 		startingBalance,
 		cashBalance: startingBalance,
@@ -124,7 +127,7 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, {
 		const price = Number(coin.priceUsd);
 		if (!Number.isFinite(price) || price <= 0 || !coin.tokenAddress) return fail("Invalid token or price.");
 		if (positions.some(p => p.tokenAddress === coin.tokenAddress)) return fail("Token already has an open position.");
-		if (state.cashBalance < MINIMUM_BUY_USD) return fail("At least $10 cash is required for a new trade.");
+		if (state.cashBalance < buyMinimum) return fail("At least $10 cash is required for a new trade.");
 		const next = structuredClone(state);
 		const sizing = typeof getBuySizing === "function"
 			? getBuySizing(structuredClone(state), structuredClone(coin))
@@ -133,7 +136,7 @@ function createPaperTrader(dataFile = defaultDataFile(), io = fs, {
 			? Number(sizing.amountInvested)
 			: Math.max(equity() * COMPOUND_RATE, MINIMUM_BUY_USD);
 		const amountInvested = Math.min(requestedAmount, next.cashBalance);
-		if (!Number.isFinite(amountInvested) || amountInvested < MINIMUM_BUY_USD) {
+		if (!Number.isFinite(amountInvested) || amountInvested < buyMinimum) {
 			return fail("At least $10 cash is required for a new trade.");
 		}
 		let entryCosts = { feesUsd: 0, slippageUsd: 0, poolFeeUsd: 0, solanaFeeUsd: 0, priorityFeeUsd: 0 };

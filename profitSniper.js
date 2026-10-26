@@ -322,6 +322,7 @@ const trader = createPaperTrader(statePath(), fs, {
   strategyVersion: "Paper-Profit-Sniper-original-10-20",
   startingBalance: 200,
   sessionResetId: SESSION_RESET_ID,
+  minimumBuyUsd: MINIMUM_TRADE_USD,
   maxOpenPositions: MAX_OPEN_POSITIONS,
   getBuySizing,
   estimateExecutionCosts
