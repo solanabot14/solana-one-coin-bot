@@ -193,6 +193,29 @@ async function sendGeminiBuyAlert(signalId, candidate, amountUsd, {
   }
 }
 
+function formatGeminiPaperSignal(candidate = {}, amountUsd = 0) {
+  const lines = [
+    "GEMINI | PAPER BUY SIGNAL",
+    "Coin: " + String(candidate.symbol || candidate.name || "Unknown"),
+    "Suggested live size: $" + Number(amountUsd || 0).toFixed(2),
+    "Price: $" + number(candidate.priceUsd, 10),
+    "Liquidity: $" + number(candidate.liquidityUsd, 2),
+    "5m change: " + percent(candidate.priceChange5m),
+    "5m buys/sells: " + Number(candidate.buys5m || 0) + "/" + Number(candidate.sells5m || 0),
+    "Pool: PumpSwap verified",
+    "Paper entry recorded; no live order was placed.",
+    "This paper-mode signal has no Buy button."
+  ];
+  lines.push("Mint: " + String(candidate.tokenAddress || ""));
+  const link = dexscreenerLink(candidate);
+  if (link) lines.push("Chart: " + link);
+  return lines.join("\n");
+}
+
+async function sendGeminiPaperSignal(candidate, amountUsd, options = {}) {
+  return sendTelegramMessage(formatGeminiPaperSignal(candidate, amountUsd), options);
+}
+
 function startTelegramBuyPolling(onBuy, {
   env = process.env,
   fetchImpl = globalThis.fetch
@@ -269,5 +292,7 @@ module.exports = {
   notifyCritical,
   formatGeminiBuyAlert,
   sendGeminiBuyAlert,
+  formatGeminiPaperSignal,
+  sendGeminiPaperSignal,
   startTelegramBuyPolling
 };

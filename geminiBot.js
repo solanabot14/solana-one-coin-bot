@@ -5,7 +5,7 @@ const { createExecutionVerifier } = require("./profitSniperExecutionQuote");
 const { createGeminiLiveExecution, USDC } = require("./geminiLiveExecution");
 const traderDefault = require("./geminiTrader");
 const { randomUUID } = require("node:crypto");
-const { getTelegramConfig, sendGeminiBuyAlert, startTelegramBuyPolling } = require("./telegram");
+const { getTelegramConfig, sendGeminiBuyAlert, sendGeminiPaperSignal, startTelegramBuyPolling } = require("./telegram");
 
 const SCAN_MS = Number(process.env.GEMINI_SCAN_MS) || 30000;
 const MONITOR_MS = Number(process.env.GEMINI_MONITOR_MS) || 3000;
@@ -303,6 +303,19 @@ function slippageFor(pair) {
               symbol: candidate.symbol, mint: candidate.tokenAddress,
               pair: candidate.pairAddress, tradeSizeUsd: paperBuy.position.originalCostUsd
             });
+            if (telegramEnabled) {
+              void sendGeminiPaperSignal(candidate, liveSizing.amountUsd)
+                .then(result => {
+                  if (result.sent) {
+                    console.log("[INFO] Gemini Telegram paper-mode signal sent", {
+                      symbol: candidate.symbol, mint: candidate.tokenAddress
+                    });
+                  } else {
+                    console.warn("[INFO] Gemini Telegram paper-mode signal failed", result.reason);
+                  }
+                })
+                .catch(error => console.warn("[INFO] Gemini Telegram paper-mode signal failed", error.message));
+            }
             break;
           }
           trader.recordRejection(candidate, paperBuy.error);
