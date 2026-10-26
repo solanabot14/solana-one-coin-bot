@@ -127,10 +127,13 @@ function slippageFor(pair) {
           candidate.slippageBps = slippageFor(candidate);
           let liveAmount;
           if (liveReady) {
-            const liveRawAmount = Math.round(liveSizing.amountUsd * 1e6);
             let fill;
             try {
-              fill = await liveExecution.executeSwap({ inputMint: USDC, outputMint: candidate.tokenAddress, amount: liveRawAmount, slippageBps: candidate.slippageBps });
+              // Keep injected test/dry-run executors compatible while the
+              // production executor chooses USDC or funded SOL automatically.
+              fill = typeof liveExecution.executeEntry === "function"
+                ? await liveExecution.executeEntry({ outputMint: candidate.tokenAddress, amountUsd: liveSizing.amountUsd, slippageBps: candidate.slippageBps })
+                : await liveExecution.executeSwap({ inputMint: USDC, outputMint: candidate.tokenAddress, amount: Math.round(liveSizing.amountUsd * 1e6), slippageBps: candidate.slippageBps });
             } catch (error) {
               trader.recordRejection(candidate, "Live Wallet Execution Failed", { error: error.message, amountUsd: liveSizing.amountUsd });
               console.error("[INFO] Gemini live execution failed", candidate.tokenAddress, error.message);

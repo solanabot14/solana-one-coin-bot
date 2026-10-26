@@ -79,6 +79,56 @@ function createGeminiLiveExecution({ env = process.env, fetchImpl = globalThis.f
     return body;
   }
 
+  async function rpc(method, params) {
+    const response = await fetchImpl(env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || body.error) throw new Error(body?.error?.message || "Solana balance lookup failed.");
+    return body.result;
+  }
+
+  async function walletBalances(signer) {
+    const owner = signer.publicKey.toBase58();
+    const [sol, usdc] = await Promise.all([
+      rpc("getBalance", [owner, { commitment: "confirmed" }]),
+      rpc("getTokenAccountsByOwner", [owner, { mint: USDC }, { encoding: "jsonParsed", commitment: "confirmed" }])
+    ]);
+    return {
+      solLamports: Number(sol?.value || 0),
+      usdcRaw: (usdc?.value || []).reduce((total, account) => total + Number(account?.account?.data?.parsed?.info?.tokenAmount?.amount || 0), 0)
+    };
+  }
+
+  async function entryInput(signer, amountUsd) {
+    const desiredUsdcRaw = Math.round(Number(amountUsd) * 1e6);
+    if (!(desiredUsdcRaw > 0)) throw new Error("Invalid live entry amount.");
+    let balances;
+    try { balances = await walletBalances(signer); }
+    catch (_) {
+      // Do not make a temporary public-RPC outage stop a wallet that is funded
+      // with USDC. Jupiter remains the execution authority in that case.
+      return { inputMint: USDC, amount: desiredUsdcRaw };
+    }
+    if (balances.usdcRaw >= desiredUsdcRaw) return { inputMint: USDC, amount: desiredUsdcRaw };
+
+    // A wallet funded with SOL should work without requiring a manual USDC
+    // conversion. Quote one SOL to determine the exact lamports for this
+    // dollar-sized entry, then leave a small SOL reserve for transaction fees.
+    const quote = await request("/order?" + new URLSearchParams({
+      inputMint: SOL, outputMint: USDC, amount: "1000000000", taker: signer.publicKey.toBase58(), slippageBps: "300"
+    }));
+    const usdcPerSolRaw = Number(quote.outAmount);
+    if (!(usdcPerSolRaw > 0)) throw new Error("Jupiter could not price SOL for the live entry.");
+    const solLamports = Math.ceil(desiredUsdcRaw * 1e9 / usdcPerSolRaw);
+    const feeReserveLamports = 5_000_000;
+    if (balances.solLamports < solLamports + feeReserveLamports)
+      throw new Error("Wallet needs at least the live trade amount in USDC or SOL plus a small SOL network-fee reserve.");
+    return { inputMint: SOL, amount: solLamports };
+  }
+
   async function executeSwap({ inputMint, outputMint, amount, slippageBps = 300, purpose = "entry" }) {
     // Turning the dashboard switch off blocks new buys, but never abandons a
     // real position that still needs a real exit transaction.
@@ -110,7 +160,13 @@ function createGeminiLiveExecution({ env = process.env, fetchImpl = globalThis.f
     };
   }
 
-  return { status: () => status(env), executeSwap };
+  async function executeEntry({ outputMint, amountUsd, slippageBps = 300 }) {
+    const signer = requireEnabled();
+    const input = await entryInput(signer, amountUsd);
+    return executeSwap({ ...input, outputMint, slippageBps });
+  }
+
+  return { status: () => status(env), executeSwap, executeEntry };
 }
 
 module.exports = { USDC, SOL, configured, status, signerFromSecret, createGeminiLiveExecution };
