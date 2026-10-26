@@ -54,7 +54,7 @@ test("live sizing advances 5, 5.50, 5.63 and resets to 5 after the third win or 
   trader.sell(1.1,100,"TP +15% FULL EXIT",{actualOutputAmount:"6193000"});
   assert.equal(trader.getLiveSizing().amountUsd,5);
   trader.buy(liveCandidate,5);
-  trader.sell(0.9,100,"HARD STOP -12%",{actualOutputAmount:"4500000"});
+  trader.sell(0.9,100,"HARD STOP -8%",{actualOutputAmount:"4500000"});
   assert.equal(trader.getLiveSizing().amountUsd,5);
 });
 test("live entry keeps the same paper-strategy qualification size while executing the capped $5 wallet order", async t => {
@@ -107,21 +107,21 @@ test("new full exit closes remainder of an existing partial position", async t =
   assert.equal(trader.getState().history[0].quantity,10);
 });
 
-test("monitor holds above -12 percent and closes all at -12 percent", async t => {
+test("monitor holds above -8 percent and closes all at -8 percent", async t => {
   const {trader} = fixture(t);
   trader.buy(candidate);
-  let price = 0.881;
+  let price = 0.921;
   const bot = createGeminiBot({trader,timers:{setInterval:()=>1,clearInterval:()=>{}},
     poolFetcher:async()=>[],pairDetails:async()=>({priceUsd:price})});
   bot.start(); t.after(()=>bot.stop());
   await new Promise(resolve=>setImmediate(resolve));
   assert.ok(trader.getState().position);
-  price = 0.88;
+  price = 0.92;
   await bot.monitor();
   assert.equal(trader.getState().position,null);
   assert.equal(trader.getState().history[0].reason,"HARD STOP -8%");
   assert.equal(trader.getState().history[0].percentOfOriginalSold,100);
-  assert.ok(Math.abs(trader.getState().cashUsd - 197.6) < 1e-9);
+  assert.ok(Math.abs(trader.getState().cashUsd - 198.4) < 1e-9);
 });
 
 test("monitor exits before a position can be trapped by a liquidity collapse", async t => {
