@@ -231,7 +231,7 @@ async function getGeckoTokenQuote(tokenAddress, signal) {
 
 async function getGeckoPools(signal) {
   const { data } = await retry(() => axios.get(
-    GT_BASE + "/networks/solana/new_pools",
+    GT_BASE + "/networks/solana/dexes/pumpswap/pools",
     { timeout: 12000, signal, headers: { accept: "application/json;version=20230302" }, params: { page: 1 } }
   ));
   const rows = Array.isArray(data?.data) ? data.data : [];
