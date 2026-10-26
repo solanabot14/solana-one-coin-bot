@@ -30,14 +30,32 @@ function status(env = process.env) {
 function signerFromSecret(secret) {
   const { Keypair } = require("@solana/web3.js");
   if (!secret) throw new Error("GEMINI_LIVE_PRIVATE_KEY is not configured.");
-  let bytes;
-  try { bytes = Uint8Array.from(JSON.parse(secret)); }
-  catch (_) {
+  const parseBytes = value => {
+    const text = String(value).trim();
+    let parsed;
+    try { parsed = JSON.parse(text); } catch (_) { parsed = undefined; }
+    if (Array.isArray(parsed)) {
+      if (!parsed.every(n => Number.isInteger(n) && n >= 0 && n <= 255))
+        throw new Error("GEMINI_LIVE_PRIVATE_KEY JSON array is invalid.");
+      return Uint8Array.from(parsed);
+    }
+    // Some secret managers preserve a JSON-quoted base58 key. Unwrap it before
+    // decoding instead of treating the quote characters as part of the key.
+    const encoded = (typeof parsed === "string" ? parsed : text).replace(/\s+/g, "");
     const imported = require("bs58");
     const bs58 = imported.default || imported;
-    bytes = bs58.decode(secret.trim());
-  }
-  return Keypair.fromSecretKey(bytes);
+    try { return bs58.decode(encoded); }
+    catch (_) {
+      // Base64 is another standard export form for a Solana secret key.
+      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded) || encoded.length % 4 !== 0)
+        throw new Error("GEMINI_LIVE_PRIVATE_KEY must be a Solana JSON array, base58 key, or base64 key.");
+      return Uint8Array.from(Buffer.from(encoded, "base64"));
+    }
+  };
+  const bytes = parseBytes(secret);
+  if (bytes.length === 32) return Keypair.fromSeed(bytes);
+  if (bytes.length === 64) return Keypair.fromSecretKey(bytes);
+  throw new Error("GEMINI_LIVE_PRIVATE_KEY must decode to a 32-byte seed or 64-byte Solana secret key.");
 }
 
 function createGeminiLiveExecution({ env = process.env, fetchImpl = globalThis.fetch } = {}) {
@@ -95,4 +113,4 @@ function createGeminiLiveExecution({ env = process.env, fetchImpl = globalThis.f
   return { status: () => status(env), executeSwap };
 }
 
-module.exports = { USDC, SOL, configured, status, createGeminiLiveExecution };
+module.exports = { USDC, SOL, configured, status, signerFromSecret, createGeminiLiveExecution };
