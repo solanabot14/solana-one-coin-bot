@@ -7,7 +7,7 @@ const traderDefault = require("./geminiTrader");
 
 const SCAN_MS = Number(process.env.GEMINI_SCAN_MS) || 30000;
 const MONITOR_MS = Number(process.env.GEMINI_MONITOR_MS) || 3000;
-const HARD_STOP = -8;
+const HARD_STOP = -12;
 const MAX_SLIPPAGE_BPS = Math.min(1000, Math.max(200, Number(process.env.SLIPPAGE_BPS) || 300));
 const MAX_DISCOVERY_CANDIDATES = 40;
 const SELLABILITY_TIMEOUT_MS = 10_000;
@@ -326,7 +326,7 @@ function slippageFor(pair) {
         await close("LIQUIDITY COLLAPSE EXIT");
         return;
       }
-      if (price <= latest.entryPrice * (1 + HARD_STOP / 100)) { await close("HARD STOP -8%"); return; }
+      if (price <= latest.entryPrice * (1 + HARD_STOP / 100)) { await close("HARD STOP -12%"); return; }
       if (price >= latest.entryPrice * 1.15) {
         await close("TP +15% FULL EXIT");
         return;
