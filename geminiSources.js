@@ -1,16 +1,95 @@
 const axios = require("axios");
+const { PublicKey } = require("@solana/web3.js");
+const { createHash } = require("node:crypto");
 const { retry } = require("./geminiHttp");
 
-const SOLANA_RPC_URL = process.env.RPC_URL || process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
+const SOLANA_RPC_URL = process.env.RPC_URL || process.env.SOLANA_RPC_URL ||
+  (process.env.HELIUS_API_KEY ? "https://mainnet.helius-rpc.com/?api-key=" + encodeURIComponent(process.env.HELIUS_API_KEY) : "https://api.mainnet-beta.solana.com");
+const PUMP_AMM_PROGRAM = new PublicKey("pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA");
+const PUMP_PROGRAM = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
+const PUMP_POOL_DISCRIMINATOR = createHash("sha256").update("account:Pool").digest().subarray(0, 8);
+const canonicalPoolCache = new Map();
 const RUGCHECK_BASE = "https://api.rugcheck.xyz/v1/tokens/";
 const GT_BASE = "https://api.geckoterminal.com/api/v2";
 
-async function rpc(method, params, signal) {
+async function rpc(method, params, signal, { timeoutMs = 12000, attempts = 5, baseDelayMs = 350 } = {}) {
   const { data } = await retry(() => axios.post(SOLANA_RPC_URL, {
     jsonrpc: "2.0", id: Date.now(), method, params
-  }, { timeout: 12000, signal, headers: { "content-type": "application/json" } }));
+  }, { timeout: timeoutMs, signal, headers: { "content-type": "application/json" } }), { attempts, baseDelayMs, signal });
   if (data?.error) throw new Error(data.error.message || "Solana RPC error");
   return data?.result;
+}
+
+function verifyCanonicalPumpSwapPool(account, poolAddress, tokenAddress) {
+  try {
+    if (!account || account.owner !== PUMP_AMM_PROGRAM.toBase58() || !Array.isArray(account.data) || typeof account.data[0] !== "string")
+      return { verified: false, reason: "Pool account is not owned by PumpSwap" };
+    const data = Buffer.from(account.data[0], "base64");
+    // Anchor discriminator (8), bump (1), index (u16), creator (32), base mint (32), quote mint (32).
+    if (data.length < 107 || !data.subarray(0, 8).equals(PUMP_POOL_DISCRIMINATOR))
+      return { verified: false, reason: "PumpSwap Pool account layout is unverified" };
+    const index = data.readUInt16LE(9);
+    const creator = new PublicKey(data.subarray(11, 43));
+    const baseMint = new PublicKey(data.subarray(43, 75));
+    const quoteMint = new PublicKey(data.subarray(75, 107));
+    const expectedMint = new PublicKey(tokenAddress);
+    if (index !== 0 || !baseMint.equals(expectedMint))
+      return { verified: false, reason: "Pool is not the canonical Pump migration pool for this token" };
+    const [expectedCreator] = PublicKey.findProgramAddressSync(
+      [Buffer.from("pool-authority"), expectedMint.toBuffer()], PUMP_PROGRAM
+    );
+    if (!creator.equals(expectedCreator))
+      return { verified: false, reason: "Pump migration pool authority does not match" };
+    const [expectedPool] = PublicKey.findProgramAddressSync(
+      [Buffer.from("pool"), Buffer.from([index & 255, index >> 8]), creator.toBuffer(), baseMint.toBuffer(), quoteMint.toBuffer()],
+      PUMP_AMM_PROGRAM
+    );
+    if (!expectedPool.equals(new PublicKey(poolAddress)))
+      return { verified: false, reason: "Pool address does not match its on-chain fields" };
+    return { verified: true, reason: null };
+  } catch (_) {
+    return { verified: false, reason: "PumpSwap Pool account could not be decoded" };
+  }
+}
+
+async function getCanonicalPumpSwapPools(pools, signal) {
+  const results = new Map();
+  const unique = new Map();
+  const now = Date.now();
+  for (const pool of Array.isArray(pools) ? pools : []) {
+    const address = String(pool?.pairAddress || "");
+    const key = address.toLowerCase();
+    if (!address || !pool?.tokenAddress) continue;
+    const cached = canonicalPoolCache.get(key);
+    if (cached && now - cached.at < (cached.result.verified ? 5 * 60_000 : 15_000)) {
+      results.set(key, cached.result);
+    } else if (!unique.has(key)) {
+      unique.set(key, pool);
+    }
+  }
+  if (unique.size) {
+    const entries = [...unique.entries()];
+    try {
+      const response = await rpc("getMultipleAccounts", [
+        entries.map(([, pool]) => pool.pairAddress),
+        { encoding: "base64", commitment: "confirmed" }
+      ], signal, { timeoutMs: 6000, attempts: 1 });
+      const accounts = Array.isArray(response?.value) ? response.value : [];
+      entries.forEach(([key, pool], index) => {
+        const result = verifyCanonicalPumpSwapPool(accounts[index], pool.pairAddress, pool.tokenAddress);
+        results.set(key, result);
+        canonicalPoolCache.set(key, { at: Date.now(), result });
+      });
+    } catch (error) {
+      for (const [key] of entries) {
+        const result = { verified: false, reason: "PumpSwap pool RPC unavailable" };
+        results.set(key, result);
+        canonicalPoolCache.set(key, { at: Date.now(), result });
+      }
+      console.warn("Gemini canonical PumpSwap pool verification unavailable:", error.message);
+    }
+  }
+  return results;
 }
 
 async function getMintSafety(tokenAddress, signal) {
@@ -151,6 +230,7 @@ async function getGeckoPools(signal) {
       poolCreatedAt: a.pool_created_at || a.created_at || null,
       liquidityUsd: Number(a.reserve_in_usd) || 0,
       priceUsd: Number(a.base_token_price_usd) || 0,
+      priceChange5m: Number(a.price_change_percentage?.m5),
       volume5m: Number(a.volume_usd?.m5) || 0,
       buys5m: Number(a.transactions?.m5?.buys) || 0,
       sells5m: Number(a.transactions?.m5?.sells) || 0,

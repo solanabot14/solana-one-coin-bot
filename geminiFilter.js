@@ -4,20 +4,20 @@ const { getMintSafety, getHolderConcentration, getLiquidityLock } = require("./g
 const MIN_LIQUIDITY_USD = 5000;
 const MIN_POOL_AGE_MS = 2 * 60 * 1000;
 const MAX_POOL_AGE_MS = 120 * 60 * 1000;
-const MIN_TRANSACTIONS_5M = 15;
-const MIN_BUY_RATIO_5M = 0.55;
+const MIN_TRANSACTIONS_5M = 12;
+const MIN_BUY_RATIO_5M = 0.53;
 const MAX_TOP10_PERCENT = 35;
-const MIN_PRICE_CHANGE_5M = 2;
+const MIN_PRICE_CHANGE_5M = 1;
 const MIN_LIQUIDITY_LOCK_PERCENT = 95;
 
 async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety, holderConcentration = getHolderConcentration, liquidityLock = getLiquidityLock } = {}) {
   const reject = (reason, details = {}) => ({ accepted: false, reason, details });
   if (!candidate.exactPoolVerified || String(candidate.dexId || "").toLowerCase() !== "pumpswap")
-    return reject("Exact PumpSwap Pool Unverified");
+    return reject("Exact PumpSwap Pool Unverified", { validation: candidate.canonicalPoolFailureReason || null });
   const priceChange5m = Number(candidate.priceChange5m);
   if (!Number.isFinite(priceChange5m)) return reject("5m Price Trend Unverified");
   if (priceChange5m < MIN_PRICE_CHANGE_5M)
-    return reject("5m Momentum Below +2%", { priceChange5m, minimum: MIN_PRICE_CHANGE_5M });
+    return reject("5m Momentum Below +1%", { priceChange5m, minimum: MIN_PRICE_CHANGE_5M });
   const liquidity = Number(candidate.liquidityUsd);
   if (!Number.isFinite(liquidity) || liquidity < MIN_LIQUIDITY_USD)
     return reject("Low Liquidity", { liquidityUsd: liquidity || 0, minimum: MIN_LIQUIDITY_USD });
@@ -36,7 +36,7 @@ async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety
   if (tx < MIN_TRANSACTIONS_5M) return reject("Low 5m Activity", { transactions5m: tx, minimum: MIN_TRANSACTIONS_5M });
   const buyRatio = tx ? buys / tx : 0;
   if (buys <= sells || buyRatio <= MIN_BUY_RATIO_5M)
-    return reject("Buy Pressure Not Above 55%", { buys, sells, buyRatio, minimumExclusive: MIN_BUY_RATIO_5M });
+    return reject("Buy Pressure Not Above 53%", { buys, sells, buyRatio, minimumExclusive: MIN_BUY_RATIO_5M });
 
   let mint;
   try { mint = await mintSafety(candidate.tokenAddress, signal); }
