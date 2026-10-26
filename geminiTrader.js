@@ -28,10 +28,10 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     const percent = step === 0 ? 10 : 12.5;
     return { step, percent, amountUsd: state.cashUsd * percent / 100 };
   }
-  // Live-only sizing is deliberately capped for the $20 wallet test.  It is
-  // not a percentage of account equity: 5.00 -> 5.50 -> 5.63 -> 5.00.
+  // Live-only sizing follows the agreed $2 base cycle; paper sizing is separate.
+  // Proportional equivalent of $5.00 -> $5.50 -> $5.63, reset after a loss.
   function getLiveSizing() {
-    const cycle = [5, 5.5, 5.63];
+    const cycle = [2, 2.2, 2.25];
     const step = Number.isInteger(state.liveSizingStep) && state.liveSizingStep >= 0 && state.liveSizingStep < cycle.length
       ? state.liveSizingStep : 0;
     return { step, amountUsd: cycle[step] };
