@@ -12,8 +12,8 @@ const canonicalPoolCache = new Map();
 const RUGCHECK_BASE = "https://api.rugcheck.xyz/v1/tokens/";
 const GT_BASE = "https://api.geckoterminal.com/api/v2";
 
-async function rpc(method, params, signal, { timeoutMs = 12000, attempts = 5, baseDelayMs = 350 } = {}) {
-  const { data } = await retry(() => axios.post(SOLANA_RPC_URL, {
+async function rpc(method, params, signal, { timeoutMs = 12000, attempts = 5, baseDelayMs = 350, endpoint = SOLANA_RPC_URL } = {}) {
+  const { data } = await retry(() => axios.post(endpoint, {
     jsonrpc: "2.0", id: Date.now(), method, params
   }, { timeout: timeoutMs, signal, headers: { "content-type": "application/json" } }), { attempts, baseDelayMs, signal });
   if (data?.error) throw new Error(data.error.message || "Solana RPC error");
@@ -70,10 +70,20 @@ async function getCanonicalPumpSwapPools(pools, signal) {
   if (unique.size) {
     const entries = [...unique.entries()];
     try {
-      const response = await rpc("getMultipleAccounts", [
-        entries.map(([, pool]) => pool.pairAddress),
-        { encoding: "base64", commitment: "confirmed" }
-      ], signal, { timeoutMs: 6000, attempts: 1 });
+      const poolAddresses = entries.map(([, pool]) => pool.pairAddress);
+      let response;
+      try {
+        response = await rpc("getMultipleAccounts", [
+          poolAddresses, { encoding: "base64", commitment: "confirmed" }
+        ], signal, { timeoutMs: 3000, attempts: 1 });
+      } catch (primaryError) {
+        const status = primaryError?.response?.status;
+        if (status && status !== 429 && status < 500) throw primaryError;
+        response = await rpc("getMultipleAccounts", [
+          poolAddresses, { encoding: "base64", commitment: "confirmed" }
+        ], signal, { timeoutMs: 3000, attempts: 1, endpoint: "https://api.mainnet-beta.solana.com" });
+        console.warn("Gemini pool verification used public Solana RPC after primary RPC was unavailable.");
+      }
       const accounts = Array.isArray(response?.value) ? response.value : [];
       entries.forEach(([key, pool], index) => {
         const result = verifyCanonicalPumpSwapPool(accounts[index], pool.pairAddress, pool.tokenAddress);
