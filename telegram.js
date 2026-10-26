@@ -132,6 +132,128 @@ function notifyCritical(message, options) {
   return sendTelegramMessage(formatCriticalNotification(message), options);
 }
 
+
+function formatGeminiBuyAlert(signalId, candidate = {}, amountUsd = 0, expiresInSeconds = 120) {
+  const lines = [
+    "GEMINI | BUY SIGNAL",
+    "Coin: " + String(candidate.symbol || candidate.name || "Unknown"),
+    "Suggested live size: $" + Number(amountUsd || 0).toFixed(2),
+    "Price: $" + number(candidate.priceUsd, 10),
+    "Liquidity: $" + number(candidate.liquidityUsd, 2),
+    "5m change: " + percent(candidate.priceChange5m),
+    "5m buys/sells: " + Number(candidate.buys5m || 0) + "/" + Number(candidate.sells5m || 0),
+    "Pool: PumpSwap verified",
+    "Expires in " + expiresInSeconds + " seconds",
+    "Start Live Trading must be ON in the Gemini dashboard for the button to place an order.",
+    "Tap only if you want Gemini to buy and manage this position."
+  ];
+  lines.push("Mint: " + String(candidate.tokenAddress || ""));
+  const link = dexscreenerLink(candidate);
+  if (link) lines.push("Chart: " + link);
+  return {
+    text: lines.join("\n"),
+    reply_markup: {
+      inline_keyboard: [[{
+        text: "BUY $" + Number(amountUsd || 0).toFixed(2) + " · Gemini manages exits",
+        callback_data: "gbuy:" + signalId
+      }]]
+    }
+  };
+}
+
+async function sendGeminiBuyAlert(signalId, candidate, amountUsd, {
+  env = process.env,
+  fetchImpl = globalThis.fetch,
+  expiresInSeconds = 120
+} = {}) {
+  const { token, chatId, enabled } = getTelegramConfig(env);
+  if (!enabled) return { sent: false, reason: "Telegram is not configured" };
+  if (typeof fetchImpl !== "function") return { sent: false, reason: "fetch unavailable" };
+  try {
+    const response = await fetchImpl(`${TELEGRAM_API}/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, ...formatGeminiBuyAlert(signalId, candidate, amountUsd, expiresInSeconds), disable_web_page_preview: true }),
+      signal: AbortSignal.timeout(8000)
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.ok !== true) {
+      console.error("Telegram Gemini signal failed:", `HTTP ${response.status}`, String(result.description || "").slice(0, 200));
+      return { sent: false, reason: result.description || `HTTP ${response.status}` };
+    }
+    return { sent: true, messageId: result.result?.message_id ?? null };
+  } catch (error) {
+    console.error("Telegram Gemini signal failed:", error.message);
+    return { sent: false, reason: error.message };
+  }
+}
+
+function startTelegramBuyPolling(onBuy, {
+  env = process.env,
+  fetchImpl = globalThis.fetch
+} = {}) {
+  const { token, chatId, enabled } = getTelegramConfig(env);
+  if (!enabled || typeof fetchImpl !== "function" || typeof onBuy !== "function") return () => {};
+  let stopped = false;
+  let offset = 0;
+  const api = (method) => `${TELEGRAM_API}/bot${token}/${method}`;
+  async function request(method, payload) {
+    const response = await fetchImpl(api(method), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10000)
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || body.ok !== true) throw new Error(body.description || `Telegram HTTP ${response.status}`);
+    return body.result;
+  }
+  async function handleCallback(query) {
+    const chat = query?.message?.chat;
+    const authorized = chat?.type === "private" &&
+      String(chat.id) === chatId &&
+      String(query?.from?.id) === chatId;
+    const match = /^gbuy:([0-9a-f-]{36})$/i.exec(String(query?.data || ""));
+    if (!authorized || !match) {
+      await request("answerCallbackQuery", { callback_query_id: query.id, text: "This buy action is not available for this account.", show_alert: true }).catch(() => {});
+      return;
+    }
+    await request("answerCallbackQuery", { callback_query_id: query.id, text: "Checking the signal and preparing the order..." }).catch(() => {});
+    let result;
+    try {
+      result = await onBuy(match[1]);
+    } catch (error) {
+      result = { success: false, message: error.message || "The buy could not be completed." };
+    }
+    if (query.message?.message_id) {
+      await request("editMessageReplyMarkup", {
+        chat_id: chatId,
+        message_id: query.message.message_id,
+        reply_markup: { inline_keyboard: [] }
+      }).catch(() => {});
+    }
+    if (result?.message) await sendTelegramMessage(result.message, { env, fetchImpl });
+  }
+  async function run() {
+    while (!stopped) {
+      try {
+        const updates = await request("getUpdates", { offset, timeout: 5, allowed_updates: ["callback_query"] });
+        for (const update of Array.isArray(updates) ? updates : []) {
+          offset = Math.max(offset, Number(update.update_id) + 1);
+          if (update.callback_query) await handleCallback(update.callback_query);
+        }
+      } catch (error) {
+        if (!stopped) {
+          console.warn("Telegram buy-button polling failed:", error.message);
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        }
+      }
+    }
+  }
+  void run();
+  return () => { stopped = true; };
+}
+
 module.exports = {
   getTelegramConfig,
   dexscreenerLink,
@@ -139,5 +261,8 @@ module.exports = {
   formatCriticalNotification,
   sendTelegramMessage,
   notifyTrade,
-  notifyCritical
+  notifyCritical,
+  formatGeminiBuyAlert,
+  sendGeminiBuyAlert,
+  startTelegramBuyPolling
 };

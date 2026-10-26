@@ -417,6 +417,8 @@ if (require.main === module) {
   }
   server.listen(config.port, config.host, () => {
     geminiBot.start();
+    const telegramBuyAlerts = geminiBot.startTelegramBuyAlerts();
+    if (!telegramBuyAlerts.started) console.warn("[INFO] Gemini Telegram Buy buttons unavailable:", telegramBuyAlerts.reason);
     if (!geminiOnly) {
       outcomeBot.start();
       stockBot.start();
@@ -444,6 +446,7 @@ if (require.main === module) {
     }
     profitSniper.stopBot();
     geminiBot.stop();
+    geminiBot.stopTelegramBuyAlerts();
     outcomeBot.stop();
     stockBot.stop();
     server.close(() => process.exit(0));

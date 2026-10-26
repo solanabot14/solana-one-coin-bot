@@ -138,7 +138,7 @@ function createGeminiLiveExecution({ env = process.env, fetchImpl = globalThis.f
   async function executeSwap({ inputMint, outputMint, amount, slippageBps = 300, purpose = "entry" }) {
     // Turning the dashboard switch off blocks new buys, but never abandons a
     // real position that still needs a real exit transaction.
-    const signer = purpose === "exit" ? requireSigningKey() : requireEnabled();
+    const signer = purpose === "exit" || purpose === "manual-entry" ? requireSigningKey() : requireEnabled();
     if (!inputMint || !outputMint || outputMint === inputMint) throw new Error("Unsupported live swap request.");
     if (!Number.isSafeInteger(Number(amount)) || Number(amount) <= 0) throw new Error("Invalid live swap amount.");
     const order = await request("/order?" + new URLSearchParams({ inputMint, outputMint, amount: String(amount), taker: signer.publicKey.toBase58(), slippageBps: String(slippageBps) }));
@@ -172,7 +172,18 @@ function createGeminiLiveExecution({ env = process.env, fetchImpl = globalThis.f
     return executeSwap({ ...input, outputMint, slippageBps });
   }
 
-  return { status: () => status(env), executeSwap, executeEntry };
+  // This path is called only after the authorized Telegram chat taps a live Buy button.
+  // It does not arm automatic Gemini live entries; the callback itself is the one-time authorization.
+  async function executeManualEntry({ outputMint, amountUsd, slippageBps = 300 }) {
+    if (!configured(env)) throw new Error("Gemini Live Trading is off; no order was placed.");
+    const setup = require("./geminiLiveControl").readiness(env);
+    if (!setup.ready) throw new Error("Live wallet setup is incomplete; no order was placed.");
+    const signer = requireEnabled();
+    const input = await entryInput(signer, amountUsd);
+    return executeSwap({ ...input, outputMint, slippageBps, purpose: "manual-entry" });
+  }
+
+  return { status: () => status(env), executeSwap, executeEntry, executeManualEntry };
 }
 
 module.exports = { USDC, SOL, configured, status, signerFromSecret, createGeminiLiveExecution };
