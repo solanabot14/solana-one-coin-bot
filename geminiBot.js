@@ -19,7 +19,14 @@ function poolToCandidate(pool, pair) {
   const createdAt = pool.poolCreatedAt || pair?.pairCreatedAt || null;
   return {
     tokenAddress: pool.tokenAddress || pair?.baseToken?.address,
-    pairAddress: pair?.pairAddress || pool.pairAddress,
+    pairAddress: pair?.pairAddress || null,
+    exactPoolVerified: Boolean(
+      pair && pool.pairAddress &&
+      String(pair.pairAddress).toLowerCase() === String(pool.pairAddress).toLowerCase() &&
+      String(pair.chainId || "").toLowerCase() === "solana" &&
+      String(pair.dexId || "").toLowerCase() === "pumpswap" &&
+      String(pair.baseToken?.address || "").toLowerCase() === String(pool.tokenAddress || "").toLowerCase()
+    ),
     symbol: pair?.baseToken?.symbol || pool.symbol?.split("/")?.[0] || pool.symbol,
     name: pair?.baseToken?.name || pool.symbol,
     priceUsd: Number(pair?.priceUsd ?? pool.priceUsd),
@@ -80,11 +87,11 @@ function slippageFor(pair) {
     let pairs = [];
     try { pairs = await pairFetcher(pool.tokenAddress, signal); }
     catch (error) { console.warn("[INFO] DexScreener token lookup failed", error.message); }
-    const solanaPairs = pairs.filter(p => String(p?.chainId || "solana").toLowerCase() === "solana");
-    const pair = pool.pairAddress
-      ? solanaPairs.find(p => String(p.pairAddress).toLowerCase() === String(pool.pairAddress).toLowerCase())
-        || solanaPairs.sort((a,b) => (Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0]
-      : solanaPairs.sort((a,b) => (Number(b.liquidity?.usd)||0)-(Number(a.liquidity?.usd)||0))[0];
+    if (!pool.pairAddress) return poolToCandidate(pool, null);
+    const pair = pairs.find(p =>
+      String(p?.chainId || "").toLowerCase() === "solana" &&
+      String(p?.pairAddress || "").toLowerCase() === String(pool.pairAddress).toLowerCase()
+    );
     if (!pair) return poolToCandidate(pool, null);
     return poolToCandidate(pool, pair);
   }
