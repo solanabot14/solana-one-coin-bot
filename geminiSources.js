@@ -109,7 +109,18 @@ async function getCanonicalPumpSwapPools(pools, signal) {
 }
 
 async function getMintSafety(tokenAddress, signal) {
-  const result = await rpc("getAccountInfo", [tokenAddress, { encoding: "jsonParsed", commitment: "confirmed" }], signal);
+  const params = [tokenAddress, { encoding: "jsonParsed", commitment: "confirmed" }];
+  let result;
+  try {
+    result = await rpc("getAccountInfo", params, signal, { timeoutMs: 3000, attempts: 1 });
+  } catch (primaryError) {
+    const status = primaryError?.response?.status;
+    if (status && status !== 429 && status < 500) throw primaryError;
+    result = await rpc("getAccountInfo", params, signal, {
+      timeoutMs: 3000, attempts: 1, endpoint: "https://api.mainnet-beta.solana.com"
+    });
+    console.warn("Gemini mint safety check used public Solana RPC after primary RPC was unavailable.");
+  }
   const parsed = result?.value?.data?.parsed;
   if (parsed?.type !== "mint" || !parsed?.info) return { verified: false, reason: "MINT_ACCOUNT_UNVERIFIED" };
   const { mintAuthority, freezeAuthority } = parsed.info;
