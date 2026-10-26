@@ -127,8 +127,10 @@ function slippageFor(pair) {
           // qualify. The actual wallet order below keeps its separate live sizing cycle.
           const sizing = trader.getSizing?.();
           const liveReady = liveExecution.status().mode === "LIVE_READY";
-          const liveSizing = liveReady ? (trader.getLiveSizing?.() || { step: 0, amountUsd: 5 }) : null;
-          const sellability = await verifyFullPositionExit(candidate, sizing?.amountUsd, s.controller.signal);
+          const liveSizing = liveReady ? (trader.getLiveSizing?.() || { step: 0, amountUsd: 2 }) : null;
+          // Check sellability at the order size that will actually be sent live.
+          const exitCheckAmountUsd = liveReady ? liveSizing.amountUsd : sizing?.amountUsd;
+          const sellability = await verifyFullPositionExit(candidate, exitCheckAmountUsd, s.controller.signal);
           if (!sellability.allowed) {
             trader.recordRejection(candidate, "Full Position Exit Unavailable", {
               reason: sellability.reason,
