@@ -267,4 +267,4 @@ async function getPairDetails(pairAddress, signal) {
   return Array.isArray(data?.pairs) ? data.pairs[0] || null : null;
 }
 
-module.exports = { getMintSafety, getHolderConcentration, getLiquidityLock, extractTop10Concentration, getGeckoPools, getGeckoTokenQuote, getDexProfiles, getDexPairs, getPairDetails };
+module.exports = { getMintSafety, getHolderConcentration, getLiquidityLock, extractTop10Concentration, getGeckoPools, getCanonicalPumpSwapPools, verifyCanonicalPumpSwapPool, getGeckoTokenQuote, getDexProfiles, getDexPairs, getPairDetails };
