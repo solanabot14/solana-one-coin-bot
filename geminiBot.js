@@ -46,7 +46,7 @@ function slippageFor(pair) {
   async function closeForLiquidity(position, price, reason) {
     if (position.liveExecution?.executionMode === "LIVE") {
       const raw = position.liveExecution?.outputAmount;
-      if (!/^\\d+$/.test(String(raw || ""))) throw new Error("Live position has no confirmed token amount.");
+      if (!/^\d+$/.test(String(raw || ""))) throw new Error("Live position has no confirmed token amount.");
       const fill = await liveExecution.executeSwap({ inputMint: position.tokenAddress, outputMint: USDC, amount: raw, slippageBps: MAX_SLIPPAGE_BPS, purpose: "exit" });
       const out = Number(fill.actualOutputAmount);
       if (!Number.isFinite(out) || out < 0) throw new Error("Live exit lacks confirmed USDC output.");
