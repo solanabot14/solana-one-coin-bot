@@ -342,6 +342,7 @@ const bot = createBot({
   scannerIntervalMs: SCAN_INTERVAL_MS,
   scanWhenFull: true,
   botLabel: "Paper Profit Sniper",
+  entriesPausedInitially: process.env.GEMINI_ONLY_MODE === "true",
   reentryStateFile: statePath("profitSniperReentryState-reset-20261013T144522Z.json"),
   maxOpenPositions: MAX_OPEN_POSITIONS,
   maxCandidateAgeMinutes: MAX_PAIR_AGE_MINUTES,

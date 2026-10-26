@@ -1,4 +1,4 @@
-const { getGeckoPools, getCanonicalPumpSwapPools, getDexPairs, getPairDetails, getGeckoTokenQuote } = require("./geminiSources");
+const { getGeckoPools, getDexProfiles, getCanonicalPumpSwapPools, getDexPairs, getDexPairsBatch, getPairDetails, getGeckoTokenQuote } = require("./geminiSources");
 const { retry } = require("./geminiHttp");
 const { evaluateCandidate } = require("./geminiFilter");
 const { createExecutionVerifier } = require("./profitSniperExecutionQuote");
@@ -39,7 +39,7 @@ function slippageFor(pair) {
   const tx = (Number(pair?.txns?.m5?.buys) || 0) + (Number(pair?.txns?.m5?.sells) || 0);
   const change = Math.abs(Number(pair?.priceChange?.m5) || 0);
   return Math.min(1000, Math.max(200, 200 + Math.round(change * 20) + Math.max(0, 15 - tx) * 20));
-}function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetcher = getGeckoPools, pairFetcher = getDexPairs, pairDetails = getPairDetails, tokenQuoteFallback = getGeckoTokenQuote, filter = evaluateCandidate, sellabilityCheck = createExecutionVerifier(), liveExecution = createGeminiLiveExecution() } = {}) {
+}function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetcher = getGeckoPools, profileFetcher = getDexProfiles, pairBatchFetcher = getDexPairsBatch, pairFetcher = getDexPairs, pairDetails = getPairDetails, tokenQuoteFallback = getGeckoTokenQuote, filter = evaluateCandidate, sellabilityCheck = createExecutionVerifier(), liveExecution = createGeminiLiveExecution() } = {}) {
   let lastMonitorAt = null, lastQuoteAt = null, lastQuoteFailureAt = null;
   const lastPriceByPositionId = new Map();
   let session = null, scanInterval = null, monitorInterval = null, busyScan = false, busyMonitor = false, lastError = null;
@@ -90,20 +90,52 @@ function slippageFor(pair) {
     if (!isActive(s) || busyScan || trader.getState().position) return;
     busyScan = true;
     try {
-      // GeckoTerminal supplies pool addresses and entry metrics in one discovery call.
-      // Verify the exact pool accounts in one batched Solana RPC call before applying
-      // the unchanged authority, holder, lock, and sellability safety gates.
-      const geckoResults = await Promise.allSettled([poolFetcher(s.controller.signal)]);
-      const geckoResult = geckoResults[0];
-      const pools = geckoResult.status === "fulfilled" ? geckoResult.value : [];
+      // Discover new pools from GeckoTerminal and use DexScreener profiles as a
+      // batched fallback. Only exact, on-chain verified PumpSwap pools can proceed.
+      const [geckoResult, profileResult] = await Promise.allSettled([
+        poolFetcher(s.controller.signal),
+        profileFetcher(s.controller.signal)
+      ]);
+      const geckoPools = geckoResult.status === "fulfilled" && Array.isArray(geckoResult.value) ? geckoResult.value : [];
+      const profiles = profileResult.status === "fulfilled" && Array.isArray(profileResult.value) ? profileResult.value : [];
       if (geckoResult.status === "rejected") console.warn("[INFO] Gemini GeckoTerminal discovery failed", geckoResult.reason?.message);
+      if (profileResult.status === "rejected") console.warn("[INFO] Gemini DexScreener discovery failed", profileResult.reason?.message);
+      let dexPools = [];
+      if (profiles.length) {
+        try {
+          const pairs = await pairBatchFetcher(profiles.slice(0, 30).map(profile => profile.tokenAddress), s.controller.signal);
+          dexPools = (Array.isArray(pairs) ? pairs : []).filter(pair =>
+            String(pair.dexId || "").toLowerCase() === "pumpswap" &&
+            profiles.some(profile => profile.tokenAddress === pair.baseToken?.address)
+          ).map(pair => ({
+            tokenAddress: pair.baseToken.address,
+            pairAddress: pair.pairAddress,
+            symbol: pair.baseToken.symbol || "Unknown",
+            poolCreatedAt: pair.pairCreatedAt ? new Date(Number(pair.pairCreatedAt)).toISOString() : null,
+            liquidityUsd: Number(pair.liquidity?.usd) || 0,
+            priceUsd: Number(pair.priceUsd) || 0,
+            priceChange5m: Number(pair.priceChange?.m5),
+            volume5m: Number(pair.volume?.m5) || 0,
+            buys5m: Number(pair.txns?.m5?.buys) || 0,
+            sells5m: Number(pair.txns?.m5?.sells) || 0,
+            source: "DexScreener"
+          })).filter(pool => pool.pairAddress);
+        } catch (error) { console.warn("[INFO] Gemini DexScreener batch lookup failed", error.message); }
+      }
+      const pools = [...geckoPools, ...dexPools];
       let canonicalPools = new Map();
       if (pools.length) {
         try { canonicalPools = await getCanonicalPumpSwapPools(pools, s.controller.signal); }
         catch (error) { console.warn("[INFO] Gemini canonical pool check failed", error.message); }
       }
+      // Prefer a verified pool for a mint when both feeds report multiple pools.
+      const prioritizedPools = [...pools].sort((left, right) => {
+        const leftVerified = canonicalPools.get(String(left.pairAddress || "").toLowerCase())?.verified === true;
+        const rightVerified = canonicalPools.get(String(right.pairAddress || "").toLowerCase())?.verified === true;
+        return Number(rightVerified) - Number(leftVerified);
+      });
       const unique = new Map();
-      for (const pool of pools) {
+      for (const pool of prioritizedPools) {
         if (pool.tokenAddress && !unique.has(pool.tokenAddress) && unique.size < MAX_DISCOVERY_CANDIDATES)
           unique.set(pool.tokenAddress, pool);
       }
@@ -175,7 +207,8 @@ function slippageFor(pair) {
       trader.setScanTime();
       console.log("[INFO] Gemini scan complete", {
         geckoCandidates: geckoResult.status === "fulfilled" ? geckoResult.value.length : 0,
-        dexProfileCandidates: 0,
+        dexProfileCandidates: profiles.length,
+        dexPairCandidates: dexPools.length,
         uniqueTokens: unique.size,
         passed
       });

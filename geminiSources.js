@@ -231,7 +231,7 @@ async function getGeckoTokenQuote(tokenAddress, signal) {
 
 async function getGeckoPools(signal) {
   const { data } = await retry(() => axios.get(
-    GT_BASE + "/networks/solana/dexes/pumpswap/pools",
+    GT_BASE + "/networks/solana/new_pools",
     { timeout: 12000, signal, headers: { accept: "application/json;version=20230302" }, params: { page: 1 } }
   ));
   const rows = Array.isArray(data?.data) ? data.data : [];
@@ -275,6 +275,16 @@ async function getDexPairs(tokenAddress, signal) {
   return Array.isArray(data?.pairs) ? data.pairs.filter(p => p.chainId === "solana") : [];
 }
 
+async function getDexPairsBatch(tokenAddresses, signal) {
+  const addresses = [...new Set((Array.isArray(tokenAddresses) ? tokenAddresses : []).filter(Boolean))].slice(0, 30);
+  if (!addresses.length) return [];
+  const { data } = await retry(() => axios.get(
+    "https://api.dexscreener.com/tokens/v1/solana/" + addresses.join(","),
+    { timeout: 12000, signal }
+  ));
+  return Array.isArray(data) ? data.filter(pair => pair.chainId === "solana") : [];
+}
+
 async function getPairDetails(pairAddress, signal) {
   const { data } = await retry(() => axios.get(
     "https://api.dexscreener.com/latest/dex/pairs/solana/" + encodeURIComponent(pairAddress),
@@ -283,4 +293,4 @@ async function getPairDetails(pairAddress, signal) {
   return Array.isArray(data?.pairs) ? data.pairs[0] || null : null;
 }
 
-module.exports = { getMintSafety, getHolderConcentration, getLiquidityLock, extractTop10Concentration, getGeckoPools, getCanonicalPumpSwapPools, verifyCanonicalPumpSwapPool, getGeckoTokenQuote, getDexProfiles, getDexPairs, getPairDetails };
+module.exports = { getMintSafety, getHolderConcentration, getLiquidityLock, extractTop10Concentration, getGeckoPools, getCanonicalPumpSwapPools, verifyCanonicalPumpSwapPool, getGeckoTokenQuote, getDexProfiles, getDexPairs, getDexPairsBatch, getPairDetails };

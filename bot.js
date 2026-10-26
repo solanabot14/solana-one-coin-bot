@@ -121,7 +121,8 @@ function createBot({
   exitDecision = null,
   validateEntry = null,
   pauseEntriesAtBalance = null,
-  entryPauseStateFile = null
+  entryPauseStateFile = null,
+  entriesPausedInitially = false
 } = {}) {
   const { buy, sell, getPortfolio, updateHigh, positionKey } = trader;
   const configuredLockPercent = Number(minimumLiquidityLockPercent);
@@ -138,11 +139,11 @@ function createBot({
   let scannerBusy = false;
   let monitorBusy = false;
   let lastError = null;
-  let entriesPaused = false;
+  let entriesPaused = entriesPausedInitially === true;
   let pauseAlertSent = false;
   if (entryPauseStateFile && fs.existsSync(entryPauseStateFile)) {
     try {
-      entriesPaused = JSON.parse(fs.readFileSync(entryPauseStateFile, "utf8")).paused === true;
+      entriesPaused = entriesPaused || JSON.parse(fs.readFileSync(entryPauseStateFile, "utf8")).paused === true;
       pauseAlertSent = entriesPaused;
     } catch (error) {
       throw new Error("Unable to read entry-pause state: " + error.message);

@@ -235,6 +235,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
         if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
         if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        if (route.endsWith("/start") && process.env.GEMINI_ONLY_MODE === "true") return json(res, { error: "Other bots are paused while Gemini-only mode is active." }, 409);
         if (route.endsWith("/start")) stockBot.start(); else stockBot.stop();
         return json(res, stockBot.getStatus());
       }
@@ -242,6 +243,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
         if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
         if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        if (route.endsWith("/start") && process.env.GEMINI_ONLY_MODE === "true") return json(res, { error: "Other bots are paused while Gemini-only mode is active." }, 409);
         if (route.endsWith("/start")) outcomeBot.start(); else outcomeBot.stop();
         return json(res, outcomeBot.getStatus());
       }
@@ -263,6 +265,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
         if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
         if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        if (route === "/api/start" && process.env.GEMINI_ONLY_MODE === "true") return json(res, { error: "Other bots are paused while Gemini-only mode is active." }, 409);
         if (route === "/api/start") controls.startBot(); else controls.stopBot();
         return json(res, { running: controls.getBotStatus() });
       }
@@ -279,6 +282,7 @@ function createDashboardServer({ config = getConfig(), controls = bot,
         if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, { error: "Use POST" }, 405); }
         if (config.readOnly) return json(res, { error: "Public dashboard is view-only." }, 403);
         if (req.headers["x-bot-control"] !== "1" || req.headers["sec-fetch-site"] === "cross-site") return json(res, { error: "Control request rejected" }, 403);
+        if (route === "/api/profit-sniper/start" && process.env.GEMINI_ONLY_MODE === "true") return json(res, { error: "Profit Sniper entries are paused while Gemini-only mode is active." }, 409);
         if (route === "/api/profit-sniper/start") profitSniper.startBot(); else profitSniper.stopBot();
         return json(res, profitSniper.getStatus());
       }
@@ -402,13 +406,21 @@ if (require.main === module) {
   const config = getConfig();
   getPortfolio();
   const server = createDashboardServer({ config });
-  bot.startBot();
-  swarm.start();
-  if (profitSniper.reconciliationReady) profitSniper.startBot();
+  const geminiOnly = process.env.GEMINI_ONLY_MODE === "true";
+  if (!geminiOnly) {
+    bot.startBot();
+    swarm.start();
+    if (profitSniper.reconciliationReady) profitSniper.startBot();
+  } else if (profitSniper.reconciliationReady) {
+    // Keep paper-position exit monitoring active while preventing new entries.
+    profitSniper.startBot();
+  }
   server.listen(config.port, config.host, () => {
     geminiBot.start();
-    outcomeBot.start();
-    stockBot.start();
+    if (!geminiOnly) {
+      outcomeBot.start();
+      stockBot.start();
+    }
     console.log("Dashboard listening on " + config.host + ":" + config.port);
     let sampling = false;
     async function sampleEquity() {
@@ -426,8 +438,10 @@ if (require.main === module) {
     void sampleEquity();
   });
   const shutdown = () => {
-    swarm.stop();
-    bot.stopBot();
+    if (!geminiOnly) {
+      swarm.stop();
+      bot.stopBot();
+    }
     profitSniper.stopBot();
     geminiBot.stop();
     outcomeBot.stop();
