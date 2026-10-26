@@ -124,8 +124,9 @@ async function sendTelegramMessage(text, {
   }
 }
 
-function notifyTrade(event, trade, options) {
-  return sendTelegramMessage(formatTradeNotification(event, trade), options);
+// Routine bot trade events are muted so Telegram can stay focused on personal Gemini Buy signals.
+function notifyTrade() {
+  return Promise.resolve({ sent: false, reason: "routine bot trade notifications muted" });
 }
 
 function notifyCritical(message, options) {
