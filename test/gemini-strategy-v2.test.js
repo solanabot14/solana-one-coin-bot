@@ -57,6 +57,26 @@ test("live sizing advances 5, 5.50, 5.63 and resets to 5 after the third win or 
   trader.sell(0.9,100,"HARD STOP -8%",{actualOutputAmount:"4500000"});
   assert.equal(trader.getLiveSizing().amountUsd,5);
 });
+test("live entry verifies sellability with the live $5 sizing instead of paper-account sizing", async t => {
+  const {trader} = fixture(t);
+  let verifiedAmount = null;
+  const bot = createGeminiBot({
+    trader,
+    timers:{setInterval:()=>1,clearInterval:()=>{}},
+    poolFetcher:async()=>[{tokenAddress:"live-mint", symbol:"LIVE", pairAddress:"live-pair"}],
+    profileFetcher:async()=>[],
+    pairFetcher:async()=>[{chainId:"solana", pairAddress:"live-pair", baseToken:{address:"live-mint",symbol:"LIVE"}, priceUsd:"1", priceChange:{m5:3}, liquidity:{usd:10000}, pairCreatedAt:Date.now()-300000, txns:{m5:{buys:20,sells:5}}, volume:{m5:5000}}],
+    filter:async()=>({accepted:true,details:{}}),
+    sellabilityCheck:async(_candidate,{amountUsd})=>{ verifiedAmount=amountUsd; return {allowed:true}; },
+    liveExecution:{status:()=>({mode:"LIVE_READY"}),executeSwap:async()=>({actualOutputAmount:"100",quotedOutputAmount:"100",signature:"signature"})}
+  });
+  bot.start(); t.after(()=>bot.stop());
+  await new Promise(resolve=>setImmediate(resolve));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(verifiedAmount,5);
+  assert.equal(trader.getState().position.mode,"LIVE");
+  assert.equal(trader.getState().position.originalCostUsd,5);
+});
 test("monitor holds below 15 percent and exits all at 15 percent", async t => {
   const {trader} = fixture(t);
   trader.buy(candidate);

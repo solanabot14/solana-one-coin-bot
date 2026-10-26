@@ -108,12 +108,17 @@ function slippageFor(pair) {
             continue;
           }
           passed++;
-          // This is deliberately the final entry gate. It checks the exact paper
-          // position size and confirms that the entire received token amount can
-          // be routed back to USDC now. A failed or slow quote rejects only this
-          // candidate; scanning immediately continues with the next one.
+          // This is deliberately the final entry gate. It checks the exact entry
+          // size and confirms that the entire received token amount can be routed
+          // back to USDC now. A failed or slow quote rejects only this candidate;
+          // scanning immediately continues with the next one.
           const sizing = trader.getSizing?.();
-          const sellability = await verifyFullPositionExit(candidate, sizing?.amountUsd, s.controller.signal);
+          const liveReady = liveExecution.status().mode === "LIVE_READY";
+          // Live execution has its own capped sizing cycle. Do not test a live
+          // $5 order with the much larger paper-account sizing amount.
+          const liveSizing = liveReady ? (trader.getLiveSizing?.() || { step: 0, amountUsd: 5 }) : null;
+          const entryAmountUsd = liveSizing?.amountUsd ?? sizing?.amountUsd;
+          const sellability = await verifyFullPositionExit(candidate, entryAmountUsd, s.controller.signal);
           if (!sellability.allowed) {
             trader.recordRejection(candidate, "Full Position Exit Unavailable", {
               reason: sellability.reason,
@@ -124,8 +129,7 @@ function slippageFor(pair) {
           candidate.geminiDetails = { ...result.details, executionQuote: sellability };
           candidate.slippageBps = slippageFor(candidate);
           let liveAmount;
-          if (liveExecution.status().mode === "LIVE_READY") {
-            const liveSizing = trader.getLiveSizing?.() || { step: 0, amountUsd: 5 };
+          if (liveReady) {
             const liveRawAmount = Math.round(liveSizing.amountUsd * 1e6);
             const fill = await liveExecution.executeSwap({ inputMint: USDC, outputMint: candidate.tokenAddress, amount: liveRawAmount, slippageBps: candidate.slippageBps });
             candidate.liveExecution = { ...fill, executionMode: "LIVE", outputAmount: fill.actualOutputAmount || fill.quotedOutputAmount };
