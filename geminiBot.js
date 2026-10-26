@@ -270,7 +270,11 @@ function slippageFor(pair) {
           }
           candidate.geminiDetails = { ...result.details, executionQuote: sellability };
           candidate.slippageBps = slippageFor(candidate);
-          if (getTelegramConfig().enabled) {
+          const telegramEnabled = getTelegramConfig().enabled;
+          const liveReady = liveExecution.status().mode === "LIVE_READY";
+          // With the dashboard live switch OFF, Gemini remains in paper mode.
+          // In live-ready mode, Telegram sends a signal and only the user's Buy tap enters.
+          if (telegramEnabled && liveReady) {
             const signalId = randomUUID();
             pendingBuySignals.set(signalId, {
               candidate: structuredClone(candidate),
@@ -288,8 +292,8 @@ function slippageFor(pair) {
             });
             break;
           }
-          // Preserve local paper behavior when no personal Telegram alert target is configured.
-          if (liveExecution.status().mode === "LIVE_READY") {
+          // Never submit live entries automatically, even if Telegram is unavailable.
+          if (liveReady) {
             trader.recordRejection(candidate, "Live Auto-Entry Disabled", { reason: "Live purchases require the Telegram Buy button." });
             continue;
           }
