@@ -27,10 +27,9 @@ test("live execution is paper-only unless both explicit enable and secret exist"
   const execution = createGeminiLiveExecution({ env: {} });
   await assert.rejects(execution.executeSwap({ inputMint: USDC, outputMint: "mint", amount: 1 }), /disabled/);
 });
-
-test("live signer accepts Solana JSON, base58, JSON-quoted base58, and base64 secret formats", () => {
+test("live signer accepts Solana JSON, hex, base58, JSON-quoted base58, and base64 secret formats", () => {
   const expected = Buffer.from(sampleBytes).toString("hex");
   const base64 = Buffer.from(sampleBytes).toString("base64");
-  for (const secret of [JSON.stringify(Array.from(sampleBytes)), "valid-base58-key", JSON.stringify("valid-base58-key"), "valid-base58-\nkey", base64])
+  for (const secret of [JSON.stringify(Array.from(sampleBytes)), expected, "0x" + expected, "valid-base58-key", JSON.stringify("valid-base58-key"), "valid-base58-\nkey", base64])
     assert.equal(signerFromSecret(secret).publicKey.toBase58(), expected);
 });

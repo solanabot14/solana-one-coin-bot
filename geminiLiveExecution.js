@@ -42,13 +42,19 @@ function signerFromSecret(secret) {
     // Some secret managers preserve a JSON-quoted base58 key. Unwrap it before
     // decoding instead of treating the quote characters as part of the key.
     const encoded = (typeof parsed === "string" ? parsed : text).replace(/\s+/g, "");
+    // Jupiter Wallet also exports Solana private keys as hexadecimal. Detect
+    // that deliberately before base58 because many hex characters overlap the
+    // base58 alphabet and could otherwise decode to the wrong byte length.
+    const hex = encoded.replace(/^0x/i, "");
+    if (/^[0-9a-fA-F]{64}$/.test(hex) || /^[0-9a-fA-F]{128}$/.test(hex))
+      return Uint8Array.from(Buffer.from(hex, "hex"));
     const imported = require("bs58");
     const bs58 = imported.default || imported;
     try { return bs58.decode(encoded); }
     catch (_) {
       // Base64 is another standard export form for a Solana secret key.
       if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded) || encoded.length % 4 !== 0)
-        throw new Error("GEMINI_LIVE_PRIVATE_KEY must be a Solana JSON array, base58 key, or base64 key.");
+        throw new Error("GEMINI_LIVE_PRIVATE_KEY must be a Solana JSON array, hexadecimal, base58 key, or base64 key.");
       return Uint8Array.from(Buffer.from(encoded, "base64"));
     }
   };
