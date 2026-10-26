@@ -7,7 +7,7 @@ const MAX_POOL_AGE_MS = 120 * 60 * 1000;
 const MIN_TRANSACTIONS_5M = 12;
 const MIN_BUY_RATIO_5M = 0.53;
 const MAX_TOP10_PERCENT = 35;
-const MIN_PRICE_CHANGE_5M = 1;
+const MIN_PRICE_CHANGE_5M = 0.5;
 const MIN_LIQUIDITY_LOCK_PERCENT = 95;
 
 async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety, holderConcentration = getHolderConcentration, liquidityLock = getLiquidityLock } = {}) {
@@ -17,7 +17,7 @@ async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety
   const priceChange5m = Number(candidate.priceChange5m);
   if (!Number.isFinite(priceChange5m)) return reject("5m Price Trend Unverified");
   if (priceChange5m < MIN_PRICE_CHANGE_5M)
-    return reject("5m Momentum Below +1%", { priceChange5m, minimum: MIN_PRICE_CHANGE_5M });
+    return reject("5m Momentum Below +0.5%", { priceChange5m, minimum: MIN_PRICE_CHANGE_5M });
   const liquidity = Number(candidate.liquidityUsd);
   if (!Number.isFinite(liquidity) || liquidity < MIN_LIQUIDITY_USD)
     return reject("Low Liquidity", { liquidityUsd: liquidity || 0, minimum: MIN_LIQUIDITY_USD });
