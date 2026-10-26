@@ -42,6 +42,23 @@ function slippageFor(pair) {
   const lastPriceByPositionId = new Map();
   let session = null, scanInterval = null, monitorInterval = null, busyScan = false, busyMonitor = false, lastError = null;
   const isActive = s => session === s && !s.controller.signal.aborted;
+
+  async function closeForLiquidity(position, price, reason) {
+    if (position.liveExecution?.executionMode === "LIVE") {
+      const raw = position.liveExecution?.outputAmount;
+      if (!/^\\d+$/.test(String(raw || ""))) throw new Error("Live position has no confirmed token amount.");
+      const fill = await liveExecution.executeSwap({ inputMint: position.tokenAddress, outputMint: USDC, amount: raw, slippageBps: MAX_SLIPPAGE_BPS, purpose: "exit" });
+      const out = Number(fill.actualOutputAmount);
+      if (!Number.isFinite(out) || out < 0) throw new Error("Live exit lacks confirmed USDC output.");
+      return trader.sell((out / 1e6) / position.quantity, 100, reason, { ...fill, actualOutputAmount: String(out) });
+    }
+    const currentPrice = Number(price);
+    const lastKnownPrice = Number(lastPriceByPositionId.get(position.id));
+    const exitPrice = currentPrice > 0 && Number.isFinite(currentPrice) ? currentPrice : lastKnownPrice;
+    if (exitPrice > 0 && Number.isFinite(exitPrice))
+      return trader.sell(exitPrice, 100, reason + (currentPrice > 0 ? "" : " — LAST OBSERVED PRICE"));
+    return trader.writeOff(reason + " — NO PRICE AVAILABLE");
+  }
   async function verifyFullPositionExit(candidate, amountUsd, parentSignal) {
     const controller = new AbortController();
     const abort = () => controller.abort();
@@ -185,6 +202,23 @@ function slippageFor(pair) {
       }
       let quotedPair = pair;
       const primaryLiquidityUsd = Number(pair?.liquidity?.usd);
+
+      // Act on the exact held pair's liquidity before waiting on alternate price sources.
+      // The collapse threshold remains the existing max($3,000, 50% of entry liquidity).
+      const entryLiquidityAtStart = Number(p.entryDetails?.liquidityUsd);
+      const exitLiquidityFloorAtStart = Number.isFinite(entryLiquidityAtStart) && entryLiquidityAtStart > 0
+        ? Math.max(MIN_EXIT_LIQUIDITY_USD, entryLiquidityAtStart * (1 - MAX_LIQUIDITY_DROP_FROM_ENTRY))
+        : MIN_EXIT_LIQUIDITY_USD;
+      if (Number.isFinite(primaryLiquidityUsd) && primaryLiquidityUsd <= exitLiquidityFloorAtStart) {
+        const reason = primaryLiquidityUsd <= 0
+          ? "LIQUIDITY COLLAPSE EXIT — ZERO LIQUIDITY"
+          : "LIQUIDITY COLLAPSE EXIT";
+        console.warn("[INFO] Gemini immediate liquidity-collapse exit", {
+          symbol: p.symbol, liquidityUsd: primaryLiquidityUsd, thresholdUsd: exitLiquidityFloorAtStart
+        });
+        await closeForLiquidity(p, Number(pair?.priceUsd), reason);
+        return;
+      }
       let price = Number(quotedPair?.priceUsd);
       if (!(price > 0) || !Number.isFinite(price)) {
         try {
