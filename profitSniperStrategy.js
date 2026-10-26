@@ -10,7 +10,7 @@ const MAX_ENTRY_MOMENTUM_5M_PERCENT = CONFIG.MAX_ENTRY_MOMENTUM_5M_PERCENT;
 const MAX_ENTRY_MOMENTUM_1H_PERCENT = CONFIG.MAX_ENTRY_MOMENTUM_1H_PERCENT;
 const MIN_ENTRY_PRICE_CHANGE_1H_PERCENT = 0;
 
-const HARD_STOP_PERCENT = -5;
+const HARD_STOP_PERCENT = -8;
 const MIN_EXIT_LIQUIDITY_USD = 1000;
 const MAX_EXIT_LIQUIDITY_DRAWDOWN = 0.20;
 const BLOCKED_TOKEN_ADDRESSES = new Set(["EvXQnNoGFK427sLKn1MJgaeqTYyUe9QNGvzQjebaCi6J"]);
@@ -189,7 +189,7 @@ function chooseExit({ position, currentPrice, freshData, exitProgress }) {
     return {
       percent: 100,
       triggerPrice: entryPrice * (1 + HARD_STOP_PERCENT / 100),
-      reason: "HARD STOP -5%"
+      reason: "HARD STOP -8%"
     };
 
   if (soldPercent + 1e-6 < TAKE_PROFIT_1_SELL_PERCENT &&
