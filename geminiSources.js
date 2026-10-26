@@ -99,6 +99,12 @@ async function getCanonicalPumpSwapPools(pools, signal) {
       console.warn("Gemini canonical PumpSwap pool verification unavailable:", error.message);
     }
   }
+  const verificationCounts = {};
+  for (const result of results.values()) {
+    const label = result.verified ? "verified" : result.reason || "unverified";
+    verificationCounts[label] = (verificationCounts[label] || 0) + 1;
+  }
+  console.log("[INFO] Gemini canonical PumpSwap validation", { pools: results.size, ...verificationCounts });
   return results;
 }
 
