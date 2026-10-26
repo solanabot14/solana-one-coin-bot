@@ -135,7 +135,19 @@ function slippageFor(pair) {
       if (!(amountUsd > 0) || Number(trader.getState().cashUsd) < amountUsd)
         return { success: false, message: "Gemini's managed account cannot reserve the current live-cycle size; no order was placed." };
       const sellability = await verifyFullPositionExit(candidate, amountUsd, s.controller.signal);
-      if (!sellability.allowed) return { success: false, message: "A full exit route is not available now; no order was placed." };
+      if (!sellability.allowed) {
+        const reason = String(sellability.reason || "FULL_POSITION_EXIT_UNAVAILABLE");
+        const details = sellability.details || {};
+        const quotedCost = Number(details.quotedCostPercent);
+        const maxCost = Number(details.maximumQuotedCostPercent);
+        const costNote = Number.isFinite(quotedCost) && Number.isFinite(maxCost)
+          ? " Quoted round-trip cost: " + quotedCost.toFixed(2) + "%; allowed maximum: " + maxCost.toFixed(2) + "%."
+          : "";
+        console.warn("[INFO] Gemini Telegram manual buy blocked by exit-route check", {
+          symbol: candidate.symbol, reason, details: sellability.details || null
+        });
+        return { success: false, message: "Safety check blocked this buy: " + reason + "." + costNote + " No order was placed." };
+      }
       candidate.geminiDetails = { ...check.details, executionQuote: sellability };
       candidate.slippageBps = slippageFor(pair);
       const fill = await liveExecution.executeManualEntry({

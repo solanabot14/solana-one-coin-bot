@@ -175,10 +175,11 @@ function createGeminiLiveExecution({ env = process.env, fetchImpl = globalThis.f
   // This path is called only after the authorized Telegram chat taps a live Buy button.
   // It does not arm automatic Gemini live entries; the callback itself is the one-time authorization.
   async function executeManualEntry({ outputMint, amountUsd, slippageBps = 300 }) {
-    if (!configured(env)) throw new Error("Gemini Live Trading is off; no order was placed.");
+    // The Telegram callback is the one-time authorization for this order.
+    // It deliberately does not depend on the dashboard's automatic live-entry switch.
     const setup = require("./geminiLiveControl").readiness(env);
     if (!setup.ready) throw new Error("Live wallet setup is incomplete; no order was placed.");
-    const signer = requireEnabled();
+    const signer = requireSigningKey();
     const input = await entryInput(signer, amountUsd);
     return executeSwap({ ...input, outputMint, slippageBps, purpose: "manual-entry" });
   }

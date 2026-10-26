@@ -149,8 +149,8 @@ function formatGeminiBuyAlert(signalId, candidate = {}, amountUsd = 0, expiresIn
     "5m buys/sells: " + Number(candidate.buys5m || 0) + "/" + Number(candidate.sells5m || 0),
     "Pool: PumpSwap verified",
     "Expires in " + expiresInSeconds + " seconds",
-    "Start Live Trading must be ON in the Gemini dashboard for the button to place an order.",
-    "Tap only if you want Gemini to buy and manage this position."
+    "This button authorizes only this one buy. Gemini will not enter a position unless you tap Buy.",
+    "Gemini will manage exits for a position you authorize."
   ];
   lines.push("Mint: " + String(candidate.tokenAddress || ""));
   const link = dexscreenerLink(candidate);
