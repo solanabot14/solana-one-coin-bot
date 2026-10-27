@@ -31,6 +31,42 @@ class PaperEngine {
     }
   }
 
+  hasPosition(wallet, token) {
+    return this.positions.has(`${wallet}:${token}`);
+  }
+
+  getPosition(wallet, token) {
+    return this.positions.get(`${wallet}:${token}`) || null;
+  }
+
+  walletPerformance(wallet) {
+    const trades = this.closed.filter(t => t.wallet === wallet);
+    const wins = trades.filter(t => Number(t.pnlUsd) > 0).length;
+    const losses = trades.filter(t => Number(t.pnlUsd) < 0).length;
+    const realizedPnlUsd = trades.reduce((sum, t) => sum + (Number(t.pnlUsd) || 0), 0);
+    let consecutiveLosses = 0;
+    for (let i = trades.length - 1; i >= 0; i--) {
+      if (Number(trades[i].pnlUsd) < 0) consecutiveLosses++;
+      else break;
+    }
+    const winRate = trades.length ? wins / trades.length * 100 : null;
+    const suspended = trades.length >= config.copySuspendMinTrades && realizedPnlUsd < 0 && (
+      consecutiveLosses >= config.copySuspendLossStreak || (Number.isFinite(winRate) && winRate < config.copySuspendWinRatePct)
+    );
+    return { wallet, trades: trades.length, wins, losses, winRate, realizedPnlUsd, consecutiveLosses, suspended };
+  }
+
+  isWalletSuspended(wallet) {
+    return this.walletPerformance(wallet).suspended;
+  }
+
+  allWalletPerformance() {
+    const wallets = new Set();
+    for (const t of this.closed) wallets.add(t.wallet);
+    for (const p of this.positions.values()) wallets.add(p.wallet);
+    return [...wallets].map(w => this.walletPerformance(w)).sort((a,b) => b.trades - a.trades || b.realizedPnlUsd - a.realizedPnlUsd);
+  }
+
   async market(token) {
     const info = await runGmgn(['token','info','--chain',config.chain,'--address',token]);
     return {
@@ -40,18 +76,23 @@ class PaperEngine {
     };
   }
 
-  async open(wallet, token, signalId) {
+  async open(wallet, token, signalId, signalAt = null) {
     if (this.positions.size >= config.maxOpenPositions) return null;
+    if (this.isWalletSuspended(wallet)) {
+      console.log('[COPY WALLET SUSPENDED]', wallet, JSON.stringify(this.walletPerformance(wallet)));
+      return null;
+    }
     const key = `${wallet}:${token}`;
     if (this.positions.has(key)) return null;
     const m = await this.market(token);
     if (!Number.isFinite(m.price) || m.price <= 0) return null;
     const p = {
-      wallet, token, symbol: m.symbol, signalId,
+      wallet, token, symbol: m.symbol, signalId, signalAt,
       mode: 'paper', amountUsd: config.paperTradeUsd,
       entryPrice: m.price, entryLiquidity: m.liquidity,
       lastPrice: m.price, lastLiquidity: m.liquidity,
       unrealizedPnlPct: 0, unrealizedPnlUsd: 0,
+      leaderSellSignals: 0, firstLeaderSellAt: null, lastLeaderSellAt: null,
       openedAt: new Date().toISOString(), lastCheckedAt: new Date().toISOString()
     };
     this.positions.set(key, p);
@@ -81,11 +122,40 @@ class PaperEngine {
     return closed;
   }
 
-  async leaderSold(wallet, token) {
+  async leaderSold(wallet, token, signalId, signalAt = null) {
     const key = `${wallet}:${token}`;
-    if (!this.positions.has(key)) return;
+    const p = this.positions.get(key);
+    if (!p) return;
     const m = await this.market(token);
-    if (Number.isFinite(m.price)) return this.close(key, 'leader_wallet_sell', m);
+    if (!Number.isFinite(m.price)) return;
+
+    const nowMs = signalAt ? new Date(signalAt).getTime() : Date.now();
+    const openedMs = new Date(p.openedAt).getTime();
+    if (Number.isFinite(nowMs) && Number.isFinite(openedMs) && nowMs < openedMs - 5000) return;
+
+    const lastSellMs = p.lastLeaderSellAt ? new Date(p.lastLeaderSellAt).getTime() : null;
+    const withinWindow = Number.isFinite(lastSellMs) && (nowMs - lastSellMs) <= config.leaderSellConfirmWindowSec * 1000;
+    p.leaderSellSignals = withinWindow ? (Number(p.leaderSellSignals) || 0) + 1 : 1;
+    p.firstLeaderSellAt = withinWindow && p.firstLeaderSellAt ? p.firstLeaderSellAt : new Date(nowMs).toISOString();
+    p.lastLeaderSellAt = new Date(nowMs).toISOString();
+    p.lastLeaderSellSignalId = signalId || null;
+    p.lastLeaderSellPrice = m.price;
+
+    const pnlPct = ((m.price / p.entryPrice) - 1) * 100;
+    const liqDropPct = Number.isFinite(p.entryLiquidity) && p.entryLiquidity > 0 && Number.isFinite(m.liquidity)
+      ? (1 - m.liquidity / p.entryLiquidity) * 100
+      : 0;
+    const confirmedDump = p.leaderSellSignals >= config.leaderSellConfirmCount || pnlPct <= config.leaderDumpPnlPct || liqDropPct >= config.leaderDumpLiquidityDropPct;
+
+    if (confirmedDump) return this.close(key, 'leader_dump', m);
+
+    p.lastPrice = m.price;
+    p.lastLiquidity = m.liquidity;
+    p.unrealizedPnlPct = pnlPct;
+    p.unrealizedPnlUsd = p.amountUsd * pnlPct / 100;
+    p.lastCheckedAt = new Date().toISOString();
+    this.save();
+    console.log('[LEADER PARTIAL SELL]', JSON.stringify({ wallet, token, signalId, pnlPct, liqDropPct, leaderSellSignals: p.leaderSellSignals }));
   }
 
   async evaluate() {
@@ -123,6 +193,7 @@ class PaperEngine {
       paperTradeUsd: config.paperTradeUsd,
       openPositions,
       closedTrades,
+      walletPerformance: this.allWalletPerformance(),
       metrics: {
         openPositions: openPositions.length,
         closedTrades: this.closed.length,
