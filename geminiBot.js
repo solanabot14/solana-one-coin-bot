@@ -45,8 +45,25 @@ function slippageFor(pair) {
 }function createGeminiBot({ trader = traderDefault, timers = globalThis, poolFetcher = getGeckoPools, profileFetcher = getDexProfiles, pairBatchFetcher = getDexPairsBatch, pairFetcher = getDexPairs, pairDetails = getPairDetails, tokenQuoteFallback = getGeckoTokenQuote, filter = evaluateCandidate, sellabilityCheck = createExecutionVerifier({ maxQuotedRoundTripCostPercent: 3.70, maxRoundTripLossPercent: 4.7 }), liveExecution = createGeminiLiveExecution() } = {}) {
   let lastMonitorAt = null, lastQuoteAt = null, lastQuoteFailureAt = null;
   const lastPriceByPositionId = new Map();
+  const liquiditySnapshots = new Map();
   let session = null, scanInterval = null, monitorInterval = null, busyScan = false, busyMonitor = false, busyTelegramBuy = false, telegramPollingStop = null, lastError = null;
   const pendingBuySignals = new Map();
+  function observeLiquidityTrend(candidate) {
+    const pairAddress = String(candidate.pairAddress || "").toLowerCase();
+    const liquidityUsd = Number(candidate.liquidityUsd);
+    if (!pairAddress || !Number.isFinite(liquidityUsd) || liquidityUsd < 0) return "Unavailable";
+    const now = Date.now();
+    for (const [key, snapshot] of liquiditySnapshots) {
+      if (now - snapshot.at > 5 * 60_000) liquiditySnapshots.delete(key);
+    }
+    const previous = liquiditySnapshots.get(pairAddress);
+    liquiditySnapshots.set(pairAddress, { liquidityUsd, at: now });
+    while (liquiditySnapshots.size > 500) liquiditySnapshots.delete(liquiditySnapshots.keys().next().value);
+    if (!previous || now - previous.at > 5 * 60_000) return "No prior reading";
+    if (liquidityUsd > previous.liquidityUsd) return "Rising since last scan";
+    if (liquidityUsd < previous.liquidityUsd) return "Falling since last scan";
+    return "Stable since last scan";
+  }
   const isActive = s => session === s && !s.controller.signal.aborted;
 
   async function closeForLiquidity(position, price, reason) {
@@ -249,6 +266,7 @@ function slippageFor(pair) {
         if (!isActive(s) || trader.getState().position) break;
         try {
           const candidate = candidateForPool(pool, canonicalPools);
+          candidate.liquidityTrend = observeLiquidityTrend(candidate);
           if (!(candidate.priceUsd > 0)) {
             trader.recordRejection(candidate, "Price Unavailable");
             continue;
@@ -291,7 +309,7 @@ function slippageFor(pair) {
           }
           console.log("[INFO] Gemini Telegram manual-live buy signal sent", {
             symbol: candidate.symbol, mint: candidate.tokenAddress,
-            amountUsd: liveSizing.amountUsd, expiresInMs: BUY_SIGNAL_TTL_MS
+            amountUsd: liveSizing.amountUsd, liquidityTrend: candidate.liquidityTrend, expiresInMs: BUY_SIGNAL_TTL_MS
           });
           break;
         } catch (error) {

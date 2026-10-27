@@ -7,16 +7,11 @@ const MAX_POOL_AGE_MS = 120 * 60 * 1000;
 const MIN_TRANSACTIONS_5M = 15;
 const MIN_BUY_RATIO_5M = 0.55;
 const MAX_TOP10_PERCENT = 35;
-const MIN_PRICE_CHANGE_5M = 2;
 
 async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety, holderConcentration = getHolderConcentration } = {}) {
   const reject = (reason, details = {}) => ({ accepted: false, reason, details });
   if (!candidate.exactPoolVerified || String(candidate.dexId || "").toLowerCase() !== "pumpswap")
     return reject("Exact PumpSwap Pool Unverified", { validation: candidate.canonicalPoolFailureReason || null });
-  const priceChange5m = Number(candidate.priceChange5m);
-  if (!Number.isFinite(priceChange5m)) return reject("5m Price Trend Unverified");
-  if (priceChange5m < MIN_PRICE_CHANGE_5M)
-    return reject("5m Momentum Below +2%", { priceChange5m, minimum: MIN_PRICE_CHANGE_5M });
   const liquidity = Number(candidate.liquidityUsd);
   if (!Number.isFinite(liquidity) || liquidity < MIN_LIQUIDITY_USD)
     return reject("Low Liquidity", { liquidityUsd: liquidity || 0, minimum: MIN_LIQUIDITY_USD });
@@ -55,7 +50,7 @@ async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety
   return {
     accepted: true,
     reason: "Solana pair passed Gemini safety checks",
-    details: { dexId: candidate.dexId || null, liquidityUsd: liquidity, poolAgeMs: age, transactions5m: tx, volume5mUsd: Number(candidate.volume5m) || 0, buyRatio, priceChange5m, top10Percent: Number(holders.top10Percent), liquidityVerification: "canonical PumpSwap pool verified on-chain" },
+    details: { dexId: candidate.dexId || null, liquidityUsd: liquidity, poolAgeMs: age, transactions5m: tx, volume5mUsd: Number(candidate.volume5m) || 0, buyRatio, priceChange5m: Number.isFinite(Number(candidate.priceChange5m)) ? Number(candidate.priceChange5m) : null, top10Percent: Number(holders.top10Percent), liquidityVerification: "canonical PumpSwap pool verified on-chain" },
     mintSafety: mint
   };
 }
