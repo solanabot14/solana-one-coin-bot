@@ -21,7 +21,7 @@ function status(env = process.env) {
     enabled,
     hasSigningKey,
     walletAddress: env.GEMINI_LIVE_WALLET_ADDRESS || null,
-    tradeSizeUsd: 5,
+    tradeSizeUsd: 2,
     maxOpenPositions: 1,
     reason: configured(env) ? null : "Live trading is off or the signing key is not configured."
   };
