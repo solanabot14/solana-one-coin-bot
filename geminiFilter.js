@@ -7,6 +7,8 @@ const MAX_POOL_AGE_MS = 120 * 60 * 1000;
 const MIN_TRANSACTIONS_5M = 15;
 const MIN_VOLUME_5M_USD = 500;
 const MIN_BUY_RATIO_5M = 0.60;
+// Avoid chasing a short, already-extended pump; negative changes remain eligible.
+const MAX_PRICE_CHANGE_5M = 25;
 const MAX_TOP10_PERCENT = 35;
 
 async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety, holderConcentration = getHolderConcentration, marketOnly = false } = {}) {
@@ -35,10 +37,13 @@ async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety
   const buyRatio = tx ? buys / tx : 0;
   if (buyRatio < MIN_BUY_RATIO_5M)
     return reject("Buy Pressure Below 60%", { buys, sells, buyRatio, minimum: MIN_BUY_RATIO_5M });
+  const priceChange5m = Number(candidate.priceChange5m);
+  if (Number.isFinite(priceChange5m) && priceChange5m > MAX_PRICE_CHANGE_5M)
+    return reject("Already Pumped — Avoid Chasing", { priceChange5m, maximum: MAX_PRICE_CHANGE_5M });
   const marketDetails = {
     dexId: candidate.dexId || null, liquidityUsd: liquidity, poolAgeMs: age,
     transactions5m: tx, volume5mUsd, buyRatio,
-    priceChange5m: Number.isFinite(Number(candidate.priceChange5m)) ? Number(candidate.priceChange5m) : null
+    priceChange5m: Number.isFinite(priceChange5m) ? priceChange5m : null
   };
   if (marketOnly) return { accepted: true, reason: "Gemini market checks passed", details: marketDetails };
 
@@ -73,5 +78,6 @@ module.exports = {
   MIN_TRANSACTIONS_5M,
   MIN_VOLUME_5M_USD,
   MIN_BUY_RATIO_5M,
+  MAX_PRICE_CHANGE_5M,
   MAX_TOP10_PERCENT,
 };
