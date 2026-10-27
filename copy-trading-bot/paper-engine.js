@@ -135,6 +135,22 @@ class PaperEngine {
   }
 
   async evaluate() {
+    const manualWallet = process.env.COPY_MANUAL_CLOSE_WALLET;
+    const manualToken = process.env.COPY_MANUAL_CLOSE_TOKEN;
+    if (manualWallet && manualToken) {
+      const manualKey = `${manualWallet}:${manualToken}`;
+      const manualPosition = this.positions.get(manualKey);
+      if (manualPosition) {
+        try {
+          const manualMarket = await this.market(manualToken);
+          if (Number.isFinite(manualMarket.price)) {
+            await this.close(manualKey, 'manual_close', manualMarket);
+            console.log('[MANUAL CLOSE EXECUTED]', JSON.stringify({ wallet: manualWallet, token: manualToken }));
+          }
+        } catch (e) { console.error('[manual close]', manualToken, e.message); }
+      }
+    }
+
     let changed = false;
     for (const [key, p] of [...this.positions.entries()]) {
       try {
