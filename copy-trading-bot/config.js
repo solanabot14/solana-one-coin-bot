@@ -3,7 +3,8 @@
 module.exports = Object.freeze({
   mode: 'paper',
   chain: 'sol',
-  paperTradeUsd: Number(process.env.COPY_PAPER_TRADE_USD || 5),
+  paperTradeUsd: Number(process.env.COPY_PAPER_TRADE_USD || 10),
+  startingBalanceUsd: Number(process.env.COPY_STARTING_BALANCE_USD || 100),
   takeProfitPct: Number(process.env.COPY_TAKE_PROFIT_PCT || 15),
   stopLossPct: Number(process.env.COPY_STOP_LOSS_PCT || 12),
   liquidityExitDropPct: Number(process.env.COPY_LIQUIDITY_EXIT_DROP_PCT || 35),
