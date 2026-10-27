@@ -1,0 +1,14 @@
+{
+  "name": "copy-trading-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone Solana smart-money copy paper trader",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "discover": "node wallet-finder.js"
+  },
+  "dependencies": {
+    "gmgn-cli": "latest"
+  }
+}
