@@ -1,0 +1,17 @@
+'use strict';
+
+module.exports = Object.freeze({
+  mode: 'paper',
+  chain: 'sol',
+  paperTradeUsd: Number(process.env.COPY_PAPER_TRADE_USD || 5),
+  takeProfitPct: Number(process.env.COPY_TAKE_PROFIT_PCT || 15),
+  stopLossPct: Number(process.env.COPY_STOP_LOSS_PCT || 12),
+  maxOpenPositions: Number(process.env.COPY_MAX_OPEN_POSITIONS || 3),
+  pollMs: Number(process.env.COPY_POLL_MS || 15000),
+  smartMoneyLimit: Number(process.env.COPY_SMART_MONEY_LIMIT || 100),
+  maxWallets: Number(process.env.COPY_MAX_WALLETS || 10),
+  minTrades30d: Number(process.env.COPY_MIN_TRADES_30D || 10),
+  minWinRate30d: Number(process.env.COPY_MIN_WIN_RATE_30D || 55),
+  maxSignalAgeSec: Number(process.env.COPY_MAX_SIGNAL_AGE_SEC || 90),
+  demoReadOnlyApiKey: 'gmgn_solbscbaseethmonadtron'
+});
