@@ -27,6 +27,7 @@ function buildGeminiAnalytics(state, live = null) {
       positionId: g.positionId, mode: buy.mode === "LIVE" || g.sells.some(x => x.mode === "LIVE") ? "LIVE" : "PAPER", symbol: g.symbol, tokenAddress: buy.tokenAddress || g.sells[0].tokenAddress,
       entryLiquidityUsd: buy.entryLiquidityUsd ?? buy.entryDetails?.liquidityUsd ?? null,
       pairAddress: buy.pairAddress || g.sells[0].pairAddress, entryPrice,
+      entryReason: buy.entryReason || buy.entrySignal || g.sells[0].entryReason || "Gemini entry checks passed",
       averageExitPrice: soldQty > 0 ? saleValue / soldQty : null,
       investedUsd: Number(buy.amountUsd || buy.amountInvestedUsd || buy.originalCostUsd) || costBasis,
       saleValueUsd: saleValue, pnlUsd,

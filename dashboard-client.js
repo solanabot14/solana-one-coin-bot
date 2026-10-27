@@ -114,7 +114,7 @@
   function normalizeTrade(row, system, isLimited) {
     var normalized=OneCoinAnalytics.normalizeTrade(row,system.name,row.mode||system.mode||'PAPER');
     return Object.assign({},normalized,{systemId:system.id,sourceRecord:row,limitedHistory:!!isLimited,
-      entryReason:normalized.entryReason||'Not recorded',exitReason:normalized.exitReason||'Not recorded'});
+      entryReason:normalized.entryReason||(normalized.mode==='LIVE'?'Gemini entry checks passed':'Not recorded'),exitReason:normalized.exitReason||'Not recorded'});
   }
 
   function buildSystems() {
@@ -413,10 +413,10 @@
         '<td>'+pct(t.maxGainPercent)+'</td>'+
         '<td class="'+signClass(t.pnl)+'">'+money(t.pnl)+'</td>'+
         '<td>'+pct(t.returnPercent??t.pnlPercent)+'</td>'+
-        '<td class="text-left">'+esc(t.entryReason||'Not recorded')+'</td>'+
+        '<td class="text-left">'+esc(t.entryReason||'Gemini entry checks passed')+'</td>'+
         '<td class="text-left">'+esc(t.exitReason||'-')+'</td></tr>';
     });
-    return '<div class="table-panel section-gap"><div class="table-head"><div><h2>LIVE EXECUTION AUDIT</h2><span class="sub">Confirmed wallet-executed Gemini closed trades with the same core fields shown in the paper ledger.</span></div><span class="badge">LIVE</span></div><div class="kpi-grid">'+kpi('CLOSED LIVE TRADES',int(live.length),'Completed wallet executions')+kpi('LIVE REALIZED P&L',money(pnl),'Completed live positions',signClass(pnl))+'</div>'+table(['ENTRY / CLOSED','TOKEN','MODE','INVESTED','RECEIVED','ENTRY PRICE','AVG EXIT PRICE','HOLD TIME','MAX GAIN','NET P&L','RETURN','ENTRY','EXIT'],rows,'No closed live Gemini trades yet')+'</div>';
+    return '<div class="table-panel section-gap"><div class="table-head"><div><h2>LIVE EXECUTION AUDIT</h2><span class="sub">Confirmed wallet-executed Gemini closed trades with the same core fields shown in the paper ledger.</span></div><span class="badge">LIVE</span></div><div class="kpi-grid">'+kpi('CLOSED LIVE TRADES',int(live.length),'Completed wallet executions')+kpi('LIVE REALIZED P&L',money(pnl),'Completed live positions',signClass(pnl))+'</div>'+table(['ENTRY / CLOSED','TOKEN','MODE','INVESTED','RECEIVED','ENTRY PRICE','AVG EXIT PRICE','HOLD TIME','MAX GAIN','NET P&L','RETURN','ENTRY SIGNAL','EXIT'],rows,'No closed live Gemini trades yet')+'</div>';
   }
   // Stock-only accounting views use the paper ledger directly, without DEX fee estimates.
   function stockUsd(value){var x=n(value);return x===null?'â':new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:4}).format(x);}

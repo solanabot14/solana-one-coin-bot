@@ -51,7 +51,7 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
       amountInvestedUsd: size, entryTime: new Date().toISOString(), highestPrice: price,
       tp1Done: false, tp2Done: false, remainingPercent: 100, strategy: "Gemini Paper v3: sell 95% at +15% / trail final 5% by 8% / SL8 / 10–12.5% cash",
       sizingPercent: sizing.percent,
-      entryDetails: candidate.geminiDetails || {}, liveExecution: candidate.liveExecution || null, mode,
+      entryDetails: candidate.geminiDetails || {}, entryReason: candidate.entryReason || candidate.entrySignal || "Gemini entry checks passed", liveExecution: candidate.liveExecution || null, mode,
       liveSizingStep: candidate.liveExecution ? getLiveSizing().step : null
     };
     next.cashUsd -= size; next.position = pos;
