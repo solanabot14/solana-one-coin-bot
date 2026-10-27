@@ -28,10 +28,10 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     const percent = step === 0 ? 10 : 12.5;
     return { step, percent, amountUsd: state.cashUsd * percent / 100 };
   }
-  // Live-only sizing follows the agreed $2 base cycle; paper sizing is separate.
-  // Proportional equivalent of $5.00 -> $5.50 -> $5.63, reset after a loss.
+  // Live-only sizing follows the agreed $3.00 -> $3.30 -> $3.375 cycle; paper sizing is separate.
+  // The saved step is preserved, and the cycle resets after a loss or after its third step.
   function getLiveSizing() {
-    const cycle = [2, 2.2, 2.25];
+    const cycle = [3, 3.3, 3.375];
     const step = Number.isInteger(state.liveSizingStep) && state.liveSizingStep >= 0 && state.liveSizingStep < cycle.length
       ? state.liveSizingStep : 0;
     return { step, amountUsd: cycle[step] };
