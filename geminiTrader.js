@@ -28,13 +28,9 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     const percent = step === 0 ? 10 : 12.5;
     return { step, percent, amountUsd: state.cashUsd * percent / 100 };
   }
-  // Live-only sizing follows the agreed $3.00 -> $3.30 -> $3.375 cycle; paper sizing is separate.
-  // The saved step is preserved, and the cycle resets after a loss or after its third step.
+  // Telegram live trades use a fixed $2 size. Live compounding is disabled.
   function getLiveSizing() {
-    const cycle = [3, 3.3, 3.375];
-    const step = Number.isInteger(state.liveSizingStep) && state.liveSizingStep >= 0 && state.liveSizingStep < cycle.length
-      ? state.liveSizingStep : 0;
-    return { step, amountUsd: cycle[step] };
+    return { step: 0, amountUsd: 2 };
   }
   function buy(candidate, amountUsd) {
     if (state.position) return { success: false, error: "Gemini already has an open position" };
@@ -83,11 +79,6 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
       reason, time: new Date().toISOString(), mode: execution ? "LIVE" : "PAPER", execution
     };
     next.history.unshift(trade);
-    if (execution && p.liveExecution) {
-      // Only advance after a net profitable, confirmed live close. A loss
-      // returns the next trade to the $5 base size.
-      next.liveSizingStep = trade.pnlUsd > 0 ? (getLiveSizing().step + 1) % 3 : 0;
-    }
     if (reason === "TP1 +50%" || reason === "TP +15% SELL 95%") next.position.tp1Done = true;
     if (reason === "TP2 +100%") next.position.tp2Done = true;
     if (next.position) next.position.remainingPercent = Math.max(0, next.position.quantity / next.position.originalQuantity * 100);
