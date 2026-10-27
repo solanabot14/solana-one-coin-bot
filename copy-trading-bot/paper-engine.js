@@ -68,6 +68,7 @@ class PaperEngine {
   }
 
   hasPosition(wallet, token) { return this.positions.has(`${wallet}:${token}`); }
+  hasTokenPosition(token) { return [...this.positions.values()].some(p => p.token === token); }
   getPosition(wallet, token) { return this.positions.get(`${wallet}:${token}`) || null; }
 
   walletPerformance(wallet) {
@@ -105,7 +106,11 @@ class PaperEngine {
       return null;
     }
     const key = `${wallet}:${token}`;
-    if (this.positions.has(key)) return null;
+    if (this.hasTokenPosition(token)) {
+      const existing = [...this.positions.values()].filter(p => p.token === token).map(p => p.wallet);
+      console.log('[PAPER BUY BLOCKED - TOKEN ALREADY OPEN]', JSON.stringify({ token, requestedWallet: wallet, existingWallets: existing }));
+      return null;
+    }
     const m = await this.market(token);
     if (!Number.isFinite(m.price) || m.price <= 0) return null;
     const p = {
