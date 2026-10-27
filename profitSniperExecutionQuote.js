@@ -2,7 +2,9 @@ const axios = require("axios");
 const CONFIG = require("./profitSniperConfig");
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 // Quotes only: no taker, wallet, signing or /execute endpoint.
-function createExecutionVerifier({httpGet=(...args)=>axios.get(...args),clock=Date.now}={}) {
+function createExecutionVerifier({httpGet=(...args)=>axios.get(...args),clock=Date.now,
+  maxQuotedRoundTripCostPercent=CONFIG.MAX_QUOTED_ROUND_TRIP_COST_PERCENT,
+  maxRoundTripLossPercent=CONFIG.MAX_ROUND_TRIP_LOSS_PERCENT}={}) {
   async function quote(inputMint,outputMint,amount,signal) {
     if(signal?.aborted)throw new Error("ABORTED");
     const at=clock();
@@ -36,7 +38,7 @@ function createExecutionVerifier({httpGet=(...args)=>axios.get(...args),clock=Da
       const networkFeePercent=estimatedNetworkFeesUsd/Number(amountUsd)*100;
       const quotedCostPercent=quotedPriceLossPercent+networkFeePercent;
       const lossPercent=quotedCostPercent+CONFIG.ROUND_TRIP_SLIPPAGE_BUFFER_PERCENT;
-      const result = {allowed:quotedCostPercent<=CONFIG.MAX_QUOTED_ROUND_TRIP_COST_PERCENT && lossPercent<=CONFIG.MAX_ROUND_TRIP_LOSS_PERCENT,provider:"Jupiter quote only",amountUsd:Number(amountUsd),
+      const result = {allowed:quotedCostPercent<=maxQuotedRoundTripCostPercent && lossPercent<=maxRoundTripLossPercent,provider:"Jupiter quote only",amountUsd:Number(amountUsd),
         quotedSellValueUsd:returned,estimatedNetworkFeesUsd,
         slippageBufferPercent:CONFIG.ROUND_TRIP_SLIPPAGE_BUFFER_PERCENT,
         quotedPriceLossPercent,networkFeePercent,quotedCostPercent,
@@ -44,8 +46,8 @@ function createExecutionVerifier({httpGet=(...args)=>axios.get(...args),clock=Da
         buyFeeBps:buy.data.feeBps??null,sellFeeBps:sell.data.feeBps??null,
         lossPercent,checkedAt:new Date(clock()).toISOString(),
         buyRouter:buy.data.router,sellRouter:sell.data.router,
-        maximumQuotedCostPercent:CONFIG.MAX_QUOTED_ROUND_TRIP_COST_PERCENT,
-        maximumLossPercent:CONFIG.MAX_ROUND_TRIP_LOSS_PERCENT};
+        maximumQuotedCostPercent:maxQuotedRoundTripCostPercent,
+        maximumLossPercent:maxRoundTripLossPercent};
       return result.allowed ? result : {...result,reason:"ROUND_TRIP_COST_TOO_HIGH"};
     } catch(error) {
       return {allowed:false,reason:"EXECUTION_DATA_PENDING: "+(error.response?.status ?
