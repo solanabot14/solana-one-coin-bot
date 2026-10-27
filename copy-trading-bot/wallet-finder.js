@@ -4,13 +4,8 @@ const config = require('./config');
 const { runGmgn, flatten, firstNumber } = require('./gmgn');
 
 const WALLET_KEYS = ['wallet_address','wallet','address','trader_address','trader','maker','maker_address','owner_address','owner'];
-const METRIC_KEYS = new Set([
-  'winrate','win_rate','winRate','realized_profit','realizedProfit','total_profit','totalProfit','pnl','profit',
-  'buy','sell','buy_count','buyCount','sell_count','sellCount','trade_count','tradeCount','token_num','tokenNum',
-  'total_trades','totalTrades','tokens_traded','pnl_stat'
-]);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-let lastDiagnostics = { candidates: 0, mapped7d: 0, mapped30d: 0, rejectedMissingStats: 0, rejectedTradeCount: 0, rejectedWinRate: 0, approved: 0 };
+let lastDiagnostics = { candidates: 0, profitsMapped: 0, mapped7d: 0, mapped30d: 0, rejectedMissingStats: 0, rejectedTradeCount: 0, rejectedWinRate: 0, approved: 0 };
 
 function looksLikeSolanaAddress(v) {
   return typeof v === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v);
@@ -43,75 +38,6 @@ function scoreWallet({ win7, win30, pnl30, trades30 }) {
   return Math.round((w30 * 0.30 + w7 * 0.15 + consistency * 0.15 + tradeEvidence * 0.15 + profitScore * 0.25) * 10) / 10;
 }
 
-function hasMetrics(row) {
-  return !!(row && typeof row === 'object' && Object.keys(row).some(key => METRIC_KEYS.has(key)));
-}
-
-function collectMetricRows(payload) {
-  const out = [];
-  const seen = new Set();
-  const walk = value => {
-    if (Array.isArray(value)) {
-      value.forEach(walk);
-      return;
-    }
-    if (!value || typeof value !== 'object') return;
-    if (hasMetrics(value) && !seen.has(value)) {
-      out.push(value);
-      seen.add(value);
-    }
-    for (const child of Object.values(value)) walk(child);
-  };
-  walk(payload);
-  return out;
-}
-
-function statsMap(payload, candidates) {
-  const map = new Map();
-
-  // GMGN documents batch portfolio stats as a bare array with one top-level row per wallet.
-  // Preserve that top-level ordering before inspecting nested pnl_stat/common objects.
-  if (Array.isArray(payload)) {
-    payload.forEach((row, i) => {
-      if (!row || typeof row !== 'object' || !hasMetrics(row)) return;
-      const wallet = rowWallet(row) || candidates[i];
-      if (wallet && candidates.includes(wallet) && !map.has(wallet)) map.set(wallet, row);
-    });
-    if (map.size) return map;
-  }
-
-  // Defensive support for wrappers that contain a batch array.
-  for (const key of ['list','data','rows','wallets']) {
-    const rows = payload && Array.isArray(payload[key]) ? payload[key] : null;
-    if (!rows) continue;
-    rows.forEach((row, i) => {
-      if (!row || typeof row !== 'object' || !hasMetrics(row)) return;
-      const wallet = rowWallet(row) || candidates[i];
-      if (wallet && candidates.includes(wallet) && !map.has(wallet)) map.set(wallet, row);
-    });
-    if (map.size) return map;
-  }
-
-  // Explicit wallet-keyed records are safe to map regardless of nesting.
-  for (const row of collectMetricRows(payload)) {
-    const wallet = rowWallet(row);
-    if (wallet && candidates.includes(wallet) && !map.has(wallet)) map.set(wallet, row);
-  }
-
-  const walkKeyed = value => {
-    if (!value || typeof value !== 'object') return;
-    for (const [key, child] of Object.entries(value)) {
-      if (looksLikeSolanaAddress(key) && candidates.includes(key) && child && typeof child === 'object' && !map.has(key)) {
-        map.set(key, child);
-      }
-      if (child && typeof child === 'object') walkKeyed(child);
-    }
-  };
-  walkKeyed(payload);
-
-  return map;
-}
-
 function readTradeCount(stats) {
   const buys = firstNumber(stats, ['buy_count','buyCount','buy']);
   const sells = firstNumber(stats, ['sell_count','sellCount','sell']);
@@ -119,47 +45,92 @@ function readTradeCount(stats) {
   return firstNumber(stats, ['trade_count','tradeCount','token_num','tokenNum','total_trades','totalTrades','tokens_traded']);
 }
 
+function profitsMap(payload, candidates) {
+  const rows = payload && Array.isArray(payload.list) ? payload.list : [];
+  const map = new Map();
+  rows.forEach((row, i) => {
+    const wallet = rowWallet(row) || candidates[i];
+    if (wallet && candidates.includes(wallet)) map.set(wallet, row);
+  });
+  return map;
+}
+
+async function oneWalletStats(wallet, period) {
+  await sleep(1000);
+  try {
+    const payload = await runGmgn(['portfolio','stats','--chain',config.chain,'--wallet',wallet,'--period',period]);
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) return payload;
+    if (Array.isArray(payload) && payload[0] && typeof payload[0] === 'object') return payload[0];
+    return null;
+  } catch (error) {
+    console.error(`[wallet-finder] ${period} stats skip ${wallet}: ${error.message}`);
+    return null;
+  }
+}
+
 async function discoverWallets() {
   const feed = await runGmgn(['track','smartmoney','--chain',config.chain,'--side','buy','--limit',String(config.smartMoneyLimit)]);
   const candidates = extractWallets(feed).slice(0, 20);
-  lastDiagnostics = { candidates: candidates.length, mapped7d: 0, mapped30d: 0, rejectedMissingStats: 0, rejectedTradeCount: 0, rejectedWinRate: 0, approved: 0 };
+  lastDiagnostics = { candidates: candidates.length, profitsMapped: 0, mapped7d: 0, mapped30d: 0, rejectedMissingStats: 0, rejectedTradeCount: 0, rejectedWinRate: 0, approved: 0 };
   if (!candidates.length) return [];
 
+  // GMGN documents portfolio profits as a true batch endpoint with one list row per wallet.
   const walletArgs = candidates.flatMap(wallet => ['--wallet', wallet]);
-  await sleep(2500);
-  const stats7Payload = await runGmgn(['portfolio','stats','--chain',config.chain,...walletArgs,'--period','7d']);
-  await sleep(2500);
-  const stats30Payload = await runGmgn(['portfolio','stats','--chain',config.chain,...walletArgs,'--period','30d']);
+  await sleep(1200);
+  const profitsPayload = await runGmgn(['portfolio','profits','--chain',config.chain,...walletArgs,'--period','30d']);
+  const profits = profitsMap(profitsPayload, candidates);
+  lastDiagnostics.profitsMapped = profits.size;
 
-  const s7 = statsMap(stats7Payload, candidates);
-  const s30 = statsMap(stats30Payload, candidates);
-  lastDiagnostics.mapped7d = s7.size;
-  lastDiagnostics.mapped30d = s30.size;
-  const scored = [];
-
+  // First prefilter only on the existing minimum trade-history rule. No safety thresholds are loosened.
+  const tradeQualified = [];
   for (const wallet of candidates) {
-    const seven = s7.get(wallet);
-    const thirty = s30.get(wallet);
-    if (!seven || !thirty) {
+    const row = profits.get(wallet);
+    if (!row) {
       lastDiagnostics.rejectedMissingStats++;
       continue;
     }
-
-    const win7 = normalizeWinRate(firstNumber(seven, ['winrate','win_rate','winRate']));
-    const win30 = normalizeWinRate(firstNumber(thirty, ['winrate','win_rate','winRate']));
-    const pnl30 = firstNumber(thirty, ['realized_profit','realizedProfit','total_profit','totalProfit','pnl','profit']);
-    const trades30 = readTradeCount(thirty);
-    const item = { wallet, win7, win30, pnl30, trades30, score: scoreWallet({ win7, win30, pnl30, trades30 }) };
-
+    const trades30 = readTradeCount(row);
     if ((trades30 || 0) < config.minTrades30d) {
       lastDiagnostics.rejectedTradeCount++;
       continue;
     }
+    tradeQualified.push({
+      wallet,
+      trades30,
+      pnl30: firstNumber(row, ['realized_profit','realizedProfit','total_profit','totalProfit','pnl','profit'])
+    });
+  }
+
+  const scored = [];
+  for (const base of tradeQualified) {
+    const thirty = await oneWalletStats(base.wallet, '30d');
+    if (!thirty) {
+      lastDiagnostics.rejectedMissingStats++;
+      continue;
+    }
+    lastDiagnostics.mapped30d++;
+    const win30 = normalizeWinRate(firstNumber(thirty, ['winrate','win_rate','winRate']));
     if (win30 < config.minWinRate30d) {
       lastDiagnostics.rejectedWinRate++;
       continue;
     }
-    scored.push(item);
+
+    const seven = await oneWalletStats(base.wallet, '7d');
+    if (!seven) {
+      lastDiagnostics.rejectedMissingStats++;
+      continue;
+    }
+    lastDiagnostics.mapped7d++;
+    const win7 = normalizeWinRate(firstNumber(seven, ['winrate','win_rate','winRate']));
+    const pnl30 = Number.isFinite(base.pnl30) ? base.pnl30 : firstNumber(thirty, ['realized_profit','realizedProfit','total_profit','totalProfit','pnl','profit']);
+    scored.push({
+      wallet: base.wallet,
+      win7,
+      win30,
+      pnl30,
+      trades30: base.trades30,
+      score: scoreWallet({ win7, win30, pnl30, trades30: base.trades30 })
+    });
   }
 
   const approved = scored.sort((a,b) => b.score - a.score).slice(0, config.maxWallets);
