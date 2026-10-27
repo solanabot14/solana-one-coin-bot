@@ -150,7 +150,7 @@ function slippageFor(pair) {
       const liveSizing = trader.getLiveSizing?.() || { step: 0, amountUsd: 2 };
       const amountUsd = Number(liveSizing.amountUsd);
       if (!(amountUsd > 0) || Number(trader.getState().cashUsd) < amountUsd)
-        return { success: false, message: "Gemini's managed account cannot reserve the current live-cycle size; no order was placed." };
+        return { success: false, message: "Gemini's managed account cannot reserve the fixed $2 live size; no order was placed." };
       const sellability = await verifyFullPositionExit(candidate, amountUsd, s.controller.signal);
       if (!sellability.allowed) {
         const reason = String(sellability.reason || "FULL_POSITION_EXIT_UNAVAILABLE");
