@@ -265,17 +265,39 @@ function slippageFor(pair) {
       for (const pool of unique.values()) {
         if (!isActive(s) || trader.getState().position) break;
         try {
-          const candidate = candidateForPool(pool, canonicalPools);
+          let candidate = candidateForPool(pool, canonicalPools);
           candidate.liquidityTrend = observeLiquidityTrend(candidate);
           if (!(candidate.priceUsd > 0)) {
             trader.recordRejection(candidate, "Price Unavailable");
             continue;
           }
-          const result = await filter(candidate, { signal: s.controller.signal });
+          let result = await filter(candidate, { signal: s.controller.signal });
           if (!result.accepted) {
             trader.recordRejection(candidate, result.reason, result.details);
             continue;
           }
+          // Refresh the exact verified PumpSwap pair before alerting, so the
+          // liquidity and 5m activity checks use the latest pair snapshot.
+          const freshPair = await pairDetails(candidate.pairAddress, s.controller.signal);
+          if (!isActive(s) || !freshPair ||
+              String(freshPair.pairAddress || "").toLowerCase() !== String(candidate.pairAddress || "").toLowerCase() ||
+              String(freshPair.baseToken?.address || "") !== String(candidate.tokenAddress || "") ||
+              String(freshPair.dexId || "").toLowerCase() !== "pumpswap") {
+            trader.recordRejection(candidate, "Pre-Alert Pair Refresh Failed", { reason: "Exact verified PumpSwap pair snapshot unavailable." });
+            continue;
+          }
+          const refreshed = poolToCandidate({
+            ...candidate,
+            canonicalPoolVerified: candidate.exactPoolVerified
+          }, freshPair);
+          refreshed.liquidityTrend = candidate.liquidityTrend;
+          const freshResult = await filter(refreshed, { signal: s.controller.signal, marketOnly: true });
+          if (!freshResult.accepted) {
+            trader.recordRejection(refreshed, "Pre-Alert Recheck: " + freshResult.reason, freshResult.details);
+            continue;
+          }
+          candidate = refreshed;
+          result = { ...result, details: { ...result.details, ...freshResult.details } };
           passed++;
           const liveSizing = trader.getLiveSizing?.() || { step: 0, amountUsd: 2 };
           const sellability = await verifyFullPositionExit(candidate, liveSizing.amountUsd, s.controller.signal);
