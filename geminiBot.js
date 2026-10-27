@@ -16,7 +16,7 @@ const SELLABILITY_TIMEOUT_MS = 10_000;
 // Exit-only guard: do not wait for an open pool to approach zero liquidity.
 const MIN_EXIT_LIQUIDITY_USD = 3000;
 const MAX_LIQUIDITY_DROP_FROM_ENTRY = 0.50;
-const BUY_SIGNAL_TTL_MS = 120_000;
+const BUY_SIGNAL_TTL_MS = 300_000;
 
 function poolToCandidate(pool, pair) {
   const createdAt = pool.poolCreatedAt || pair?.pairCreatedAt || null;
