@@ -31,6 +31,33 @@ class PaperEngine {
       };
       this.save();
     }
+    this.applyRequestedPaperCorrection();
+  }
+
+  applyRequestedPaperCorrection() {
+    const migration = 'paper_40_remove_meimei_20261027_v1';
+    if (this.account[migration]) return;
+    const id = '3qysVGGB9vudL9De5qK5z8NkvhSsYWTUGY5W5SnB37SvN4dATZQoubrn3Bh1BNAZmQ33PebomyNfis6kuDmCBoNF';
+    const matches = this.closed.filter(t => t.signalId === id && t.token === '5kq7MTXRSCeFVFWKhWg12RMhToHEzc8xkSPD9z2vcLXz');
+    if (matches.length !== 1) { console.error('[PAPER CORRECTION NOT APPLIED] Expected one MEIMEI record, found ' + matches.length); return; }
+    const trade = matches[0];
+    const oldStart = Number(this.account.startingBalanceUsd);
+    const oldCash = Number(this.account.cashBalanceUsd);
+    if (!Number.isFinite(oldStart) || !Number.isFinite(oldCash) || !Number.isFinite(Number(trade.pnlUsd)))
+      { console.error('[PAPER CORRECTION NOT APPLIED] Invalid account values'); return; }
+    const startMs = Date.parse(this.account.initializedAt);
+    const closedMs = Date.parse(trade.closedAt);
+    if (!Number.isFinite(startMs) || !Number.isFinite(closedMs)) { console.error('[PAPER CORRECTION NOT APPLIED] Invalid dates'); return; }
+    const newCash = oldCash + (40 - oldStart) - (closedMs >= startMs ? Number(trade.pnlUsd) : 0);
+    if (newCash < 0) { console.error('[PAPER CORRECTION NOT APPLIED] Open commitments exceed adjusted cash'); return; }
+    try { fs.copyFileSync(stateFile, stateFile + '.before-paper-correction-20261027'); }
+    catch (error) { console.error('[PAPER CORRECTION NOT APPLIED] Backup failed', error.message); return; }
+    this.closed = this.closed.filter(t => t !== trade);
+    this.account.startingBalanceUsd = 40;
+    this.account.cashBalanceUsd = newCash;
+    this.account[migration] = { at: new Date().toISOString(), removedSignalId: id, removedPnlUsd: Number(trade.pnlUsd), priorStartingBalanceUsd: oldStart };
+    this.save();
+    console.log('[PAPER CORRECTION]', JSON.stringify(this.account[migration]));
   }
 
   save() {
@@ -84,7 +111,8 @@ class PaperEngine {
     const p = {
       wallet, token, symbol: m.symbol, signalId, signalAt, mode: 'paper', amountUsd: config.paperTradeUsd,
       entryPrice: m.price, entryLiquidity: m.liquidity, lastPrice: m.price, lastLiquidity: m.liquidity,
-      unrealizedPnlPct: 0, unrealizedPnlUsd: 0, leaderSellSignals: 0, firstLeaderSellAt: null, lastLeaderSellAt: null,
+      unrealizedPnlPct: -3.7, unrealizedPnlUsd: -config.paperTradeUsd * 0.037, leaderSellSignals: 0, firstLeaderSellAt: null, lastLeaderSellAt: null,
+      estimatedRoundTripCostPct: 3.7,
       openedAt: new Date().toISOString(), lastCheckedAt: new Date().toISOString()
     };
     this.account.cashBalanceUsd = Math.max(0, Number(this.account.cashBalanceUsd) - config.paperTradeUsd);
@@ -98,9 +126,11 @@ class PaperEngine {
     const p = this.positions.get(key);
     if (!p || !Number.isFinite(market.price)) return;
     const exitPrice = market.price;
-    const pnlPct = ((exitPrice / p.entryPrice) - 1) * 100;
+    const grossPnlPct = ((exitPrice / p.entryPrice) - 1) * 100;
+    const estimatedCostPct = Number(p.estimatedRoundTripCostPct) || 0;
+    const pnlPct = grossPnlPct - estimatedCostPct;
     const pnlUsd = p.amountUsd * pnlPct / 100;
-    const closed = { ...p, exitPrice, exitLiquidity: market.liquidity, pnlPct, pnlUsd, reason, closedAt: new Date().toISOString() };
+    const closed = { ...p, exitPrice, exitLiquidity: market.liquidity, grossPnlPct, estimatedCostPct, pnlPct, pnlUsd, reason, closedAt: new Date().toISOString() };
     this.positions.delete(key);
     this.closed.push(closed);
     this.account.cashBalanceUsd = Math.max(0, Number(this.account.cashBalanceUsd) + Number(p.amountUsd) + pnlUsd);
@@ -129,7 +159,7 @@ class PaperEngine {
     const liqDropPct = Number.isFinite(p.entryLiquidity) && p.entryLiquidity > 0 && Number.isFinite(m.liquidity) ? (1 - m.liquidity / p.entryLiquidity) * 100 : 0;
     const confirmedDump = p.leaderSellSignals >= config.leaderSellConfirmCount || pnlPct <= config.leaderDumpPnlPct || liqDropPct >= config.leaderDumpLiquidityDropPct;
     if (confirmedDump) return this.close(key, 'leader_dump', m);
-    p.lastPrice = m.price; p.lastLiquidity = m.liquidity; p.unrealizedPnlPct = pnlPct; p.unrealizedPnlUsd = p.amountUsd * pnlPct / 100; p.lastCheckedAt = new Date().toISOString();
+    p.lastPrice = m.price; p.lastLiquidity = m.liquidity; p.unrealizedPnlPct = pnlPct - (Number(p.estimatedRoundTripCostPct) || 0); p.unrealizedPnlUsd = p.amountUsd * p.unrealizedPnlPct / 100; p.lastCheckedAt = new Date().toISOString();
     this.save();
     console.log('[LEADER PARTIAL SELL]', JSON.stringify({ wallet, token, signalId, pnlPct, liqDropPct, leaderSellSignals: p.leaderSellSignals }));
   }
@@ -157,7 +187,7 @@ class PaperEngine {
         const m = await this.market(p.token);
         if (!Number.isFinite(m.price)) continue;
         const pnlPct = ((m.price / p.entryPrice) - 1) * 100;
-        p.lastPrice = m.price; p.lastLiquidity = m.liquidity; p.unrealizedPnlPct = pnlPct; p.unrealizedPnlUsd = p.amountUsd * pnlPct / 100; p.lastCheckedAt = new Date().toISOString(); changed = true;
+        p.lastPrice = m.price; p.lastLiquidity = m.liquidity; p.unrealizedPnlPct = pnlPct - (Number(p.estimatedRoundTripCostPct) || 0); p.unrealizedPnlUsd = p.amountUsd * p.unrealizedPnlPct / 100; p.lastCheckedAt = new Date().toISOString(); changed = true;
         if (pnlPct >= config.takeProfitPct) await this.close(key, 'take_profit', m);
         else if (pnlPct <= -config.stopLossPct) await this.close(key, 'stop_loss', m);
         else if (Number.isFinite(p.entryLiquidity) && Number.isFinite(m.liquidity) && m.liquidity <= p.entryLiquidity * (1 - config.liquidityExitDropPct / 100)) await this.close(key, 'liquidity_drop', m);
