@@ -5,10 +5,8 @@ const MIN_LIQUIDITY_USD = 5000;
 const MIN_POOL_AGE_MS = 2 * 60 * 1000;
 const MAX_POOL_AGE_MS = 120 * 60 * 1000;
 const MIN_TRANSACTIONS_5M = 15;
-const MIN_VOLUME_5M_USD = 500;
-const MIN_BUY_RATIO_5M = 0.60;
-// Avoid chasing a short, already-extended pump; negative changes remain eligible.
-const MAX_PRICE_CHANGE_5M = 25;
+const MIN_BUY_RATIO_5M = 0.55;
+const MIN_PRICE_CHANGE_5M = 2;
 const MAX_TOP10_PERCENT = 35;
 
 async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety, holderConcentration = getHolderConcentration, marketOnly = false } = {}) {
@@ -32,14 +30,13 @@ async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety
   const tx = buys + sells;
   if (tx < MIN_TRANSACTIONS_5M) return reject("Low 5m Activity", { transactions5m: tx, minimum: MIN_TRANSACTIONS_5M });
   const volume5mUsd = Number(candidate.volume5m) || 0;
-  if (volume5mUsd < MIN_VOLUME_5M_USD)
-    return reject("Low 5m Dollar Volume", { volume5mUsd, minimum: MIN_VOLUME_5M_USD });
   const buyRatio = tx ? buys / tx : 0;
-  if (buyRatio < MIN_BUY_RATIO_5M)
-    return reject("Buy Pressure Below 60%", { buys, sells, buyRatio, minimum: MIN_BUY_RATIO_5M });
+  if (buys <= sells || buyRatio <= MIN_BUY_RATIO_5M)
+    return reject("Buy Pressure Not Above 55%", { buys, sells, buyRatio, minimumExclusive: MIN_BUY_RATIO_5M });
   const priceChange5m = Number(candidate.priceChange5m);
-  if (Number.isFinite(priceChange5m) && priceChange5m > MAX_PRICE_CHANGE_5M)
-    return reject("Already Pumped — Avoid Chasing", { priceChange5m, maximum: MAX_PRICE_CHANGE_5M });
+  if (!Number.isFinite(priceChange5m)) return reject("5m Price Trend Unverified");
+  if (priceChange5m < MIN_PRICE_CHANGE_5M)
+    return reject("5m Momentum Below +2%", { priceChange5m, minimum: MIN_PRICE_CHANGE_5M });
   const marketDetails = {
     dexId: candidate.dexId || null, liquidityUsd: liquidity, poolAgeMs: age,
     transactions5m: tx, volume5mUsd, buyRatio,
@@ -76,8 +73,7 @@ module.exports = {
   MIN_POOL_AGE_MS,
   MAX_POOL_AGE_MS,
   MIN_TRANSACTIONS_5M,
-  MIN_VOLUME_5M_USD,
   MIN_BUY_RATIO_5M,
-  MAX_PRICE_CHANGE_5M,
+  MIN_PRICE_CHANGE_5M,
   MAX_TOP10_PERCENT,
 };
