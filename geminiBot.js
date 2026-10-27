@@ -5,7 +5,7 @@ const { createExecutionVerifier } = require("./profitSniperExecutionQuote");
 const { createGeminiLiveExecution, USDC } = require("./geminiLiveExecution");
 const traderDefault = require("./geminiTrader");
 const { randomUUID } = require("node:crypto");
-const { getTelegramConfig, sendGeminiBuyAlert, sendGeminiPaperSignal, startTelegramBuyPolling } = require("./telegram");
+const { getTelegramConfig, sendGeminiBuyAlert, startTelegramBuyPolling } = require("./telegram");
 
 const SCAN_MS = Number(process.env.GEMINI_SCAN_MS) || 30000;
 const MONITOR_MS = Number(process.env.GEMINI_MONITOR_MS) || 3000;
@@ -270,55 +270,30 @@ function slippageFor(pair) {
           }
           candidate.geminiDetails = { ...result.details, executionQuote: sellability };
           candidate.slippageBps = slippageFor(candidate);
-          const telegramEnabled = getTelegramConfig().enabled;
-          const liveReady = liveExecution.status().mode === "LIVE_READY";
-          // With the dashboard live switch OFF, Gemini remains in paper mode.
-          // In live-ready mode, Telegram sends a signal and only the user's Buy tap enters.
-          if (telegramEnabled && liveReady) {
-            const signalId = randomUUID();
-            pendingBuySignals.set(signalId, {
-              candidate: structuredClone(candidate),
-              expiresAt: Date.now() + BUY_SIGNAL_TTL_MS
+          if (!getTelegramConfig().enabled) {
+            trader.recordRejection(candidate, "Telegram Manual Signal Unavailable", {
+              reason: "Gemini manual-live mode requires Telegram configuration."
             });
-            const alert = await sendGeminiBuyAlert(signalId, candidate, liveSizing.amountUsd);
-            if (!alert.sent) {
-              pendingBuySignals.delete(signalId);
-              trader.recordRejection(candidate, "Telegram Buy Alert Delivery Failed", { reason: alert.reason });
-              continue;
-            }
-            console.log("[INFO] Gemini Telegram buy signal sent", {
-              symbol: candidate.symbol, mint: candidate.tokenAddress,
-              amountUsd: liveSizing.amountUsd, expiresInMs: BUY_SIGNAL_TTL_MS
-            });
-            break;
-          }
-          // Never submit live entries automatically, even if Telegram is unavailable.
-          if (liveReady) {
-            trader.recordRejection(candidate, "Live Auto-Entry Disabled", { reason: "Live purchases require the Telegram Buy button." });
             continue;
           }
-          const paperBuy = trader.buy(candidate);
-          if (paperBuy.success) {
-            console.log("[INFO] Gemini paper entry", {
-              symbol: candidate.symbol, mint: candidate.tokenAddress,
-              pair: candidate.pairAddress, tradeSizeUsd: paperBuy.position.originalCostUsd
-            });
-            if (telegramEnabled) {
-              void sendGeminiPaperSignal(candidate, liveSizing.amountUsd)
-                .then(result => {
-                  if (result.sent) {
-                    console.log("[INFO] Gemini Telegram paper-mode signal sent", {
-                      symbol: candidate.symbol, mint: candidate.tokenAddress
-                    });
-                  } else {
-                    console.warn("[INFO] Gemini Telegram paper-mode signal failed", result.reason);
-                  }
-                })
-                .catch(error => console.warn("[INFO] Gemini Telegram paper-mode signal failed", error.message));
-            }
-            break;
+          // Manual-live signal mode never opens paper positions or automatic live entries.
+          // Only an authorized Telegram Buy tap can authorize this individual live order.
+          const signalId = randomUUID();
+          pendingBuySignals.set(signalId, {
+            candidate: structuredClone(candidate),
+            expiresAt: Date.now() + BUY_SIGNAL_TTL_MS
+          });
+          const alert = await sendGeminiBuyAlert(signalId, candidate, liveSizing.amountUsd);
+          if (!alert.sent) {
+            pendingBuySignals.delete(signalId);
+            trader.recordRejection(candidate, "Telegram Buy Alert Delivery Failed", { reason: alert.reason });
+            continue;
           }
-          trader.recordRejection(candidate, paperBuy.error);
+          console.log("[INFO] Gemini Telegram manual-live buy signal sent", {
+            symbol: candidate.symbol, mint: candidate.tokenAddress,
+            amountUsd: liveSizing.amountUsd, expiresInMs: BUY_SIGNAL_TTL_MS
+          });
+          break;
         } catch (error) {
           if (isActive(s)) {
             trader.recordRejection(pool, "Candidate Evaluation Error", { error: error.message });
