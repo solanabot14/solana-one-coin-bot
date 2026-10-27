@@ -20,9 +20,7 @@ class PaperEngine {
       const s = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
       for (const p of s.positions || []) this.positions.set(`${p.wallet}:${p.token}`, p);
       this.closed = s.closed || [];
-      if (s.account && Number.isFinite(Number(s.account.cashBalanceUsd))) {
-        this.account = s.account;
-      }
+      if (s.account && Number.isFinite(Number(s.account.cashBalanceUsd))) this.account = s.account;
     } catch {}
     if (!this.account) {
       const committed = [...this.positions.values()].reduce((sum,p)=>sum+(Number(p.amountUsd)||0),0);
@@ -39,9 +37,7 @@ class PaperEngine {
     try {
       fs.mkdirSync(path.dirname(stateFile), { recursive: true });
       fs.writeFileSync(stateFile, JSON.stringify({ account: this.account, positions: [...this.positions.values()], closed: this.closed.slice(-500) }, null, 2));
-    } catch (error) {
-      console.error('[state save]', error.message);
-    }
+    } catch (error) { console.error('[state save]', error.message); }
   }
 
   hasPosition(wallet, token) { return this.positions.has(`${wallet}:${token}`); }
@@ -71,11 +67,7 @@ class PaperEngine {
 
   async market(token) {
     const info = await runGmgn(['token','info','--chain',config.chain,'--address',token]);
-    return {
-      symbol: firstString(info, ['symbol','token_symbol','name']) || token.slice(0, 6),
-      price: firstNumber(info, ['price','price_usd','priceUsd','usd_price']),
-      liquidity: firstNumber(info, ['liquidity','liquidity_usd','liquidityUsd'])
-    };
+    return { symbol: firstString(info, ['symbol','token_symbol','name']) || token.slice(0, 6), price: firstNumber(info, ['price','price_usd','priceUsd','usd_price']), liquidity: firstNumber(info, ['liquidity','liquidity_usd','liquidityUsd']) };
   }
 
   async open(wallet, token, signalId, signalAt = null) {
@@ -90,12 +82,9 @@ class PaperEngine {
     const m = await this.market(token);
     if (!Number.isFinite(m.price) || m.price <= 0) return null;
     const p = {
-      wallet, token, symbol: m.symbol, signalId, signalAt,
-      mode: 'paper', amountUsd: config.paperTradeUsd,
-      entryPrice: m.price, entryLiquidity: m.liquidity,
-      lastPrice: m.price, lastLiquidity: m.liquidity,
-      unrealizedPnlPct: 0, unrealizedPnlUsd: 0,
-      leaderSellSignals: 0, firstLeaderSellAt: null, lastLeaderSellAt: null,
+      wallet, token, symbol: m.symbol, signalId, signalAt, mode: 'paper', amountUsd: config.paperTradeUsd,
+      entryPrice: m.price, entryLiquidity: m.liquidity, lastPrice: m.price, lastLiquidity: m.liquidity,
+      unrealizedPnlPct: 0, unrealizedPnlUsd: 0, leaderSellSignals: 0, firstLeaderSellAt: null, lastLeaderSellAt: null,
       openedAt: new Date().toISOString(), lastCheckedAt: new Date().toISOString()
     };
     this.account.cashBalanceUsd = Math.max(0, Number(this.account.cashBalanceUsd) - config.paperTradeUsd);
@@ -164,9 +153,11 @@ class PaperEngine {
   snapshot() {
     const openPositions = [...this.positions.values()];
     const closedTrades = this.closed.slice(-100).reverse();
-    const realizedPnlUsd = this.closed.reduce((sum, t) => sum + (Number(t.pnlUsd) || 0), 0);
-    const wins = this.closed.filter(t => Number(t.pnlUsd) > 0).length;
-    const losses = this.closed.filter(t => Number(t.pnlUsd) < 0).length;
+    const accountStartMs = new Date(this.account.initializedAt).getTime();
+    const accountClosed = this.closed.filter(t => Number.isFinite(accountStartMs) && new Date(t.closedAt).getTime() >= accountStartMs);
+    const realizedPnlUsd = accountClosed.reduce((sum, t) => sum + (Number(t.pnlUsd) || 0), 0);
+    const wins = accountClosed.filter(t => Number(t.pnlUsd) > 0).length;
+    const losses = accountClosed.filter(t => Number(t.pnlUsd) < 0).length;
     const unrealizedPnlUsd = openPositions.reduce((sum, t) => sum + (Number(t.unrealizedPnlUsd) || 0), 0);
     const committedCapitalUsd = openPositions.reduce((sum,t)=>sum+(Number(t.amountUsd)||0),0);
     const cashBalanceUsd = Number(this.account.cashBalanceUsd) || 0;
@@ -175,7 +166,11 @@ class PaperEngine {
       mode: 'paper', paperTradeUsd: config.paperTradeUsd, startingBalanceUsd: this.account.startingBalanceUsd,
       cashBalanceUsd, committedCapitalUsd, equityUsd, accountInitializedAt: this.account.initializedAt,
       openPositions, closedTrades, walletPerformance: this.allWalletPerformance(),
-      metrics: { openPositions: openPositions.length, closedTrades: this.closed.length, wins, losses, winRate: this.closed.length ? wins / this.closed.length * 100 : null, realizedPnlUsd, unrealizedPnlUsd, cashBalanceUsd, committedCapitalUsd, equityUsd }
+      metrics: {
+        openPositions: openPositions.length, closedTrades: accountClosed.length, wins, losses,
+        winRate: accountClosed.length ? wins / accountClosed.length * 100 : null,
+        realizedPnlUsd, unrealizedPnlUsd, cashBalanceUsd, committedCapitalUsd, equityUsd
+      }
     };
   }
 }
