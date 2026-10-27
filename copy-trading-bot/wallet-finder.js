@@ -69,13 +69,35 @@ function collectMetricRows(payload) {
 function statsMap(payload, candidates) {
   const map = new Map();
 
-  // First preference: explicit wallet address on each returned stats record.
+  // GMGN documents batch portfolio stats as a bare array with one top-level row per wallet.
+  // Preserve that top-level ordering before inspecting nested pnl_stat/common objects.
+  if (Array.isArray(payload)) {
+    payload.forEach((row, i) => {
+      if (!row || typeof row !== 'object' || !hasMetrics(row)) return;
+      const wallet = rowWallet(row) || candidates[i];
+      if (wallet && candidates.includes(wallet) && !map.has(wallet)) map.set(wallet, row);
+    });
+    if (map.size) return map;
+  }
+
+  // Defensive support for wrappers that contain a batch array.
+  for (const key of ['list','data','rows','wallets']) {
+    const rows = payload && Array.isArray(payload[key]) ? payload[key] : null;
+    if (!rows) continue;
+    rows.forEach((row, i) => {
+      if (!row || typeof row !== 'object' || !hasMetrics(row)) return;
+      const wallet = rowWallet(row) || candidates[i];
+      if (wallet && candidates.includes(wallet) && !map.has(wallet)) map.set(wallet, row);
+    });
+    if (map.size) return map;
+  }
+
+  // Explicit wallet-keyed records are safe to map regardless of nesting.
   for (const row of collectMetricRows(payload)) {
     const wallet = rowWallet(row);
     if (wallet && candidates.includes(wallet) && !map.has(wallet)) map.set(wallet, row);
   }
 
-  // Some GMGN batch responses are keyed by wallet address.
   const walkKeyed = value => {
     if (!value || typeof value !== 'object') return;
     for (const [key, child] of Object.entries(value)) {
@@ -87,19 +109,12 @@ function statsMap(payload, candidates) {
   };
   walkKeyed(payload);
 
-  // Last-resort ordered mapping only when the number of metric records exactly matches candidates.
-  const unmapped = candidates.filter(wallet => !map.has(wallet));
-  const anonymousRows = collectMetricRows(payload).filter(row => !rowWallet(row));
-  if (unmapped.length && anonymousRows.length === unmapped.length) {
-    unmapped.forEach((wallet, i) => map.set(wallet, anonymousRows[i]));
-  }
-
   return map;
 }
 
 function readTradeCount(stats) {
-  const buys = firstNumber(stats, ['buy','buy_count','buyCount']);
-  const sells = firstNumber(stats, ['sell','sell_count','sellCount']);
+  const buys = firstNumber(stats, ['buy_count','buyCount','buy']);
+  const sells = firstNumber(stats, ['sell_count','sellCount','sell']);
   if (Number.isFinite(buys) || Number.isFinite(sells)) return (Number(buys) || 0) + (Number(sells) || 0);
   return firstNumber(stats, ['trade_count','tradeCount','token_num','tokenNum','total_trades','totalTrades','tokens_traded']);
 }
