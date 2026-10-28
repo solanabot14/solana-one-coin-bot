@@ -63,9 +63,11 @@ function freshBuy(e) {
 
 async function refreshWallets() {
   try {
-    const wallets = await discoverWallets();
+    const discovered = await discoverWallets();
+    const suspended = discovered.filter(w => engine.isWalletSuspended(w.wallet));
+    const wallets = discovered.filter(w => !engine.isWalletSuspended(w.wallet));
     runtime.wallets = wallets;
-    runtime.walletDiagnostics = getLastDiagnostics();
+    runtime.walletDiagnostics = { ...getLastDiagnostics(), approved: wallets.length, suspendedByCopyResults: suspended.length };
     runtime.lastWalletRefreshAt = new Date().toISOString();
     runtime.lastError = null;
     approved = new Set(wallets.map(w => w.wallet));
