@@ -187,11 +187,11 @@ async function main(){
   if(config.mode!=='paper')throw new Error('Copy Trading Bot is locked to paper mode.');
   console.log(`[COPY TRADING BOT] PAPER ONLY | $${config.paperTradeUsd} simulated positions`);
   startHttpServer();
+  await riskCheck();
   await refreshWallets();
   await sleep(3000);
   setInterval(()=>refreshWallets(),config.walletRefreshMs).unref();
   setInterval(()=>riskCheck(),config.riskCheckMs).unref();
-  await riskCheck();
   while(true){await pollSignals();await sleep(config.pollMs);}
 }
 main().catch(err=>{console.error(err);process.exitCode=1;});
