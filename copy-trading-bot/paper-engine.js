@@ -218,7 +218,10 @@ class PaperEngine {
     for (const [key, p] of [...this.positions.entries()]) {
       try {
         const m = await this.market(p.token);
-        if (!Number.isFinite(m.price)) continue;
+        if (!Number.isFinite(m.price)) {
+          if (p.inactiveSinceAt) { p.inactiveSinceAt = null; changed = true; }
+          continue;
+        }
         const pnlPct = ((m.price / p.entryPrice) - 1) * 100;
         const checkedAt = new Date().toISOString();
         p.lastPrice = m.price; p.lastLiquidity = m.liquidity; p.unrealizedPnlPct = pnlPct - (Number(p.estimatedRoundTripCostPct) || 0); p.unrealizedPnlUsd = p.amountUsd * p.unrealizedPnlPct / 100; p.lastCheckedAt = checkedAt; changed = true;
@@ -231,13 +234,18 @@ class PaperEngine {
           } else if (!p.inactiveSinceAt) {
             p.inactiveSinceAt = checkedAt;
           }
+        } else if (p.inactiveSinceAt) {
+          p.inactiveSinceAt = null;
         }
         if (m.price > maxTokenPriceUsd) await this.close(key, 'token_price_limit', m);
         else if (pnlPct >= config.takeProfitPct) await this.close(key, 'take_profit', m);
         else if (pnlPct <= -config.stopLossPct) await this.close(key, 'stop_loss', m);
         else if (Number.isFinite(p.entryLiquidity) && Number.isFinite(m.liquidity) && m.liquidity <= p.entryLiquidity * (1 - config.liquidityExitDropPct / 100)) await this.close(key, 'liquidity_drop', m);
         else if (m.activity5m && m.activity5m.swaps === 0 && m.activity5m.volumeUsd === 0 && p.inactiveSinceAt && Date.now() - Date.parse(p.inactiveSinceAt) >= config.inactivityExitSec * 1000) await this.close(key, 'sustained_inactivity', m);
-      } catch (e) { console.error('[evaluate]', p.token, e.message); }
+      } catch (e) {
+        if (p.inactiveSinceAt) { p.inactiveSinceAt = null; changed = true; }
+        console.error('[evaluate]', p.token, e.message);
+      }
     }
     if (changed) this.save();
   }

@@ -82,3 +82,18 @@ test('starts and resets the sustained inactivity timer, then exits after the con
   assert.equal(engine.hasPosition(wallet, token), false);
   assert.equal(engine.closed.at(-1).reason, 'sustained_inactivity');
 });
+
+test('does not count missing market data as sustained inactivity', async () => {
+  let marketSnapshot = activeMarket;
+  const engine = new PaperEngine({ marketFetcher: async () => marketSnapshot() });
+  assert.ok(await engine.open(wallet, token, 'active'));
+  marketSnapshot = idleMarket;
+  await engine.evaluate();
+  const position = engine.getPosition(wallet, token);
+  position.inactiveSinceAt = new Date(Date.now() - (config.inactivityExitSec + 5) * 1000).toISOString();
+
+  marketSnapshot = () => ({ symbol: 'TEST', price: { price: '1' } });
+  await engine.evaluate();
+  assert.equal(engine.hasPosition(wallet, token), true);
+  assert.equal(engine.getPosition(wallet, token).inactiveSinceAt, null);
+});
