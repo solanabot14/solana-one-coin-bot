@@ -94,13 +94,14 @@ async function oneWalletStats(wallet, period) {
   return null;
 }
 
-async function discoverWallets() {
+async function discoverWallets({ excludedWallets = [] } = {}) {
+  const excluded = new Set(excludedWallets);
   const feed = await runGmgn(['track','smartmoney','--chain',config.chain,'--side','buy','--limit',String(config.smartMoneyLimit)]);
-  const candidates = extractWallets(feed).slice(0, 20);
+  const candidates = extractWallets(feed).filter(wallet => !excluded.has(wallet)).slice(0, 20);
   const candidateSet = new Set(candidates);
   lastDiagnostics = { candidates: candidates.length, mapped7d: 0, mapped30d: 0, rejectedMissingStats: 0, rejectedTradeCount: 0, rejectedWinRate: 0, rejectedProfitability: 0, approved: 0, retained: 0, added: 0, removed: 0 };
   if (!candidates.length) {
-    const retained = loadPool().filter(w => Date.now() - Date.parse(w.lastQualifiedAt || w.addedAt || 0) <= POOL_RETENTION_MS).slice(0, config.maxWallets);
+    const retained = loadPool().filter(w => !excluded.has(w.wallet) && Date.now() - Date.parse(w.lastQualifiedAt || w.addedAt || 0) <= POOL_RETENTION_MS).slice(0, config.maxWallets);
     lastDiagnostics.retained = retained.length;
     lastDiagnostics.approved = retained.length;
     return retained;
@@ -172,7 +173,7 @@ async function discoverWallets() {
     const lastQualifiedMs = Date.parse(old.lastQualifiedAt || old.addedAt || 0);
     const expired = !Number.isFinite(lastQualifiedMs) || Date.now() - lastQualifiedMs > POOL_RETENTION_MS;
     const explicitlyFailed = candidateSet.has(old.wallet) && failedCurrentCandidates.has(old.wallet);
-    if (expired || explicitlyFailed) {
+    if (expired || explicitlyFailed || excluded.has(old.wallet)) {
       lastDiagnostics.removed++;
       continue;
     }
@@ -190,6 +191,7 @@ async function discoverWallets() {
 
   let additions = 0;
   for (const row of scoredSorted) {
+    if (excluded.has(row.wallet)) continue;
     if (pool.has(row.wallet)) continue;
     if (pool.size >= config.maxWallets || additions >= MAX_NEW_PER_REFRESH) break;
     pool.set(row.wallet, { ...row, addedAt: now, lastQualifiedAt: now });

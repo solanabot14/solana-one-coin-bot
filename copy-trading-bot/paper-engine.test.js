@@ -8,8 +8,11 @@ const path = require('node:path');
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copy-paper-engine-'));
 process.env.COPY_STATE_FILE = path.join(tempDir, 'state.json');
-process.env.COPY_INACTIVITY_EXIT_SEC = '600';
-process.env.COPY_MAX_HOLDING_SEC = '3600';
+process.env.COPY_INACTIVITY_EXIT_SEC = '180';
+process.env.COPY_MAX_HOLDING_SEC = '900';
+process.env.COPY_STOP_LOSS_PCT = '15';
+process.env.COPY_MIN_LIQUIDITY_USD = '50000';
+process.env.COPY_SUSPEND_MIN_TRADES = '8';
 const PaperEngine = require('./paper-engine');
 beforeEach(() => {
   fs.rmSync(process.env.COPY_STATE_FILE, { force: true });
@@ -65,6 +68,19 @@ test('blocks entry when activity metrics are missing', async () => {
   assert.equal(engine.activityDiagnostics.unavailable, 1);
 });
 
+test('blocks entry when liquidity is missing or below the minimum', async () => {
+  const low = new PaperEngine({ marketFetcher: async () => ({
+    symbol: 'THIN', liquidity: '49999', price: { price: '1', volume_5m: '25000', swaps_5m: 100 }
+  }) });
+  assert.equal(await low.open(wallet, token, 'low-liquidity'), null);
+  assert.equal(low.activityDiagnostics.lowLiquidity, 1);
+  const unknown = new PaperEngine({ marketFetcher: async () => ({
+    symbol: 'UNKNOWN-LIQ', price: { price: '1', volume_5m: '25000', swaps_5m: 100 }
+  }) });
+  assert.equal(await unknown.open(wallet, token, 'unknown-liquidity'), null);
+  assert.equal(unknown.activityDiagnostics.lowLiquidity, 1);
+});
+
 test('Follow wallet strategy ignores price and liquidity changes while activity remains present', async () => {
   let marketSnapshot = activeMarket;
   const engine = new PaperEngine({ marketFetcher: async () => marketSnapshot() });
@@ -107,6 +123,24 @@ test('exits at the maximum holding time even when the market still reports activ
   await engine.evaluate();
   assert.equal(engine.hasPosition(wallet, token), false);
   assert.equal(engine.closed.at(-1).reason, 'max_holding_time');
+});
+
+test('exits when net paper loss reaches the configured stop loss', async () => {
+  let currentPrice = 1;
+  const engine = new PaperEngine({ marketFetcher: async () => ({
+    symbol: 'TEST', liquidity: '50000', price: { price: String(currentPrice), volume_5m: '25000', swaps_5m: 100 }
+  }) });
+  assert.ok(await engine.open(wallet, token, 'active'));
+  currentPrice = 0.80;
+  await engine.evaluate();
+  assert.equal(engine.hasPosition(wallet, token), false);
+  assert.equal(engine.closed.at(-1).reason, 'stop_loss');
+});
+
+test('suspends a wallet after eight copied trades with negative net P&L', async () => {
+  const engine = new PaperEngine({ marketFetcher: async () => activeMarket() });
+  engine.closed = Array.from({ length: 8 }, (_, i) => ({ wallet, pnlUsd: i === 0 ? 0.2 : -0.1 }));
+  assert.equal(engine.walletPerformance(wallet).suspended, true);
 });
 
 test('missing activity data resets the inactivity timer instead of forcing an exit', async () => {

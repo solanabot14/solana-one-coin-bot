@@ -13,7 +13,7 @@ const maxTokenPriceUsd = Number.isFinite(configuredMaxTokenPriceUsd) && configur
 class PaperEngine {
   constructor({ marketFetcher } = {}) {
     this.marketFetcher = marketFetcher || (token => runGmgn(['token','info','--chain',config.chain,'--address',token]));
-    this.activityDiagnostics = { rejected: 0, unavailable: 0 };
+    this.activityDiagnostics = { rejected: 0, unavailable: 0, lowLiquidity: 0 };
     this.positions = new Map();
     this.closed = [];
     this.account = null;
@@ -84,9 +84,11 @@ class PaperEngine {
     let consecutiveLosses = 0;
     for (let i = trades.length - 1; i >= 0; i--) { if (Number(trades[i].pnlUsd) < 0) consecutiveLosses++; else break; }
     const winRate = trades.length ? wins / trades.length * 100 : null;
-    const suspended = trades.length >= config.copySuspendMinTrades && realizedPnlUsd < 0 && (
+    const repeatedLosses = trades.length >= config.copySuspendMinTrades && realizedPnlUsd < 0;
+    const acuteLosses = trades.length >= 4 && realizedPnlUsd < 0 && (
       consecutiveLosses >= config.copySuspendLossStreak || (Number.isFinite(winRate) && winRate < config.copySuspendWinRatePct)
     );
+    const suspended = repeatedLosses || acuteLosses;
     return { wallet, trades: trades.length, wins, losses, winRate, realizedPnlUsd, consecutiveLosses, suspended };
   }
 
@@ -133,6 +135,11 @@ class PaperEngine {
     if (m.activity5m.volumeUsd < config.minActivityVolume5mUsd || m.activity5m.swaps < config.minActivitySwaps5m) {
       this.activityDiagnostics.rejected++;
       console.log('[PAPER BUY BLOCKED - INSUFFICIENT RECENT ACTIVITY]', JSON.stringify({ token, wallet, activity5m: m.activity5m, minimumVolumeUsd: config.minActivityVolume5mUsd, minimumSwaps: config.minActivitySwaps5m }));
+      return null;
+    }
+    if (!Number.isFinite(m.liquidity) || m.liquidity < config.minLiquidityUsd) {
+      this.activityDiagnostics.lowLiquidity++;
+      console.log('[PAPER BUY BLOCKED - LOW OR UNKNOWN LIQUIDITY]', JSON.stringify({ token, wallet, liquidityUsd:m.liquidity, minimumLiquidityUsd:config.minLiquidityUsd }));
       return null;
     }
     if (m.price > maxTokenPriceUsd) {
@@ -232,6 +239,10 @@ class PaperEngine {
         if (!Number.isFinite(m.price) || m.price <= 0) { if (p.inactiveSinceAt) changed = true; continue; }
         const pnlPct = ((m.price / p.entryPrice) - 1) * 100;
         p.lastPrice = m.price; p.lastLiquidity = m.liquidity; p.unrealizedPnlPct = pnlPct - (Number(p.estimatedRoundTripCostPct) || 0); p.unrealizedPnlUsd = p.amountUsd * p.unrealizedPnlPct / 100; p.lastCheckedAt = checkedAt; changed = true;
+        if (config.stopLossPct > 0 && p.unrealizedPnlPct <= -config.stopLossPct) {
+          await this.close(key, 'stop_loss', m);
+          continue;
+        }
         const heldMs = Date.now() - Date.parse(p.openedAt);
         if (config.maxHoldingSec > 0 && Number.isFinite(heldMs) && heldMs >= config.maxHoldingSec * 1000) {
           await this.close(key, 'max_holding_time', m);
@@ -258,7 +269,7 @@ class PaperEngine {
     const cashBalanceUsd = Number(this.account.cashBalanceUsd) || 0;
     const equityUsd = cashBalanceUsd + committedCapitalUsd + unrealizedPnlUsd;
     return {
-      mode: 'paper', paperTradeUsd: config.paperTradeUsd, maxHoldingSec: config.maxHoldingSec, startingBalanceUsd: this.account.startingBalanceUsd,
+      mode: 'paper', paperTradeUsd: config.paperTradeUsd, maxHoldingSec: config.maxHoldingSec, stopLossPct: config.stopLossPct, startingBalanceUsd: this.account.startingBalanceUsd,
       cashBalanceUsd, committedCapitalUsd, equityUsd, accountInitializedAt: this.account.initializedAt,
       activityDiagnostics: { ...this.activityDiagnostics },
       openPositions, closedTrades, walletPerformance: this.allWalletPerformance(),
