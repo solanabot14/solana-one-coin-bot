@@ -232,6 +232,11 @@ class PaperEngine {
         if (!Number.isFinite(m.price) || m.price <= 0) { if (p.inactiveSinceAt) changed = true; continue; }
         const pnlPct = ((m.price / p.entryPrice) - 1) * 100;
         p.lastPrice = m.price; p.lastLiquidity = m.liquidity; p.unrealizedPnlPct = pnlPct - (Number(p.estimatedRoundTripCostPct) || 0); p.unrealizedPnlUsd = p.amountUsd * p.unrealizedPnlPct / 100; p.lastCheckedAt = checkedAt; changed = true;
+        const heldMs = Date.now() - Date.parse(p.openedAt);
+        if (config.maxHoldingSec > 0 && Number.isFinite(heldMs) && heldMs >= config.maxHoldingSec * 1000) {
+          await this.close(key, 'max_holding_time', m);
+          continue;
+        }
         if (p.inactiveSinceAt && Date.now() - Date.parse(p.inactiveSinceAt) >= config.inactivityExitSec * 1000) {
           await this.close(key, 'sustained_inactivity', m);
         }
@@ -253,7 +258,7 @@ class PaperEngine {
     const cashBalanceUsd = Number(this.account.cashBalanceUsd) || 0;
     const equityUsd = cashBalanceUsd + committedCapitalUsd + unrealizedPnlUsd;
     return {
-      mode: 'paper', paperTradeUsd: config.paperTradeUsd, startingBalanceUsd: this.account.startingBalanceUsd,
+      mode: 'paper', paperTradeUsd: config.paperTradeUsd, maxHoldingSec: config.maxHoldingSec, startingBalanceUsd: this.account.startingBalanceUsd,
       cashBalanceUsd, committedCapitalUsd, equityUsd, accountInitializedAt: this.account.initializedAt,
       activityDiagnostics: { ...this.activityDiagnostics },
       openPositions, closedTrades, walletPerformance: this.allWalletPerformance(),
