@@ -37,6 +37,28 @@ class PaperEngine {
       this.save();
     }
     this.applyRequestedPaperCorrection();
+    this.applyRequestedBalanceReset();
+  }
+
+  applyRequestedBalanceReset() {
+    const migration = 'paper_balance_reset_20261028_v1';
+    if (this.account[migration]) return;
+    if (this.positions.size > 0) {
+      console.error('[PAPER BALANCE RESET NOT APPLIED] Open positions remain', this.positions.size);
+      return;
+    }
+    const previousCashBalanceUsd = Number(this.account.cashBalanceUsd);
+    const previousStartingBalanceUsd = Number(this.account.startingBalanceUsd);
+    const at = new Date().toISOString();
+    this.account.startingBalanceUsd = 40;
+    this.account.cashBalanceUsd = 40;
+    this.account.initializedAt = at;
+    this.account[migration] = {
+      at, balanceUsd: 40, previousCashBalanceUsd, previousStartingBalanceUsd,
+      closedTradesRetained: this.closed.length
+    };
+    this.save();
+    console.log('[PAPER BALANCE RESET]', JSON.stringify(this.account[migration]));
   }
 
   applyRequestedPaperCorrection() {
