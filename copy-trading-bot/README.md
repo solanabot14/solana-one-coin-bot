@@ -37,7 +37,8 @@ Environment variables:
 - `COPY_POLL_MS=15000`
 - `COPY_MIN_ACTIVITY_VOLUME_5M_USD=2000` (required 5-minute token volume before copying a buy)
 - `COPY_MIN_ACTIVITY_SWAPS_5M=5` (required swaps in that same 5-minute window)
+- `COPY_INACTIVITY_EXIT_SEC=600` (close after 10 continuous minutes with zero volume and zero swaps)
 
-The recent-activity entry filter fails closed: if GMGN omits either 5-minute metric, the bot does not copy the buy. The active exit mode is **Follow wallet strategy**: one detected sell by the followed wallet closes that wallet's copied position for the token. If GMGN does not provide a valid current price during the sell, the event remains pending and is retried on the next signal poll. Take-profit, stop-loss, liquidity-drop, token-price, and inactivity rules do not automatically close open positions. The $100 token-price ceiling remains an entry filter; manual paper close remains available.
+The recent-activity entry filter fails closed: if GMGN omits either 5-minute metric, the bot does not copy the buy. The active exit mode is **Follow wallet strategy**: one detected sell by the followed wallet closes that wallet's copied position for the token. As a fallback, the bot also closes after `COPY_INACTIVITY_EXIT_SEC` uninterrupted seconds with both 5-minute volume and swaps at zero. Activity resumes reset the timer; missing activity data resets it too, so unknown data does not count as inactivity. Both exits require a valid current price to record the close. Take-profit, stop-loss, and liquidity-drop rules remain disabled. The $100 token-price ceiling remains an entry filter; manual paper close remains available.
 
-The previous exit settings are preserved by the `before-follow-wallet-strategy-2026-10-27-2236` git tag. Change record: **Follow wallet strategy** (also referred to as **exit wallet strategy**), Tuesday, October 27, 2026, 10:36 p.m. Puerto Rico time.
+The previous exit settings are preserved on the `before-follow-wallet-strategy-2026-10-27-2236` branch. Change record: **Follow wallet strategy** (also referred to as **exit wallet strategy**), Tuesday, October 27, 2026, 10:36 p.m. Puerto Rico time.

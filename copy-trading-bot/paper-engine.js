@@ -188,19 +188,26 @@ class PaperEngine {
   }
 
   async evaluate() {
+    const manualTargets = [];
+    try {
+      const parsedTargets = JSON.parse(process.env.COPY_MANUAL_CLOSE_POSITIONS || '[]');
+      if (Array.isArray(parsedTargets)) manualTargets.push(...parsedTargets);
+    } catch (e) { console.error('[manual close list] invalid JSON', e.message); }
     const manualWallet = process.env.COPY_MANUAL_CLOSE_WALLET;
     const manualToken = process.env.COPY_MANUAL_CLOSE_TOKEN;
-    if (manualWallet && manualToken) {
-      const manualKey = `${manualWallet}:${manualToken}`;
+    if (manualWallet && manualToken) manualTargets.push({ wallet: manualWallet, token: manualToken });
+    for (const target of manualTargets) {
+      if (typeof target?.wallet !== 'string' || typeof target?.token !== 'string') continue;
+      const manualKey = `${target.wallet}:${target.token}`;
       const manualPosition = this.positions.get(manualKey);
       if (manualPosition) {
         try {
-          const manualMarket = await this.market(manualToken);
-          if (Number.isFinite(manualMarket.price)) {
+          const manualMarket = await this.market(target.token);
+          if (Number.isFinite(manualMarket.price) && manualMarket.price > 0) {
             await this.close(manualKey, 'manual_close', manualMarket);
-            console.log('[MANUAL CLOSE EXECUTED]', JSON.stringify({ wallet: manualWallet, token: manualToken }));
+            console.log('[MANUAL CLOSE EXECUTED]', JSON.stringify({ wallet: target.wallet, token: target.token }));
           }
-        } catch (e) { console.error('[manual close]', manualToken, e.message); }
+        } catch (e) { console.error('[manual close]', target.token, e.message); }
       }
     }
 
@@ -208,14 +215,25 @@ class PaperEngine {
     for (const [key, p] of [...this.positions.entries()]) {
       try {
         const m = await this.market(p.token);
-        if (!Number.isFinite(m.price)) continue;
-        const pnlPct = ((m.price / p.entryPrice) - 1) * 100;
         const checkedAt = new Date().toISOString();
-        p.lastPrice = m.price; p.lastLiquidity = m.liquidity; p.unrealizedPnlPct = pnlPct - (Number(p.estimatedRoundTripCostPct) || 0); p.unrealizedPnlUsd = p.amountUsd * p.unrealizedPnlPct / 100; p.lastCheckedAt = checkedAt; changed = true;
-        if (m.activity5m) {
+        if (!m.activity5m) {
+          if (p.inactiveSinceAt) { p.inactiveSinceAt = null; changed = true; }
+        } else {
           p.recentVolume5mUsd = m.activity5m.volumeUsd;
           p.recentSwaps5m = m.activity5m.swaps;
-          if (m.activity5m.swaps > 0 || m.activity5m.volumeUsd > 0) p.lastActivityAt = checkedAt;
+          if (m.activity5m.volumeUsd === 0 && m.activity5m.swaps === 0) {
+            if (!p.inactiveSinceAt) p.inactiveSinceAt = checkedAt;
+          } else {
+            p.lastActivityAt = checkedAt;
+            p.inactiveSinceAt = null;
+          }
+          changed = true;
+        }
+        if (!Number.isFinite(m.price) || m.price <= 0) { if (p.inactiveSinceAt) changed = true; continue; }
+        const pnlPct = ((m.price / p.entryPrice) - 1) * 100;
+        p.lastPrice = m.price; p.lastLiquidity = m.liquidity; p.unrealizedPnlPct = pnlPct - (Number(p.estimatedRoundTripCostPct) || 0); p.unrealizedPnlUsd = p.amountUsd * p.unrealizedPnlPct / 100; p.lastCheckedAt = checkedAt; changed = true;
+        if (p.inactiveSinceAt && Date.now() - Date.parse(p.inactiveSinceAt) >= config.inactivityExitSec * 1000) {
+          await this.close(key, 'sustained_inactivity', m);
         }
       } catch (e) { console.error('[evaluate]', p.token, e.message); }
     }

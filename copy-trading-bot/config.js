@@ -16,6 +16,7 @@ module.exports = Object.freeze({
   maxSignalAgeSec: Number(process.env.COPY_MAX_SIGNAL_AGE_SEC || 60),
   minActivityVolume5mUsd: Number(process.env.COPY_MIN_ACTIVITY_VOLUME_5M_USD || 2000),
   minActivitySwaps5m: Number(process.env.COPY_MIN_ACTIVITY_SWAPS_5M || 5),
+  inactivityExitSec: Number(process.env.COPY_INACTIVITY_EXIT_SEC || 600),
   copySuspendMinTrades: Number(process.env.COPY_SUSPEND_MIN_TRADES || 4),
   copySuspendLossStreak: Number(process.env.COPY_SUSPEND_LOSS_STREAK || 3),
   copySuspendWinRatePct: Number(process.env.COPY_SUSPEND_WIN_RATE_PCT || 25),
