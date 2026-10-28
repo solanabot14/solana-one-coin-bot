@@ -7,6 +7,9 @@ const { runGmgn, firstNumber, firstString } = require('./gmgn');
 
 const stateFile = process.env.COPY_STATE_FILE || path.join(__dirname, 'paper-state.json');
 
+const configuredMaxTokenPriceUsd = Number(process.env.COPY_MAX_TOKEN_PRICE_USD);
+const maxTokenPriceUsd = Number.isFinite(configuredMaxTokenPriceUsd) && configuredMaxTokenPriceUsd > 0 ? configuredMaxTokenPriceUsd : 100;
+
 class PaperEngine {
   constructor() {
     this.positions = new Map();
@@ -113,6 +116,10 @@ class PaperEngine {
     }
     const m = await this.market(token);
     if (!Number.isFinite(m.price) || m.price <= 0) return null;
+    if (m.price > maxTokenPriceUsd) {
+      console.log('[PAPER BUY BLOCKED - TOKEN PRICE ABOVE LIMIT]', JSON.stringify({ token, wallet, priceUsd: m.price, maxTokenPriceUsd }));
+      return null;
+    }
     const p = {
       wallet, token, symbol: m.symbol, signalId, signalAt, mode: 'paper', amountUsd: config.paperTradeUsd,
       entryPrice: m.price, entryLiquidity: m.liquidity, lastPrice: m.price, lastLiquidity: m.liquidity,
@@ -193,7 +200,8 @@ class PaperEngine {
         if (!Number.isFinite(m.price)) continue;
         const pnlPct = ((m.price / p.entryPrice) - 1) * 100;
         p.lastPrice = m.price; p.lastLiquidity = m.liquidity; p.unrealizedPnlPct = pnlPct - (Number(p.estimatedRoundTripCostPct) || 0); p.unrealizedPnlUsd = p.amountUsd * p.unrealizedPnlPct / 100; p.lastCheckedAt = new Date().toISOString(); changed = true;
-        if (pnlPct >= config.takeProfitPct) await this.close(key, 'take_profit', m);
+        if (m.price > maxTokenPriceUsd) await this.close(key, 'token_price_limit', m);
+        else if (pnlPct >= config.takeProfitPct) await this.close(key, 'take_profit', m);
         else if (pnlPct <= -config.stopLossPct) await this.close(key, 'stop_loss', m);
         else if (Number.isFinite(p.entryLiquidity) && Number.isFinite(m.liquidity) && m.liquidity <= p.entryLiquidity * (1 - config.liquidityExitDropPct / 100)) await this.close(key, 'liquidity_drop', m);
       } catch (e) { console.error('[evaluate]', p.token, e.message); }
