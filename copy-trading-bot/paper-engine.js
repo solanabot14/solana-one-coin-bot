@@ -11,7 +11,9 @@ const configuredMaxTokenPriceUsd = Number(process.env.COPY_MAX_TOKEN_PRICE_USD);
 const maxTokenPriceUsd = Number.isFinite(configuredMaxTokenPriceUsd) && configuredMaxTokenPriceUsd > 0 ? configuredMaxTokenPriceUsd : 100;
 
 class PaperEngine {
-  constructor() {
+  constructor({ marketFetcher } = {}) {
+    this.marketFetcher = marketFetcher || (token => runGmgn(['token','info','--chain',config.chain,'--address',token]));
+    this.activityDiagnostics = { rejected: 0, unavailable: 0 };
     this.positions = new Map();
     this.closed = [];
     this.account = null;
@@ -97,8 +99,15 @@ class PaperEngine {
   }
 
   async market(token) {
-    const info = await runGmgn(['token','info','--chain',config.chain,'--address',token]);
-    return { symbol: firstString(info, ['symbol','token_symbol','name']) || token.slice(0, 6), price: firstNumber(info, ['price','price_usd','priceUsd','usd_price']), liquidity: firstNumber(info, ['liquidity','liquidity_usd','liquidityUsd']) };
+    const info = await this.marketFetcher(token);
+    const volume5mUsd = firstNumber(info, ['volume_5m_usd','volume5mUsd','volume_5m','volume5m','volume_5m_usd_value','vol_5m_usd']);
+    const swaps5m = firstNumber(info, ['swaps_5m','swaps5m','swap_count_5m','swapCount5m','trade_count_5m','tradeCount5m','tx_count_5m','txCount5m','trades_5m','trades5m']);
+    return {
+      symbol: firstString(info, ['symbol','token_symbol','name']) || token.slice(0, 6),
+      price: firstNumber(info, ['price','price_usd','priceUsd','usd_price']),
+      liquidity: firstNumber(info, ['liquidity','liquidity_usd','liquidityUsd']),
+      activity5m: Number.isFinite(volume5mUsd) && Number.isFinite(swaps5m) ? { volumeUsd: volume5mUsd, swaps: swaps5m } : null
+    };
   }
 
   async open(wallet, token, signalId, signalAt = null) {
@@ -116,6 +125,16 @@ class PaperEngine {
     }
     const m = await this.market(token);
     if (!Number.isFinite(m.price) || m.price <= 0) return null;
+    if (!m.activity5m) {
+      this.activityDiagnostics.unavailable++;
+      console.log('[PAPER BUY BLOCKED - ACTIVITY DATA UNAVAILABLE]', JSON.stringify({ token, wallet }));
+      return null;
+    }
+    if (m.activity5m.volumeUsd < config.minActivityVolume5mUsd || m.activity5m.swaps < config.minActivitySwaps5m) {
+      this.activityDiagnostics.rejected++;
+      console.log('[PAPER BUY BLOCKED - INSUFFICIENT RECENT ACTIVITY]', JSON.stringify({ token, wallet, activity5m: m.activity5m, minimumVolumeUsd: config.minActivityVolume5mUsd, minimumSwaps: config.minActivitySwaps5m }));
+      return null;
+    }
     if (m.price > maxTokenPriceUsd) {
       console.log('[PAPER BUY BLOCKED - TOKEN PRICE ABOVE LIMIT]', JSON.stringify({ token, wallet, priceUsd: m.price, maxTokenPriceUsd }));
       return null;
@@ -123,6 +142,8 @@ class PaperEngine {
     const p = {
       wallet, token, symbol: m.symbol, signalId, signalAt, mode: 'paper', amountUsd: config.paperTradeUsd,
       entryPrice: m.price, entryLiquidity: m.liquidity, lastPrice: m.price, lastLiquidity: m.liquidity,
+      recentVolume5mUsd: m.activity5m.volumeUsd, recentSwaps5m: m.activity5m.swaps,
+      lastActivityAt: new Date().toISOString(), inactiveSinceAt: null,
       unrealizedPnlPct: -3.7, unrealizedPnlUsd: -config.paperTradeUsd * 0.037, leaderSellSignals: 0, firstLeaderSellAt: null, lastLeaderSellAt: null,
       estimatedRoundTripCostPct: 3.7,
       openedAt: new Date().toISOString(), lastCheckedAt: new Date().toISOString()
@@ -199,11 +220,23 @@ class PaperEngine {
         const m = await this.market(p.token);
         if (!Number.isFinite(m.price)) continue;
         const pnlPct = ((m.price / p.entryPrice) - 1) * 100;
-        p.lastPrice = m.price; p.lastLiquidity = m.liquidity; p.unrealizedPnlPct = pnlPct - (Number(p.estimatedRoundTripCostPct) || 0); p.unrealizedPnlUsd = p.amountUsd * p.unrealizedPnlPct / 100; p.lastCheckedAt = new Date().toISOString(); changed = true;
+        const checkedAt = new Date().toISOString();
+        p.lastPrice = m.price; p.lastLiquidity = m.liquidity; p.unrealizedPnlPct = pnlPct - (Number(p.estimatedRoundTripCostPct) || 0); p.unrealizedPnlUsd = p.amountUsd * p.unrealizedPnlPct / 100; p.lastCheckedAt = checkedAt; changed = true;
+        if (m.activity5m) {
+          p.recentVolume5mUsd = m.activity5m.volumeUsd;
+          p.recentSwaps5m = m.activity5m.swaps;
+          if (m.activity5m.swaps > 0 || m.activity5m.volumeUsd > 0) {
+            p.lastActivityAt = checkedAt;
+            p.inactiveSinceAt = null;
+          } else if (!p.inactiveSinceAt) {
+            p.inactiveSinceAt = checkedAt;
+          }
+        }
         if (m.price > maxTokenPriceUsd) await this.close(key, 'token_price_limit', m);
         else if (pnlPct >= config.takeProfitPct) await this.close(key, 'take_profit', m);
         else if (pnlPct <= -config.stopLossPct) await this.close(key, 'stop_loss', m);
         else if (Number.isFinite(p.entryLiquidity) && Number.isFinite(m.liquidity) && m.liquidity <= p.entryLiquidity * (1 - config.liquidityExitDropPct / 100)) await this.close(key, 'liquidity_drop', m);
+        else if (m.activity5m && m.activity5m.swaps === 0 && m.activity5m.volumeUsd === 0 && p.inactiveSinceAt && Date.now() - Date.parse(p.inactiveSinceAt) >= config.inactivityExitSec * 1000) await this.close(key, 'sustained_inactivity', m);
       } catch (e) { console.error('[evaluate]', p.token, e.message); }
     }
     if (changed) this.save();
@@ -224,6 +257,7 @@ class PaperEngine {
     return {
       mode: 'paper', paperTradeUsd: config.paperTradeUsd, startingBalanceUsd: this.account.startingBalanceUsd,
       cashBalanceUsd, committedCapitalUsd, equityUsd, accountInitializedAt: this.account.initializedAt,
+      activityDiagnostics: { ...this.activityDiagnostics },
       openPositions, closedTrades, walletPerformance: this.allWalletPerformance(),
       metrics: {
         openPositions: openPositions.length, closedTrades: accountClosed.length, wins, losses,

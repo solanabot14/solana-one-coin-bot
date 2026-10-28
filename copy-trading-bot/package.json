@@ -6,7 +6,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "node index.js",
-    "discover": "node wallet-finder.js"
+    "discover": "node wallet-finder.js",
+    "test": "node --test"
   },
   "dependencies": {
     "gmgn-cli": "latest"

@@ -37,5 +37,10 @@ Environment variables:
 - `COPY_STOP_LOSS_PCT=12`
 - `COPY_MAX_OPEN_POSITIONS=3`
 - `COPY_POLL_MS=15000`
+- `COPY_MIN_ACTIVITY_VOLUME_5M_USD=2000` (required 5-minute token volume before copying a buy)
+- `COPY_MIN_ACTIVITY_SWAPS_5M=5` (required swaps in that same 5-minute window)
+- `COPY_INACTIVITY_EXIT_SEC=600` (close after 10 uninterrupted minutes with zero volume and zero swaps in the rolling 5-minute market data)
+
+The recent-activity entry filter fails closed: if GMGN omits either 5-minute metric, the bot does not copy the buy. For open positions, an inactivity timer starts when both metrics report zero and resets as soon as either reports activity. The bot exits with `sustained_inactivity` after the configured period; it still needs a valid current price from GMGN to record the exit.
 
 The exit rules are intentionally isolated in `config.js` so they can be changed after paper-trade evidence without touching wallet discovery.
