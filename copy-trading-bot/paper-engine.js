@@ -129,10 +129,13 @@ class PaperEngine {
     if (!Number.isFinite(m.price) || m.price <= 0) return null;
     if (!m.activity5m) {
       this.activityDiagnostics.unavailable++;
-      console.log('[PAPER BUY - ACTIVITY DATA UNAVAILABLE; WALLET BUY SIGNAL ACCEPTED]', JSON.stringify({ token, wallet }));
-    } else if (m.activity5m.volumeUsd < config.minActivityVolume5mUsd || m.activity5m.swaps < config.minActivitySwaps5m) {
+      console.log('[PAPER BUY BLOCKED - ACTIVITY DATA UNAVAILABLE]', JSON.stringify({ token, wallet }));
+      return null;
+    }
+    if (m.activity5m.volumeUsd < config.minActivityVolume5mUsd || m.activity5m.swaps < config.minActivitySwaps5m) {
       this.activityDiagnostics.rejected++;
-      console.log('[PAPER BUY - LOW TOKEN ACTIVITY; WALLET BUY SIGNAL ACCEPTED]', JSON.stringify({ token, wallet, activity5m: m.activity5m }));
+      console.log('[PAPER BUY BLOCKED - LOW TOKEN ACTIVITY]', JSON.stringify({ token, wallet, activity5m: m.activity5m, minVolume5mUsd: config.minActivityVolume5mUsd, minSwaps5m: config.minActivitySwaps5m }));
+      return null;
     }
     if (!Number.isFinite(m.liquidity) || m.liquidity < config.minLiquidityUsd) {
       this.activityDiagnostics.lowLiquidity++;
