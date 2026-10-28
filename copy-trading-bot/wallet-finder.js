@@ -9,9 +9,9 @@ const WALLET_KEYS = ['wallet_address','wallet','address','trader_address','trade
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const stateDir = path.dirname(process.env.COPY_STATE_FILE || path.join(__dirname, 'paper-state.json'));
 const poolFile = process.env.COPY_WALLET_POOL_FILE || path.join(stateDir, 'copy-wallet-pool.json');
-const POOL_RETENTION_MS = Number(process.env.COPY_WALLET_POOL_RETENTION_MS || 6 * 60 * 60 * 1000);
+const POOL_RETENTION_MS = Number(process.env.COPY_WALLET_POOL_RETENTION_MS || 2 * 60 * 60 * 1000);
 const MAX_NEW_PER_REFRESH = Number(process.env.COPY_WALLET_POOL_MAX_NEW_PER_REFRESH || 2);
-let lastDiagnostics = { candidates: 0, mapped7d: 0, mapped30d: 0, rejectedMissingStats: 0, rejectedTradeCount: 0, rejectedWinRate: 0, approved: 0, retained: 0, added: 0, removed: 0 };
+let lastDiagnostics = { candidates: 0, mapped7d: 0, mapped30d: 0, rejectedMissingStats: 0, rejectedTradeCount: 0, rejectedWinRate: 0, rejectedProfitability: 0, approved: 0, retained: 0, added: 0, removed: 0 };
 
 function looksLikeSolanaAddress(v) {
   return typeof v === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v);
@@ -98,7 +98,7 @@ async function discoverWallets() {
   const feed = await runGmgn(['track','smartmoney','--chain',config.chain,'--side','buy','--limit',String(config.smartMoneyLimit)]);
   const candidates = extractWallets(feed).slice(0, 20);
   const candidateSet = new Set(candidates);
-  lastDiagnostics = { candidates: candidates.length, mapped7d: 0, mapped30d: 0, rejectedMissingStats: 0, rejectedTradeCount: 0, rejectedWinRate: 0, approved: 0, retained: 0, added: 0, removed: 0 };
+  lastDiagnostics = { candidates: candidates.length, mapped7d: 0, mapped30d: 0, rejectedMissingStats: 0, rejectedTradeCount: 0, rejectedWinRate: 0, rejectedProfitability: 0, approved: 0, retained: 0, added: 0, removed: 0 };
   if (!candidates.length) {
     const retained = loadPool().filter(w => Date.now() - Date.parse(w.lastQualifiedAt || w.addedAt || 0) <= POOL_RETENTION_MS).slice(0, config.maxWallets);
     lastDiagnostics.retained = retained.length;
@@ -130,11 +130,18 @@ async function discoverWallets() {
       continue;
     }
 
+    const pnl30 = firstNumber(thirty, ['realized_profit','realizedProfit','total_profit','totalProfit','pnl','profit']);
+    if (!Number.isFinite(pnl30) || pnl30 <= 0) {
+      lastDiagnostics.rejectedProfitability++;
+      failedCurrentCandidates.add(wallet);
+      continue;
+    }
+
     thirtyDayQualified.push({
       wallet,
       win30,
       trades30,
-      pnl30: firstNumber(thirty, ['realized_profit','realizedProfit','total_profit','totalProfit','pnl','profit'])
+      pnl30
     });
   }
 
