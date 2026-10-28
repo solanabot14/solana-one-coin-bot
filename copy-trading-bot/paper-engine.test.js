@@ -9,6 +9,7 @@ const path = require('node:path');
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copy-paper-engine-'));
 process.env.COPY_STATE_FILE = path.join(tempDir, 'state.json');
 process.env.COPY_INACTIVITY_EXIT_SEC = '600';
+process.env.COPY_MAX_HOLDING_SEC = '3600';
 const PaperEngine = require('./paper-engine');
 beforeEach(() => {
   fs.rmSync(process.env.COPY_STATE_FILE, { force: true });
@@ -97,6 +98,15 @@ test('exits after ten continuous minutes of zero activity and resets when activi
   await engine.evaluate();
   assert.equal(engine.hasPosition(wallet, token), false);
   assert.equal(engine.closed.at(-1).reason, 'sustained_inactivity');
+});
+
+test('exits at the maximum holding time even when the market still reports activity', async () => {
+  const engine = new PaperEngine({ marketFetcher: async () => activeMarket() });
+  assert.ok(await engine.open(wallet, token, 'active'));
+  engine.getPosition(wallet, token).openedAt = new Date(Date.now() - 3_605_000).toISOString();
+  await engine.evaluate();
+  assert.equal(engine.hasPosition(wallet, token), false);
+  assert.equal(engine.closed.at(-1).reason, 'max_holding_time');
 });
 
 test('missing activity data resets the inactivity timer instead of forcing an exit', async () => {
