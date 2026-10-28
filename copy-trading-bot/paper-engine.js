@@ -175,26 +175,16 @@ class PaperEngine {
   async leaderSold(wallet, token, signalId, signalAt = null) {
     const key = `${wallet}:${token}`;
     const p = this.positions.get(key);
-    if (!p) return;
-    const m = await this.market(token);
-    if (!Number.isFinite(m.price)) return;
+    if (!p) return true;
     const nowMs = signalAt ? new Date(signalAt).getTime() : Date.now();
     const openedMs = new Date(p.openedAt).getTime();
-    if (Number.isFinite(nowMs) && Number.isFinite(openedMs) && nowMs < openedMs - 5000) return;
-    const lastSellMs = p.lastLeaderSellAt ? new Date(p.lastLeaderSellAt).getTime() : null;
-    const withinWindow = Number.isFinite(lastSellMs) && (nowMs - lastSellMs) <= config.leaderSellConfirmWindowSec * 1000;
-    p.leaderSellSignals = withinWindow ? (Number(p.leaderSellSignals) || 0) + 1 : 1;
-    p.firstLeaderSellAt = withinWindow && p.firstLeaderSellAt ? p.firstLeaderSellAt : new Date(nowMs).toISOString();
-    p.lastLeaderSellAt = new Date(nowMs).toISOString();
-    p.lastLeaderSellSignalId = signalId || null;
-    p.lastLeaderSellPrice = m.price;
-    const pnlPct = ((m.price / p.entryPrice) - 1) * 100;
-    const liqDropPct = Number.isFinite(p.entryLiquidity) && p.entryLiquidity > 0 && Number.isFinite(m.liquidity) ? (1 - m.liquidity / p.entryLiquidity) * 100 : 0;
-    const confirmedDump = p.leaderSellSignals >= config.leaderSellConfirmCount || pnlPct <= config.leaderDumpPnlPct || liqDropPct >= config.leaderDumpLiquidityDropPct;
-    if (confirmedDump) return this.close(key, 'leader_dump', m);
-    p.lastPrice = m.price; p.lastLiquidity = m.liquidity; p.unrealizedPnlPct = pnlPct - (Number(p.estimatedRoundTripCostPct) || 0); p.unrealizedPnlUsd = p.amountUsd * p.unrealizedPnlPct / 100; p.lastCheckedAt = new Date().toISOString();
-    this.save();
-    console.log('[LEADER PARTIAL SELL]', JSON.stringify({ wallet, token, signalId, pnlPct, liqDropPct, leaderSellSignals: p.leaderSellSignals }));
+    if (Number.isFinite(nowMs) && Number.isFinite(openedMs) && nowMs < openedMs - 5000) return true;
+    const m = await this.market(token);
+    if (!Number.isFinite(m.price) || m.price <= 0) {
+      console.log('[LEADER SELL EXIT RETRY]', JSON.stringify({ wallet, token, signalId, reason: 'valid_exit_price_unavailable' }));
+      return false;
+    }
+    return Boolean(await this.close(key, 'followed_wallet_sold', m));
   }
 
   async evaluate() {
@@ -218,34 +208,16 @@ class PaperEngine {
     for (const [key, p] of [...this.positions.entries()]) {
       try {
         const m = await this.market(p.token);
-        if (!Number.isFinite(m.price)) {
-          if (p.inactiveSinceAt) { p.inactiveSinceAt = null; changed = true; }
-          continue;
-        }
+        if (!Number.isFinite(m.price)) continue;
         const pnlPct = ((m.price / p.entryPrice) - 1) * 100;
         const checkedAt = new Date().toISOString();
         p.lastPrice = m.price; p.lastLiquidity = m.liquidity; p.unrealizedPnlPct = pnlPct - (Number(p.estimatedRoundTripCostPct) || 0); p.unrealizedPnlUsd = p.amountUsd * p.unrealizedPnlPct / 100; p.lastCheckedAt = checkedAt; changed = true;
         if (m.activity5m) {
           p.recentVolume5mUsd = m.activity5m.volumeUsd;
           p.recentSwaps5m = m.activity5m.swaps;
-          if (m.activity5m.swaps > 0 || m.activity5m.volumeUsd > 0) {
-            p.lastActivityAt = checkedAt;
-            p.inactiveSinceAt = null;
-          } else if (!p.inactiveSinceAt) {
-            p.inactiveSinceAt = checkedAt;
-          }
-        } else if (p.inactiveSinceAt) {
-          p.inactiveSinceAt = null;
+          if (m.activity5m.swaps > 0 || m.activity5m.volumeUsd > 0) p.lastActivityAt = checkedAt;
         }
-        if (m.price > maxTokenPriceUsd) await this.close(key, 'token_price_limit', m);
-        else if (pnlPct >= config.takeProfitPct) await this.close(key, 'take_profit', m);
-        else if (pnlPct <= -config.stopLossPct) await this.close(key, 'stop_loss', m);
-        else if (Number.isFinite(p.entryLiquidity) && Number.isFinite(m.liquidity) && m.liquidity <= p.entryLiquidity * (1 - config.liquidityExitDropPct / 100)) await this.close(key, 'liquidity_drop', m);
-        else if (m.activity5m && m.activity5m.swaps === 0 && m.activity5m.volumeUsd === 0 && p.inactiveSinceAt && Date.now() - Date.parse(p.inactiveSinceAt) >= config.inactivityExitSec * 1000) await this.close(key, 'sustained_inactivity', m);
-      } catch (e) {
-        if (p.inactiveSinceAt) { p.inactiveSinceAt = null; changed = true; }
-        console.error('[evaluate]', p.token, e.message);
-      }
+      } catch (e) { console.error('[evaluate]', p.token, e.message); }
     }
     if (changed) this.save();
   }

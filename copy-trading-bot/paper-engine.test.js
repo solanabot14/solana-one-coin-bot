@@ -9,7 +9,6 @@ const path = require('node:path');
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copy-paper-engine-'));
 process.env.COPY_STATE_FILE = path.join(tempDir, 'state.json');
 const PaperEngine = require('./paper-engine');
-const config = require('./config');
 beforeEach(() => fs.rmSync(process.env.COPY_STATE_FILE, { force: true }));
 after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
 
@@ -20,12 +19,6 @@ const activeMarket = () => ({
   symbol: 'TEST',
   liquidity: '50000',
   price: { price: '1', volume_5m: '2500', swaps_5m: 8 }
-});
-const idleMarket = () => ({
-  address: token,
-  symbol: 'TEST',
-  liquidity: '50000',
-  price: { price: '1', volume_5m: '0', swaps_5m: 0 }
 });
 
 test('reads GMGN 5-minute volume and swaps from nested price data', async () => {
@@ -59,41 +52,28 @@ test('blocks entry when activity metrics are missing', async () => {
   assert.equal(engine.activityDiagnostics.unavailable, 1);
 });
 
-test('starts and resets the sustained inactivity timer, then exits after the configured duration', async () => {
-  let marketSnapshot = activeMarket;
-  const engine = new PaperEngine({ marketFetcher: async () => marketSnapshot() });
-  const position = await engine.open(wallet, token, 'active');
-  assert.ok(position);
-
-  marketSnapshot = idleMarket;
-  await engine.evaluate();
-  const opened = engine.getPosition(wallet, token);
-  assert.ok(opened.inactiveSinceAt);
-
-  opened.inactiveSinceAt = new Date(Date.now() - (config.inactivityExitSec + 5) * 1000).toISOString();
-  marketSnapshot = activeMarket;
-  await engine.evaluate();
-  assert.equal(engine.getPosition(wallet, token).inactiveSinceAt, null);
-
-  marketSnapshot = idleMarket;
-  await engine.evaluate();
-  engine.getPosition(wallet, token).inactiveSinceAt = new Date(Date.now() - (config.inactivityExitSec + 5) * 1000).toISOString();
-  await engine.evaluate();
-  assert.equal(engine.hasPosition(wallet, token), false);
-  assert.equal(engine.closed.at(-1).reason, 'sustained_inactivity');
-});
-
-test('does not count missing market data as sustained inactivity', async () => {
+test('Follow wallet strategy ignores price, liquidity, and inactivity changes until leader sells', async () => {
   let marketSnapshot = activeMarket;
   const engine = new PaperEngine({ marketFetcher: async () => marketSnapshot() });
   assert.ok(await engine.open(wallet, token, 'active'));
-  marketSnapshot = idleMarket;
-  await engine.evaluate();
-  const position = engine.getPosition(wallet, token);
-  position.inactiveSinceAt = new Date(Date.now() - (config.inactivityExitSec + 5) * 1000).toISOString();
 
-  marketSnapshot = () => ({ symbol: 'TEST', price: { price: '1' } });
+  marketSnapshot = () => ({ symbol: 'TEST', liquidity: '1', price: { price: '200', volume_5m: '0', swaps_5m: 0 } });
   await engine.evaluate();
   assert.equal(engine.hasPosition(wallet, token), true);
-  assert.equal(engine.getPosition(wallet, token).inactiveSinceAt, null);
+  assert.equal(engine.closed.length, 0);
+});
+
+test('closes on the first followed-wallet sell, and retries if the exit price is unavailable', async () => {
+  let marketSnapshot = activeMarket;
+  const engine = new PaperEngine({ marketFetcher: async () => marketSnapshot() });
+  assert.ok(await engine.open(wallet, token, 'active'));
+
+  marketSnapshot = () => ({ symbol: 'TEST', price: { price: '0' } });
+  assert.equal(await engine.leaderSold(wallet, token, 'sell-1'), false);
+  assert.equal(engine.hasPosition(wallet, token), true);
+
+  marketSnapshot = () => ({ symbol: 'TEST', liquidity: '40000', price: { price: '0.8' } });
+  assert.equal(await engine.leaderSold(wallet, token, 'sell-1'), true);
+  assert.equal(engine.hasPosition(wallet, token), false);
+  assert.equal(engine.closed.at(-1).reason, 'followed_wallet_sold');
 });
