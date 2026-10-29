@@ -106,7 +106,7 @@ class PaperEngine {
     let consecutiveLosses = 0;
     for (let i = trades.length - 1; i >= 0; i--) { if (Number(trades[i].pnlUsd) < 0) consecutiveLosses++; else break; }
     const winRate = trades.length ? wins / trades.length * 100 : null;
-    const repeatedLosses = losses >= 3 && realizedPnlUsd < 0;
+    const repeatedLosses = losses >= 3;
     const acuteLosses = trades.length >= 4 && realizedPnlUsd < 0 && (
       consecutiveLosses >= config.copySuspendLossStreak || (Number.isFinite(winRate) && winRate < config.copySuspendWinRatePct)
     );
@@ -148,6 +148,13 @@ class PaperEngine {
       return null;
     }
     const m = await this.market(token);
+    if (signalAt) {
+      const signalAgeSec = (Date.now() - Date.parse(signalAt)) / 1000;
+      if (!Number.isFinite(signalAgeSec) || signalAgeSec < -15 || signalAgeSec > config.maxSignalAgeSec) {
+        console.log('[PAPER BUY BLOCKED - SIGNAL AGED DURING MARKET CHECK]', JSON.stringify({ token, wallet, signalAt, signalAgeSec, maxSignalAgeSec: config.maxSignalAgeSec }));
+        return null;
+      }
+    }
     if (!Number.isFinite(m.price) || m.price <= 0) return null;
     if (!m.activity5m) {
       this.activityDiagnostics.unavailable++;
@@ -161,7 +168,8 @@ class PaperEngine {
     }
     if (!Number.isFinite(m.liquidity) || m.liquidity < config.minLiquidityUsd) {
       this.activityDiagnostics.lowLiquidity++;
-      console.log('[PAPER BUY - LOW OR UNKNOWN LIQUIDITY; WALLET BUY SIGNAL ACCEPTED]', JSON.stringify({ token, wallet, liquidityUsd:m.liquidity, configuredMinimumLiquidityUsd:config.minLiquidityUsd }));
+      console.log('[PAPER BUY BLOCKED - LOW OR UNKNOWN LIQUIDITY]', JSON.stringify({ token, wallet, liquidityUsd:m.liquidity, configuredMinimumLiquidityUsd:config.minLiquidityUsd }));
+      return null;
     }
     if (m.price > maxTokenPriceUsd) {
       console.log('[PAPER BUY BLOCKED - TOKEN PRICE ABOVE LIMIT]', JSON.stringify({ token, wallet, priceUsd: m.price, maxTokenPriceUsd }));
