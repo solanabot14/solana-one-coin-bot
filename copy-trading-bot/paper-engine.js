@@ -9,6 +9,7 @@ const stateFile = process.env.COPY_STATE_FILE || path.join(__dirname, 'paper-sta
 
 const configuredMaxTokenPriceUsd = Number(process.env.COPY_MAX_TOKEN_PRICE_USD);
 const maxTokenPriceUsd = Number.isFinite(configuredMaxTokenPriceUsd) && configuredMaxTokenPriceUsd > 0 ? configuredMaxTokenPriceUsd : 100;
+const excludedTokenMints = new Set(['So11111111111111111111111111111111111111112']);
 
 class PaperEngine {
   constructor({ marketFetcher } = {}) {
@@ -135,6 +136,10 @@ class PaperEngine {
   }
 
   async open(wallet, token, signalId, signalAt = null) {
+    if (excludedTokenMints.has(token)) {
+      console.log('[PAPER BUY BLOCKED - BASE/QUOTE ASSET]', JSON.stringify({ token, wallet }));
+      return null;
+    }
     if (this.positions.size >= config.maxOpenPositions) return null;
     if (this.isWalletSuspended(wallet)) { console.log('[COPY WALLET SUSPENDED]', wallet, JSON.stringify(this.walletPerformance(wallet))); return null; }
     if ((Number(this.account.cashBalanceUsd) || 0) < config.paperTradeUsd) {
@@ -147,8 +152,19 @@ class PaperEngine {
       console.log('[PAPER BUY BLOCKED - TOKEN ALREADY OPEN]', JSON.stringify({ token, requestedWallet: wallet, existingWallets: existing }));
       return null;
     }
+    const cooldownMs = config.tokenCooldownSec * 1000;
+    const recentCopy = this.closed.find(t => t.token === token && Number.isFinite(Date.parse(t.closedAt)) && Date.now() - Date.parse(t.closedAt) < cooldownMs);
+    if (recentCopy) {
+      console.log('[PAPER BUY BLOCKED - TOKEN COOLDOWN]', JSON.stringify({ token, wallet, closedAt: recentCopy.closedAt, cooldownSec: config.tokenCooldownSec }));
+      return null;
+    }
     const m = await this.market(token);
     if (!Number.isFinite(m.price) || m.price <= 0) return null;
+    if (config.minLiquidityUsd > 0 && (!Number.isFinite(m.liquidity) || m.liquidity < config.minLiquidityUsd)) {
+      this.activityDiagnostics.lowLiquidity++;
+      console.log('[PAPER BUY BLOCKED - LOW LIQUIDITY]', JSON.stringify({ token, wallet, liquidityUsd: m.liquidity, minLiquidityUsd: config.minLiquidityUsd }));
+      return null;
+    }
     if (config.minActivityVolume5mUsd > 0 || config.minActivitySwaps5m > 0) {
       if (!m.activity5m) {
         this.activityDiagnostics.unavailable++;
@@ -262,13 +278,13 @@ class PaperEngine {
           await this.close(key, 'take_profit', m);
           continue;
         }
-        if (config.stopLossPct > 0 && p.unrealizedPnlPct <= -config.stopLossPct) {
-          await this.close(key, 'stop_loss', m);
-          continue;
-        }
         if (config.liquidityExitDropPct > 0 && Number.isFinite(Number(p.entryLiquidity)) && Number.isFinite(m.liquidity) &&
             m.liquidity <= Number(p.entryLiquidity) * (1 - config.liquidityExitDropPct / 100)) {
           await this.close(key, 'liquidity_drop', m);
+          continue;
+        }
+        if (config.stopLossPct > 0 && p.unrealizedPnlPct <= -config.stopLossPct) {
+          await this.close(key, 'stop_loss', m);
           continue;
         }
         const heldMs = Date.now() - Date.parse(p.openedAt);
