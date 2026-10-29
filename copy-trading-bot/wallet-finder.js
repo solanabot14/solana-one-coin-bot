@@ -11,7 +11,7 @@ const stateDir = path.dirname(process.env.COPY_STATE_FILE || path.join(__dirname
 const poolFile = process.env.COPY_WALLET_POOL_FILE || path.join(stateDir, 'copy-wallet-pool.json');
 const POOL_RETENTION_MS = Number(process.env.COPY_WALLET_POOL_RETENTION_MS || 2 * 60 * 60 * 1000);
 const MAX_NEW_PER_REFRESH = Number(process.env.COPY_WALLET_POOL_MAX_NEW_PER_REFRESH || 2);
-let lastDiagnostics = { candidates: 0, mapped7d: 0, mapped30d: 0, rejectedMissingStats: 0, rejectedTradeCount: 0, rejectedWinRate: 0, rejectedProfitability: 0, approved: 0, retained: 0, added: 0, removed: 0 };
+let lastDiagnostics = { candidates: 0, mapped7d: 0, mapped30d: 0, rejectedMissingStats: 0, rejectedTradeCount: 0, rejectedWinRate: 0, rejectedProfitability: 0, rejectedTradeCount7d: 0, rejectedWinRate7d: 0, approved: 0, retained: 0, added: 0, removed: 0 };
 
 function looksLikeSolanaAddress(v) {
   return typeof v === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v);
@@ -99,7 +99,7 @@ async function discoverWallets({ excludedWallets = [] } = {}) {
   const feed = await runGmgn(['track','smartmoney','--chain',config.chain,'--side','buy','--limit',String(config.smartMoneyLimit)]);
   const candidates = extractWallets(feed).filter(wallet => !excluded.has(wallet)).slice(0, 20);
   const candidateSet = new Set(candidates);
-  lastDiagnostics = { candidates: candidates.length, mapped7d: 0, mapped30d: 0, rejectedMissingStats: 0, rejectedTradeCount: 0, rejectedWinRate: 0, rejectedProfitability: 0, approved: 0, retained: 0, added: 0, removed: 0 };
+  lastDiagnostics = { candidates: candidates.length, mapped7d: 0, mapped30d: 0, rejectedMissingStats: 0, rejectedTradeCount: 0, rejectedWinRate: 0, rejectedProfitability: 0, rejectedTradeCount7d: 0, rejectedWinRate7d: 0, approved: 0, retained: 0, added: 0, removed: 0 };
   if (!candidates.length) {
     const retained = loadPool().filter(w => !excluded.has(w.wallet) && Date.now() - Date.parse(w.lastQualifiedAt || w.addedAt || 0) <= POOL_RETENTION_MS).slice(0, config.maxWallets);
     lastDiagnostics.retained = retained.length;
@@ -154,7 +154,18 @@ async function discoverWallets({ excludedWallets = [] } = {}) {
       continue;
     }
     lastDiagnostics.mapped7d++;
+    const trades7 = readTradeCount(seven);
+    if (!Number.isFinite(trades7) || trades7 < config.minTrades7d) {
+      lastDiagnostics.rejectedTradeCount7d++;
+      failedCurrentCandidates.add(base.wallet);
+      continue;
+    }
     const win7 = normalizeWinRate(firstNumber(seven, ['winrate','win_rate','winRate']));
+    if (!Number.isFinite(win7) || win7 < config.minWinRate7d) {
+      lastDiagnostics.rejectedWinRate7d++;
+      failedCurrentCandidates.add(base.wallet);
+      continue;
+    }
     scored.push({
       wallet: base.wallet,
       win7,
