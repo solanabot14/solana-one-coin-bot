@@ -148,28 +148,18 @@ class PaperEngine {
       return null;
     }
     const m = await this.market(token);
-    if (signalAt) {
-      const signalAgeSec = (Date.now() - Date.parse(signalAt)) / 1000;
-      if (!Number.isFinite(signalAgeSec) || signalAgeSec < -15 || signalAgeSec > config.maxSignalAgeSec) {
-        console.log('[PAPER BUY BLOCKED - SIGNAL AGED DURING MARKET CHECK]', JSON.stringify({ token, wallet, signalAt, signalAgeSec, maxSignalAgeSec: config.maxSignalAgeSec }));
+    if (!Number.isFinite(m.price) || m.price <= 0) return null;
+    if (config.minActivityVolume5mUsd > 0 || config.minActivitySwaps5m > 0) {
+      if (!m.activity5m) {
+        this.activityDiagnostics.unavailable++;
+        console.log('[PAPER BUY BLOCKED - ACTIVITY DATA UNAVAILABLE]', JSON.stringify({ token, wallet }));
         return null;
       }
-    }
-    if (!Number.isFinite(m.price) || m.price <= 0) return null;
-    if (!m.activity5m) {
-      this.activityDiagnostics.unavailable++;
-      console.log('[PAPER BUY BLOCKED - ACTIVITY DATA UNAVAILABLE]', JSON.stringify({ token, wallet }));
-      return null;
-    }
-    if (m.activity5m.volumeUsd < config.minActivityVolume5mUsd || m.activity5m.swaps < config.minActivitySwaps5m) {
-      this.activityDiagnostics.rejected++;
-      console.log('[PAPER BUY BLOCKED - LOW TOKEN ACTIVITY]', JSON.stringify({ token, wallet, activity5m: m.activity5m, minVolume5mUsd: config.minActivityVolume5mUsd, minSwaps5m: config.minActivitySwaps5m }));
-      return null;
-    }
-    if (!Number.isFinite(m.liquidity) || m.liquidity < config.minLiquidityUsd) {
-      this.activityDiagnostics.lowLiquidity++;
-      console.log('[PAPER BUY BLOCKED - LOW OR UNKNOWN LIQUIDITY]', JSON.stringify({ token, wallet, liquidityUsd:m.liquidity, configuredMinimumLiquidityUsd:config.minLiquidityUsd }));
-      return null;
+      if (m.activity5m.volumeUsd < config.minActivityVolume5mUsd || m.activity5m.swaps < config.minActivitySwaps5m) {
+        this.activityDiagnostics.rejected++;
+        console.log('[PAPER BUY BLOCKED - LOW TOKEN ACTIVITY]', JSON.stringify({ token, wallet, activity5m: m.activity5m, minVolume5mUsd: config.minActivityVolume5mUsd, minSwaps5m: config.minActivitySwaps5m }));
+        return null;
+      }
     }
     if (m.price > maxTokenPriceUsd) {
       console.log('[PAPER BUY BLOCKED - TOKEN PRICE ABOVE LIMIT]', JSON.stringify({ token, wallet, priceUsd: m.price, maxTokenPriceUsd }));
@@ -268,8 +258,17 @@ class PaperEngine {
         if (!Number.isFinite(m.price) || m.price <= 0) { if (p.inactiveSinceAt) changed = true; continue; }
         const pnlPct = ((m.price / p.entryPrice) - 1) * 100;
         p.lastPrice = m.price; p.lastLiquidity = m.liquidity; p.unrealizedPnlPct = pnlPct - (Number(p.estimatedRoundTripCostPct) || 0); p.unrealizedPnlUsd = p.amountUsd * p.unrealizedPnlPct / 100; p.lastCheckedAt = checkedAt; changed = true;
+        if (config.takeProfitPct > 0 && p.unrealizedPnlPct >= config.takeProfitPct) {
+          await this.close(key, 'take_profit', m);
+          continue;
+        }
         if (config.stopLossPct > 0 && p.unrealizedPnlPct <= -config.stopLossPct) {
           await this.close(key, 'stop_loss', m);
+          continue;
+        }
+        if (config.liquidityExitDropPct > 0 && Number.isFinite(Number(p.entryLiquidity)) && Number.isFinite(m.liquidity) &&
+            m.liquidity <= Number(p.entryLiquidity) * (1 - config.liquidityExitDropPct / 100)) {
+          await this.close(key, 'liquidity_drop', m);
           continue;
         }
         const heldMs = Date.now() - Date.parse(p.openedAt);
@@ -277,7 +276,7 @@ class PaperEngine {
           await this.close(key, 'max_holding_time', m);
           continue;
         }
-        if (p.inactiveSinceAt && Date.now() - Date.parse(p.inactiveSinceAt) >= config.inactivityExitSec * 1000) {
+        if (config.inactivityExitSec > 0 && p.inactiveSinceAt && Date.now() - Date.parse(p.inactiveSinceAt) >= config.inactivityExitSec * 1000) {
           await this.close(key, 'sustained_inactivity', m);
         }
       } catch (e) { console.error('[evaluate]', p.token, e.message); }
