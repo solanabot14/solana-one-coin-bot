@@ -106,7 +106,7 @@ class PaperEngine {
     let consecutiveLosses = 0;
     for (let i = trades.length - 1; i >= 0; i--) { if (Number(trades[i].pnlUsd) < 0) consecutiveLosses++; else break; }
     const winRate = trades.length ? wins / trades.length * 100 : null;
-    const repeatedLosses = trades.length >= config.copySuspendMinTrades && realizedPnlUsd < 0;
+    const repeatedLosses = losses >= 3 && realizedPnlUsd < 0;
     const acuteLosses = trades.length >= 4 && realizedPnlUsd < 0 && (
       consecutiveLosses >= config.copySuspendLossStreak || (Number.isFinite(winRate) && winRate < config.copySuspendWinRatePct)
     );
