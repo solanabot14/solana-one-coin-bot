@@ -40,6 +40,7 @@ class PaperEngine {
     this.applyRequestedPaperCorrection();
     this.applyRequestedBalanceReset();
     this.applyRequestedBalanceTopUp();
+    this.applyRequestedMeasurementReset();
   }
 
   applyRequestedBalanceReset() {
@@ -63,6 +64,33 @@ class PaperEngine {
     console.log('[PAPER BALANCE RESET]', JSON.stringify(this.account[migration]));
   }
 
+
+  applyRequestedMeasurementReset() {
+    const migration = 'paper_balance_measurement_reset_20261030_v1';
+    if (this.account[migration]) return;
+    if (this.positions.size > 0) {
+      console.error('[PAPER MEASUREMENT RESET NOT APPLIED] Open positions remain', this.positions.size);
+      return;
+    }
+    try { fs.copyFileSync(stateFile, stateFile + '.before-measurement-reset-20261030'); }
+    catch (error) {
+      console.error('[PAPER MEASUREMENT RESET NOT APPLIED] Backup failed', error.message);
+      return;
+    }
+    const previousCashBalanceUsd = Number(this.account.cashBalanceUsd);
+    const previousStartingBalanceUsd = Number(this.account.startingBalanceUsd);
+    const at = new Date().toISOString();
+    this.account.startingBalanceUsd = 40;
+    this.account.cashBalanceUsd = 40;
+    this.account.initializedAt = at;
+    this.account[migration] = {
+      at, startingBalanceUsd: 40, cashBalanceUsd: 40,
+      previousCashBalanceUsd, previousStartingBalanceUsd,
+      historicalTradesRetained: this.closed.length
+    };
+    this.save();
+    console.log('[PAPER MEASUREMENT RESET]', JSON.stringify(this.account[migration]));
+  }
 
   applyRequestedBalanceTopUp() {
     const migration = 'paper_balance_topup_20261030_v1';
