@@ -11,7 +11,7 @@ const stateDir = path.dirname(process.env.COPY_STATE_FILE || path.join(__dirname
 const poolFile = process.env.COPY_WALLET_POOL_FILE || path.join(stateDir, 'copy-wallet-pool.json');
 const POOL_RETENTION_MS = Number(process.env.COPY_WALLET_POOL_RETENTION_MS || 2 * 60 * 60 * 1000);
 const MAX_NEW_PER_REFRESH = Number(process.env.COPY_WALLET_POOL_MAX_NEW_PER_REFRESH || 2);
-let lastDiagnostics = { candidates: 0, mapped7d: 0, mapped30d: 0, rejectedMissingStats: 0, rejectedTradeCount: 0, rejectedWinRate: 0, rejectedProfitability: 0, rejectedTradeCount7d: 0, rejectedWinRate7d: 0, approved: 0, retained: 0, added: 0, removed: 0 };
+let lastDiagnostics = { candidates: 0, smartMoneyCandidates: 0, kolCandidates: 0, universeCandidates: 0, mapped7d: 0, mapped30d: 0, rejectedMissingStats: 0, rejectedTradeCount: 0, rejectedWinRate: 0, rejectedProfitability: 0, rejectedTradeCount7d: 0, rejectedWinRate7d: 0, rejectedProfitability7d: 0, approved: 0, retained: 0, added: 0, removed: 0 };
 
 function looksLikeSolanaAddress(v) {
   return typeof v === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v);
@@ -54,19 +54,22 @@ function backoffMs(message) {
   return null;
 }
 
-function loadPool() {
+function loadPoolState() {
   try {
     const raw = JSON.parse(fs.readFileSync(poolFile, 'utf8'));
-    return Array.isArray(raw.wallets) ? raw.wallets.filter(w => looksLikeSolanaAddress(w.wallet)) : [];
+    return {
+      candidateCursor: Number.isSafeInteger(raw.candidateCursor) && raw.candidateCursor >= 0 ? raw.candidateCursor : 0,
+      wallets: Array.isArray(raw.wallets) ? raw.wallets.filter(w => looksLikeSolanaAddress(w.wallet)) : []
+    };
   } catch {
-    return [];
+    return { candidateCursor: 0, wallets: [] };
   }
 }
 
-function savePool(wallets) {
+function savePool(wallets, candidateCursor = 0) {
   try {
     fs.mkdirSync(path.dirname(poolFile), { recursive: true });
-    fs.writeFileSync(poolFile, JSON.stringify({ updatedAt: new Date().toISOString(), wallets }, null, 2));
+    fs.writeFileSync(poolFile, JSON.stringify({ updatedAt: new Date().toISOString(), candidateCursor, wallets }, null, 2));
   } catch (error) {
     console.error('[wallet-pool save]', error.message);
   }
@@ -96,14 +99,52 @@ async function oneWalletStats(wallet, period) {
 
 async function discoverWallets({ excludedWallets = [] } = {}) {
   const excluded = new Set(excludedWallets);
-  const feed = await runGmgn(['track','smartmoney','--chain',config.chain,'--side','buy','--limit',String(config.smartMoneyLimit)]);
-  const candidates = extractWallets(feed).filter(wallet => !excluded.has(wallet)).slice(0, 20);
+  const [smartMoneyResult, kolResult] = await Promise.allSettled([
+    runGmgn(['track','smartmoney','--chain',config.chain,'--side','buy','--limit',String(config.smartMoneyLimit)]),
+    runGmgn(['track','kol','--chain',config.chain,'--side','buy','--limit',String(config.smartMoneyLimit)])
+  ]);
+  if (smartMoneyResult.status === 'rejected') console.error('[wallet-finder] smartmoney feed failed:', smartMoneyResult.reason?.message || smartMoneyResult.reason);
+  if (kolResult.status === 'rejected') console.error('[wallet-finder] KOL feed failed:', kolResult.reason?.message || kolResult.reason);
+  if (smartMoneyResult.status === 'rejected' && kolResult.status === 'rejected') {
+    throw new Error('Both GMGN wallet feeds failed');
+  }
+
+  const previousState = loadPoolState();
+  const smartMoneyWallets = smartMoneyResult.status === 'fulfilled' ? extractWallets(smartMoneyResult.value) : [];
+  const kolWallets = kolResult.status === 'fulfilled' ? extractWallets(kolResult.value) : [];
+  const candidateUniverse = [];
+  const seenUniverse = new Set();
+  const maxSourceRows = Math.max(smartMoneyWallets.length, kolWallets.length);
+  for (let i = 0; i < maxSourceRows; i++) {
+    for (const wallet of [smartMoneyWallets[i], kolWallets[i]]) {
+      if (!wallet || excluded.has(wallet) || seenUniverse.has(wallet)) continue;
+      seenUniverse.add(wallet);
+      candidateUniverse.push(wallet);
+    }
+  }
+
+  const candidateCount = Math.min(config.walletCandidatesPerScan, candidateUniverse.length);
+  const offset = candidateUniverse.length ? previousState.candidateCursor % candidateUniverse.length : 0;
+  const candidates = Array.from({ length: candidateCount }, (_, i) => candidateUniverse[(offset + i) % candidateUniverse.length]);
+  const nextCandidateCursor = candidateUniverse.length ? (offset + candidateCount) % candidateUniverse.length : 0;
   const candidateSet = new Set(candidates);
-  lastDiagnostics = { candidates: candidates.length, mapped7d: 0, mapped30d: 0, rejectedMissingStats: 0, rejectedTradeCount: 0, rejectedWinRate: 0, rejectedProfitability: 0, rejectedTradeCount7d: 0, rejectedWinRate7d: 0, approved: 0, retained: 0, added: 0, removed: 0 };
+  lastDiagnostics = {
+    candidates: candidates.length,
+    smartMoneyCandidates: smartMoneyWallets.length,
+    kolCandidates: kolWallets.length,
+    universeCandidates: candidateUniverse.length,
+    mapped7d: 0, mapped30d: 0, rejectedMissingStats: 0,
+    rejectedTradeCount: 0, rejectedWinRate: 0, rejectedProfitability: 0,
+    rejectedTradeCount7d: 0, rejectedWinRate7d: 0, rejectedProfitability7d: 0,
+    approved: 0, retained: 0, added: 0, removed: 0
+  };
   if (!candidates.length) {
-    const retained = loadPool().filter(w => !excluded.has(w.wallet) && Date.now() - Date.parse(w.lastQualifiedAt || w.addedAt || 0) <= POOL_RETENTION_MS).slice(0, config.maxWallets);
+    const retained = previousState.wallets
+      .filter(w => !excluded.has(w.wallet) && Date.now() - Date.parse(w.lastQualifiedAt || w.addedAt || 0) <= POOL_RETENTION_MS)
+      .slice(0, config.maxWallets);
     lastDiagnostics.retained = retained.length;
     lastDiagnostics.approved = retained.length;
+    savePool(retained, nextCandidateCursor);
     return retained;
   }
 
@@ -113,6 +154,7 @@ async function discoverWallets({ excludedWallets = [] } = {}) {
     const thirty = await oneWalletStats(wallet, '30d');
     if (!thirty) {
       lastDiagnostics.rejectedMissingStats++;
+      failedCurrentCandidates.add(wallet);
       continue;
     }
     lastDiagnostics.mapped30d++;
@@ -138,12 +180,7 @@ async function discoverWallets({ excludedWallets = [] } = {}) {
       continue;
     }
 
-    thirtyDayQualified.push({
-      wallet,
-      win30,
-      trades30,
-      pnl30
-    });
+    thirtyDayQualified.push({ wallet, win30, trades30, pnl30 });
   }
 
   const scored = [];
@@ -151,6 +188,7 @@ async function discoverWallets({ excludedWallets = [] } = {}) {
     const seven = await oneWalletStats(base.wallet, '7d');
     if (!seven) {
       lastDiagnostics.rejectedMissingStats++;
+      failedCurrentCandidates.add(base.wallet);
       continue;
     }
     lastDiagnostics.mapped7d++;
@@ -166,10 +204,17 @@ async function discoverWallets({ excludedWallets = [] } = {}) {
       failedCurrentCandidates.add(base.wallet);
       continue;
     }
+    const pnl7 = firstNumber(seven, ['realized_profit','realizedProfit','total_profit','totalProfit','pnl','profit']);
+    if (!Number.isFinite(pnl7) || pnl7 <= 0) {
+      lastDiagnostics.rejectedProfitability7d++;
+      failedCurrentCandidates.add(base.wallet);
+      continue;
+    }
     scored.push({
       wallet: base.wallet,
       win7,
       win30: base.win30,
+      pnl7,
       pnl30: base.pnl30,
       trades30: base.trades30,
       score: scoreWallet({ win7, win30: base.win30, pnl30: base.pnl30, trades30: base.trades30 })
@@ -177,10 +222,9 @@ async function discoverWallets({ excludedWallets = [] } = {}) {
   }
 
   const now = new Date().toISOString();
-  const previous = loadPool();
   const pool = new Map();
 
-  for (const old of previous) {
+  for (const old of previousState.wallets) {
     const lastQualifiedMs = Date.parse(old.lastQualifiedAt || old.addedAt || 0);
     const expired = !Number.isFinite(lastQualifiedMs) || Date.now() - lastQualifiedMs > POOL_RETENTION_MS;
     const explicitlyFailed = candidateSet.has(old.wallet) && failedCurrentCandidates.has(old.wallet);
@@ -202,7 +246,6 @@ async function discoverWallets({ excludedWallets = [] } = {}) {
 
   let additions = 0;
   for (const row of scoredSorted) {
-    if (excluded.has(row.wallet)) continue;
     if (pool.has(row.wallet)) continue;
     if (pool.size >= config.maxWallets || additions >= MAX_NEW_PER_REFRESH) break;
     pool.set(row.wallet, { ...row, addedAt: now, lastQualifiedAt: now });
@@ -214,7 +257,7 @@ async function discoverWallets({ excludedWallets = [] } = {}) {
     .sort((a,b) => Number(b.score || 0) - Number(a.score || 0))
     .slice(0, config.maxWallets);
 
-  savePool(approved);
+  savePool(approved, nextCandidateCursor);
   lastDiagnostics.approved = approved.length;
   return approved;
 }

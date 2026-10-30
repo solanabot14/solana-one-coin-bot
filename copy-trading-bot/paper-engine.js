@@ -140,11 +140,10 @@ class PaperEngine {
     let consecutiveLosses = 0;
     for (let i = trades.length - 1; i >= 0; i--) { if (Number(trades[i].pnlUsd) < 0) consecutiveLosses++; else break; }
     const winRate = trades.length ? wins / trades.length * 100 : null;
-    const repeatedLosses = losses >= 3;
-    const acuteLosses = trades.length >= 4 && realizedPnlUsd < 0 && (
-      consecutiveLosses >= Math.min(2, config.copySuspendLossStreak) || (Number.isFinite(winRate) && winRate < config.copySuspendWinRatePct)
-    );
-    const suspended = repeatedLosses || acuteLosses;
+    const repeatedLosses = consecutiveLosses >= config.copySuspendLossStreak;
+    const negativeCopiedPnl = trades.length > 0 && realizedPnlUsd <= 0;
+    const lowCopiedWinRate = trades.length >= config.copySuspendMinTrades && Number.isFinite(winRate) && winRate < config.minWinRate30d;
+    const suspended = repeatedLosses || negativeCopiedPnl || lowCopiedWinRate;
     return { wallet, trades: trades.length, wins, losses, winRate, realizedPnlUsd, consecutiveLosses, suspended };
   }
 
