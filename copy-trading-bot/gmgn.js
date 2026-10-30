@@ -4,7 +4,8 @@ const { spawn } = require('node:child_process');
 const config = require('./config');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-let queue = Promise.resolve();
+let pending = [];
+let queueBusy = false;
 let nextAllowedAt = 0;
 
 function execGmgn(args) {
@@ -59,10 +60,30 @@ async function runWithBackoff(args) {
   }
 }
 
-function runGmgn(args) {
-  const task = queue.then(() => runWithBackoff(args));
-  queue = task.catch(() => {});
-  return task;
+function pumpQueue() {
+  if (queueBusy || !pending.length) return;
+  queueBusy = true;
+  const job = pending.shift();
+  runWithBackoff(job.args).then(job.resolve, job.reject).finally(() => {
+    queueBusy = false;
+    pumpQueue();
+  });
+}
+
+function runGmgn(args, { priority = false } = {}) {
+  return new Promise((resolve, reject) => {
+    const job = { args, resolve, reject };
+    if (priority) {
+      const firstNormal = pending.findIndex(item => !item.priority);
+      job.priority = true;
+      if (firstNormal < 0) pending.push(job);
+      else pending.splice(firstNormal, 0, job);
+    } else {
+      job.priority = false;
+      pending.push(job);
+    }
+    pumpQueue();
+  });
 }
 
 function flatten(value, rows = []) {
