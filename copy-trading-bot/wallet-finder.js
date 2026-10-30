@@ -76,14 +76,28 @@ function savePool(wallets, candidateCursor = 0) {
 }
 
 function statsRows(payload, requestedWallets) {
-  const list = payload && (payload.list || payload.data?.list || payload.data || payload.result?.list);
-  const rows = Array.isArray(list) ? list : Array.isArray(payload) ? payload : (payload && typeof payload === 'object' ? [payload] : []);
+  const requested = new Set(requestedWallets);
   const mapped = new Map();
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row || typeof row !== 'object') continue;
-    const wallet = row.wallet_address || row.wallet || row.address || row.trader_address || requestedWallets[i];
-    if (wallet) mapped.set(wallet, row);
+  const seen = new Set();
+  function visit(node, parentKey = '') {
+    if (Array.isArray(node)) {
+      for (let i = 0; i < node.length; i++) visit(node[i], String(i));
+      return;
+    }
+    if (!node || typeof node !== 'object' || seen.has(node)) return;
+    seen.add(node);
+    const explicit = node.wallet_address || node.wallet || node.address || node.trader_address;
+    const wallet = requested.has(explicit) ? explicit : (requested.has(parentKey) ? parentKey : null);
+    const hasStats = ['winrate','win_rate','buy_count','sell_count','realized_profit','pnl_stat'].some(key => node[key] !== undefined);
+    if (wallet && hasStats) mapped.set(wallet, node);
+    for (const [key, value] of Object.entries(node)) visit(value, key);
+  }
+  visit(payload);
+  if (Array.isArray(payload?.list)) {
+    payload.list.forEach((row, i) => {
+      const wallet = row?.wallet_address || row?.wallet || row?.address || requestedWallets[i];
+      if (wallet && requested.has(wallet) && row && typeof row === 'object' && !mapped.has(wallet)) mapped.set(wallet, row);
+    });
   }
   return mapped;
 }
