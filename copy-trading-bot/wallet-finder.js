@@ -123,11 +123,22 @@ async function discoverWallets({ excludedWallets = [] } = {}) {
     }
   }
 
-  const candidateCount = Math.min(config.walletCandidatesPerScan, candidateUniverse.length);
   const offset = candidateUniverse.length ? previousState.candidateCursor % candidateUniverse.length : 0;
-  const candidates = Array.from({ length: candidateCount }, (_, i) => candidateUniverse[(offset + i) % candidateUniverse.length]);
-  const nextCandidateCursor = candidateUniverse.length ? (offset + candidateCount) % candidateUniverse.length : 0;
-  const candidateSet = new Set(candidates);
+  const activeWallets = previousState.wallets.map(w => w.wallet).filter(wallet => !excluded.has(wallet));
+  const prioritized = activeWallets.slice(0, config.walletCandidatesPerScan);
+  const candidateSet = new Set(prioritized);
+  const rotating = [];
+  const freshBudget = Math.max(0, config.walletCandidatesPerScan - prioritized.length);
+  let scannedFromUniverse = 0;
+  while (rotating.length < freshBudget && scannedFromUniverse < candidateUniverse.length) {
+    const wallet = candidateUniverse[(offset + scannedFromUniverse) % candidateUniverse.length];
+    scannedFromUniverse++;
+    if (candidateSet.has(wallet)) continue;
+    candidateSet.add(wallet);
+    rotating.push(wallet);
+  }
+  const candidates = [...prioritized, ...rotating];
+  const nextCandidateCursor = candidateUniverse.length ? (offset + scannedFromUniverse) % candidateUniverse.length : 0;
   lastDiagnostics = {
     candidates: candidates.length,
     smartMoneyCandidates: smartMoneyWallets.length,
