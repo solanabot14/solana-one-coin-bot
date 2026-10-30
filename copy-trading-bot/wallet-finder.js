@@ -10,7 +10,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const stateDir = path.dirname(process.env.COPY_STATE_FILE || path.join(__dirname, 'paper-state.json'));
 const poolFile = process.env.COPY_WALLET_POOL_FILE || path.join(stateDir, 'copy-wallet-pool.json');
 const POOL_RETENTION_MS = Number(process.env.COPY_WALLET_POOL_RETENTION_MS || 2 * 60 * 60 * 1000);
-const MAX_NEW_PER_REFRESH = Number(process.env.COPY_WALLET_POOL_MAX_NEW_PER_REFRESH || 2);
+const MAX_NEW_PER_REFRESH = Number(process.env.COPY_WALLET_POOL_MAX_NEW_PER_REFRESH || 10);
 let lastDiagnostics = { candidates: 0, smartMoneyCandidates: 0, kolCandidates: 0, universeCandidates: 0, mapped7d: 0, mapped30d: 0, rejectedMissingStats: 0, rejectedTradeCount: 0, rejectedWinRate: 0, rejectedProfitability: 0, rejectedTradeCount7d: 0, rejectedWinRate7d: 0, rejectedProfitability7d: 0, approved: 0, retained: 0, added: 0, removed: 0 };
 
 function looksLikeSolanaAddress(v) {
