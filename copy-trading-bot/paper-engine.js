@@ -39,6 +39,7 @@ class PaperEngine {
     }
     this.applyRequestedPaperCorrection();
     this.applyRequestedBalanceReset();
+    this.applyRequestedBalanceTopUp();
   }
 
   applyRequestedBalanceReset() {
@@ -60,6 +61,38 @@ class PaperEngine {
     };
     this.save();
     console.log('[PAPER BALANCE RESET]', JSON.stringify(this.account[migration]));
+  }
+
+
+  applyRequestedBalanceTopUp() {
+    const migration = 'paper_balance_topup_20261030_v1';
+    if (this.account[migration]) return;
+    if (this.positions.size > 0) {
+      console.error('[PAPER BALANCE TOP-UP NOT APPLIED] Open positions remain', this.positions.size);
+      return;
+    }
+    const previousCashBalanceUsd = Number(this.account.cashBalanceUsd);
+    const previousStartingBalanceUsd = Number(this.account.startingBalanceUsd);
+    if (!Number.isFinite(previousCashBalanceUsd)) {
+      console.error('[PAPER BALANCE TOP-UP NOT APPLIED] Invalid cash balance');
+      return;
+    }
+    try { fs.copyFileSync(stateFile, stateFile + '.before-paper-balance-topup-20261030'); }
+    catch (error) {
+      console.error('[PAPER BALANCE TOP-UP NOT APPLIED] Backup failed', error.message);
+      return;
+    }
+    const at = new Date().toISOString();
+    this.account.startingBalanceUsd = 40;
+    this.account.cashBalanceUsd = 40;
+    this.account[migration] = {
+      at, balanceUsd: 40, adjustmentUsd: 40 - previousCashBalanceUsd,
+      previousCashBalanceUsd, previousStartingBalanceUsd,
+      initializedAtPreserved: this.account.initializedAt,
+      closedTradesRetained: this.closed.length
+    };
+    this.save();
+    console.log('[PAPER BALANCE TOP-UP]', JSON.stringify(this.account[migration]));
   }
 
   applyRequestedPaperCorrection() {
