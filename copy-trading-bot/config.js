@@ -27,6 +27,6 @@ module.exports = Object.freeze({
   liquidityExitDropPct: Math.max(0, Number(process.env.COPY_LIQUIDITY_EXIT_DROP_PCT || 35)),
   copySuspendMinTrades: Number(process.env.COPY_SUSPEND_MIN_TRADES || 8),
   copySuspendLossStreak: Number(process.env.COPY_SUSPEND_LOSS_STREAK || 3),
-  copySuspendWinRatePct: Number(process.env.COPY_SUSPEND_WIN_RATE_PCT || 25),
+  copySuspendWinRatePct: Number(process.env.COPY_SUSPEND_WIN_RATE_PCT || 40),
   demoReadOnlyApiKey: 'gmgn_solbscbaseethmonadtron'
 });
