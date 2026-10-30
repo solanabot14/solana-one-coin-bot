@@ -104,22 +104,16 @@ function statsRows(payload, requestedWallets) {
 
 async function batchWalletStats(wallets, period) {
   const result = new Map();
-  for (let offset = 0; offset < wallets.length; offset += 20) {
-    const batch = wallets.slice(offset, offset + 20);
-    const args = ['portfolio','stats','--chain',config.chain];
-    for (const wallet of batch) args.push('--wallet',wallet);
-    args.push('--period',period);
+  for (const wallet of wallets) {
+    await sleep(1100);
     try {
-      const payload = await runGmgn(args);
-      const mapped = statsRows(payload, batch);
-      for (const wallet of batch) {
-        const row = mapped.get(wallet);
-        if (row) result.set(wallet, row);
-        else lastDiagnostics.rejectedMissingStats++;
-      }
+      const payload = await runGmgn(['portfolio','stats','--chain',config.chain,'--wallet',wallet,'--period',period]);
+      const row = Array.isArray(payload) ? payload[0] : (payload?.list?.[0] || payload?.data?.list?.[0] || payload);
+      if (row && typeof row === 'object' && !Array.isArray(row)) result.set(wallet, row);
+      else lastDiagnostics.rejectedMissingStats++;
     } catch (error) {
-      console.error(`[wallet-finder] ${period} batch stats skip: ${error.message}`);
-      for (const wallet of batch) lastDiagnostics.rejectedMissingStats++;
+      console.error(`[wallet-finder] ${period} stats skip ${wallet}: ${error.message}`);
+      lastDiagnostics.rejectedMissingStats++;
     }
   }
   return result;
