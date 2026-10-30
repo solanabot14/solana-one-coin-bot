@@ -98,7 +98,7 @@ async function pollSignals() {
   try {
     const results = await Promise.all(feedSpecs.map(async spec => {
       try {
-        const payload = await runGmgn(['track',spec.source,'--chain',config.chain,'--side',spec.side,'--limit',String(config.smartMoneyLimit)]);
+        const payload = await runGmgn(['track',spec.source,'--chain',config.chain,'--side',spec.side,'--limit',String(config.smartMoneyLimit)],{ priority: true };
         return { ...spec, payload, error: null };
       } catch (error) {
         return { ...spec, payload: null, error: error.message };
