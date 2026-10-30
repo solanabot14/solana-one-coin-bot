@@ -11,6 +11,7 @@ let approved = new Set();
 const seen = new Set();
 let signalsPrimed = false;
 let riskRunning = false;
+let walletRefreshRunning = false;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const runtime = {
   startedAt: new Date().toISOString(), wallets: [], walletDiagnostics: getLastDiagnostics(), lastWalletRefreshAt: null,
@@ -63,6 +64,8 @@ function freshBuy(e) {
 }
 
 async function refreshWallets() {
+  if (walletRefreshRunning) return runtime.wallets;
+  walletRefreshRunning = true;
   try {
     const excludedWallets = engine.allWalletPerformance().filter(w => w.suspended).map(w => w.wallet);
     const discovered = await discoverWallets({ excludedWallets });
@@ -80,6 +83,8 @@ async function refreshWallets() {
     runtime.lastError = `Wallet discovery: ${error.message}`;
     console.error('[wallet refresh]', error.message);
     return runtime.wallets;
+  } finally {
+    walletRefreshRunning = false;
   }
 }
 
@@ -222,8 +227,8 @@ async function main(){
   console.log(`[COPY TRADING BOT] PAPER ONLY | $${config.paperTradeUsd} simulated positions`);
   startHttpServer();
   await riskCheck();
-  await refreshWallets();
-  await sleep(3000);
+  await pollSignals();
+  void refreshWallets();
   setInterval(()=>refreshWallets(),config.walletRefreshMs).unref();
   setInterval(()=>riskCheck(),config.riskCheckMs).unref();
   while(true){await pollSignals();await sleep(config.pollMs);}
