@@ -75,26 +75,40 @@ function savePool(wallets, candidateCursor = 0) {
   }
 }
 
-async function oneWalletStats(wallet, period) {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    await sleep(1100);
+function statsRows(payload, requestedWallets) {
+  const list = payload && (payload.list || payload.data?.list || payload.data || payload.result?.list);
+  const rows = Array.isArray(list) ? list : Array.isArray(payload) ? payload : (payload && typeof payload === 'object' ? [payload] : []);
+  const mapped = new Map();
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || typeof row !== 'object') continue;
+    const wallet = row.wallet_address || row.wallet || row.address || row.trader_address || requestedWallets[i];
+    if (wallet) mapped.set(wallet, row);
+  }
+  return mapped;
+}
+
+async function batchWalletStats(wallets, period) {
+  const result = new Map();
+  for (let offset = 0; offset < wallets.length; offset += 20) {
+    const batch = wallets.slice(offset, offset + 20);
+    const args = ['portfolio','stats','--chain',config.chain];
+    for (const wallet of batch) args.push('--wallet',wallet);
+    args.push('--period',period);
     try {
-      const payload = await runGmgn(['portfolio','stats','--chain',config.chain,'--wallet',wallet,'--period',period]);
-      if (payload && typeof payload === 'object' && !Array.isArray(payload)) return payload;
-      if (Array.isArray(payload) && payload[0] && typeof payload[0] === 'object') return payload[0];
-      return null;
-    } catch (error) {
-      const wait = backoffMs(error.message);
-      if (attempt === 0 && wait) {
-        console.error(`[wallet-finder] GMGN backoff ${Math.ceil(wait / 1000)}s before retrying ${period} stats`);
-        await sleep(wait);
-        continue;
+      const payload = await runGmgn(args);
+      const mapped = statsRows(payload, batch);
+      for (const wallet of batch) {
+        const row = mapped.get(wallet);
+        if (row) result.set(wallet, row);
+        else lastDiagnostics.rejectedMissingStats++;
       }
-      console.error(`[wallet-finder] ${period} stats skip ${wallet}: ${error.message}`);
-      return null;
+    } catch (error) {
+      console.error(`[wallet-finder] ${period} batch stats skip: ${error.message}`);
+      for (const wallet of batch) lastDiagnostics.rejectedMissingStats++;
     }
   }
-  return null;
+  return result;
 }
 
 async function discoverWallets({ excludedWallets = [] } = {}) {
@@ -173,10 +187,10 @@ async function discoverWallets({ excludedWallets = [] } = {}) {
 
   const thirtyDayQualified = [];
   const failedCurrentCandidates = new Set();
+  const thirtyDayStats = await batchWalletStats(candidates, '30d');
   for (const wallet of candidates) {
-    const thirty = await oneWalletStats(wallet, '30d');
+    const thirty = thirtyDayStats.get(wallet);
     if (!thirty) {
-      lastDiagnostics.rejectedMissingStats++;
       failedCurrentCandidates.add(wallet);
       continue;
     }
@@ -206,11 +220,11 @@ async function discoverWallets({ excludedWallets = [] } = {}) {
     thirtyDayQualified.push({ wallet, win30, trades30, pnl30 });
   }
 
+  const sevenDayStats = await batchWalletStats(thirtyDayQualified.map(row => row.wallet), '7d');
   const scored = [];
   for (const base of thirtyDayQualified) {
-    const seven = await oneWalletStats(base.wallet, '7d');
+    const seven = sevenDayStats.get(base.wallet);
     if (!seven) {
-      lastDiagnostics.rejectedMissingStats++;
       failedCurrentCandidates.add(base.wallet);
       continue;
     }
