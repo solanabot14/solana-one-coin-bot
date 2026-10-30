@@ -109,7 +109,7 @@ class PaperEngine {
     const winRate = trades.length ? wins / trades.length * 100 : null;
     const repeatedLosses = losses >= 3;
     const acuteLosses = trades.length >= 4 && realizedPnlUsd < 0 && (
-      consecutiveLosses >= config.copySuspendLossStreak || (Number.isFinite(winRate) && winRate < config.copySuspendWinRatePct)
+      consecutiveLosses >= Math.min(2, config.copySuspendLossStreak) || (Number.isFinite(winRate) && winRate < config.copySuspendWinRatePct)
     );
     const suspended = repeatedLosses || acuteLosses;
     return { wallet, trades: trades.length, wins, losses, winRate, realizedPnlUsd, consecutiveLosses, suspended };
