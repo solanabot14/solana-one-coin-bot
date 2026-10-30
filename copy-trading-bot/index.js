@@ -3,7 +3,7 @@
 const http = require('node:http');
 const config = require('./config');
 const { runGmgn, flatten } = require('./gmgn');
-const { discoverWallets, getLastDiagnostics } = require('./wallet-finder');
+const { discoverWallets, getLastDiagnostics, getPooledWallets } = require('./wallet-finder');
 const PaperEngine = require('./paper-engine');
 
 const engine = new PaperEngine();
@@ -121,12 +121,13 @@ async function pollSignals() {
     };
 
     if (!signalsPrimed) {
-      events.forEach(e => seen.add(e.id));
+      // Ignore historical activity at startup, but process a currently fresh buy from a qualified wallet.
+      for (const e of events) {
+        if (!(e.side === 'buy' && approved.has(e.wallet) && freshBuy(e))) seen.add(e.id);
+      }
       signalsPrimed = true;
       runtime.signalsPrimedAt = new Date().toISOString();
-      console.log('[SIGNALS PRIMED]', JSON.stringify({ buys: uniqueBuys.length, sells: uniqueById(sellEvents).length, diagnostics: runtime.signalDiagnostics }));
-      runtime.lastError = runtime.signalDiagnostics.feedFailures.length ? 'Partial signal feed failure' : null;
-      return;
+      console.log('[SIGNALS PRIMED]', JSON.stringify({ buys: uniqueBuys.length, freshBuys: freshApprovedBuys.length, sells: uniqueById(sellEvents).length, diagnostics: runtime.signalDiagnostics }));
     }
 
     for (const e of buyEvents) {
@@ -218,6 +219,11 @@ async function main(){
   if(config.mode!=='paper')throw new Error('Copy Trading Bot is locked to paper mode.');
   console.log(`[COPY TRADING BOT] PAPER ONLY | $${config.paperTradeUsd} simulated positions`);
   startHttpServer();
+  // Restore previously qualified wallets before the slow external stats scan.
+  const excludedWallets = engine.allWalletPerformance().filter(w => w.suspended).map(w => w.wallet);
+  runtime.wallets = getPooledWallets({ excludedWallets }).filter(w => !engine.isWalletSuspended(w.wallet));
+  approved = new Set(runtime.wallets.map(w => w.wallet));
+  console.log('[WALLETS HYDRATED]', JSON.stringify({ count: runtime.wallets.length, source: 'persistent qualified pool' }));
   await riskCheck();
   await pollSignals();
   void refreshWallets();
