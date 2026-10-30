@@ -99,19 +99,31 @@ async function oneWalletStats(wallet, period) {
 
 async function discoverWallets({ excludedWallets = [] } = {}) {
   const excluded = new Set(excludedWallets);
-  const [smartMoneyResult, kolResult] = await Promise.allSettled([
-    runGmgn(['track','smartmoney','--chain',config.chain,'--side','buy','--limit',String(config.smartMoneyLimit)]),
-    runGmgn(['track','kol','--chain',config.chain,'--side','buy','--limit',String(config.smartMoneyLimit)])
-  ]);
-  if (smartMoneyResult.status === 'rejected') console.error('[wallet-finder] smartmoney feed failed:', smartMoneyResult.reason?.message || smartMoneyResult.reason);
-  if (kolResult.status === 'rejected') console.error('[wallet-finder] KOL feed failed:', kolResult.reason?.message || kolResult.reason);
-  if (smartMoneyResult.status === 'rejected' && kolResult.status === 'rejected') {
-    throw new Error('Both GMGN wallet feeds failed');
+  const feedSpecs = [
+    { source: 'smartmoney', side: 'buy' },
+    { source: 'smartmoney', side: 'sell' },
+    { source: 'kol', side: 'buy' },
+    { source: 'kol', side: 'sell' }
+  ];
+  const feedResults = await Promise.all(feedSpecs.map(async spec => {
+    try {
+      const payload = await runGmgn(['track',spec.source,'--chain',config.chain,'--side',spec.side,'--limit',String(config.smartMoneyLimit)]);
+      return { ...spec, payload, error: null };
+    } catch (error) {
+      return { ...spec, payload: null, error };
+    }
+  }));
+  for (const result of feedResults.filter(r => r.error)) {
+    console.error(`[wallet-finder] ${result.source}/${result.side} feed failed:`, result.error.message || result.error);
   }
+  if (feedResults.every(r => r.error)) throw new Error('All GMGN wallet feeds failed');
 
   const previousState = loadPoolState();
-  const smartMoneyWallets = smartMoneyResult.status === 'fulfilled' ? extractWallets(smartMoneyResult.value) : [];
-  const kolWallets = kolResult.status === 'fulfilled' ? extractWallets(kolResult.value) : [];
+  const walletsFromSource = source => [...new Set(feedResults
+    .filter(r => !r.error && r.source === source)
+    .flatMap(r => extractWallets(r.payload)))];
+  const smartMoneyWallets = walletsFromSource('smartmoney');
+  const kolWallets = walletsFromSource('kol');
   const candidateUniverse = [];
   const seenUniverse = new Set();
   const maxSourceRows = Math.max(smartMoneyWallets.length, kolWallets.length);
