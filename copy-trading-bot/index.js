@@ -42,15 +42,18 @@ function eventTime(row) {
   }
   return null;
 }
-function parseEvents(payload, forcedSide) {
+function parseWalletActivity(payload, wallet) {
   const out = [];
   const localSeen = new Set();
   for (const row of flatten(payload)) {
-    const wallet = getString(row, walletKeys), token = getString(row, tokenKeys);
-    if (!isSolAddress(wallet) || !isSolAddress(token) || wallet === token) continue;
-    const side = (forcedSide || getString(row, sideKeys) || '').toLowerCase();
+    const token = getString(row, tokenKeys) || (row.token && typeof row.token === 'object' ? getString(row.token, ['address','token_address','mint']) : null);
+    if (!isSolAddress(token) || token === wallet) continue;
+    const rawSide = (getString(row, ['event_type','type','side','action']) || '').toLowerCase();
+    const side = rawSide === 'buy' || rawSide.includes('buy') ? 'buy' : rawSide === 'sell' || rawSide.includes('sell') ? 'sell' : null;
+    if (!side) continue;
     const at = eventTime(row);
-    const id = getString(row, idKeys) || `${wallet}:${token}:${side}:${at || ''}`;
+    const tx = getString(row, ['tx_hash','signature','txHash','transaction_hash','transactionHash','id']);
+    const id = tx ? `${wallet}:${token}:${side}:${tx}` : `${wallet}:${token}:${side}:${at || ''}`;
     if (localSeen.has(id)) continue;
     localSeen.add(id);
     out.push({ wallet, token, side, id, at });
@@ -89,25 +92,17 @@ async function refreshWallets() {
 }
 
 async function pollSignals() {
-  const feedSpecs = [
-    { source: 'smartmoney', side: 'buy' },
-    { source: 'smartmoney', side: 'sell' },
-    { source: 'kol', side: 'buy' },
-    { source: 'kol', side: 'sell' }
-  ];
+  const wallets = [...approved];
+  const results = await Promise.all(wallets.map(async wallet => {
+    try {
+      const payload = await runGmgn(['portfolio','activity','--chain',config.chain,'--wallet',wallet,'--type','buy','--type','sell','--limit','30'],{ priority: true });
+      return { wallet, events: parseWalletActivity(payload, wallet), error: null };
+    } catch (error) {
+      return { wallet, events: [], error: error.message };
+    }
+  }));
   try {
-    const results = await Promise.all(feedSpecs.map(async spec => {
-      try {
-        const payload = await runGmgn(['track',spec.source,'--chain',config.chain,'--side',spec.side,'--limit',String(config.smartMoneyLimit)],{ priority: true });
-        return { ...spec, payload, error: null };
-      } catch (error) {
-        return { ...spec, payload: null, error: error.message };
-      }
-    }));
-    const successful = results.filter(r => !r.error);
-    if (!successful.length) throw new Error(results.map(r => `${r.source}/${r.side}: ${r.error}`).join('; '));
-
-    const events = successful.flatMap(r => parseEvents(r.payload, r.side).map(e => ({ ...e, source: r.source })));
+    const events = results.flatMap(r => r.events);
     const buyEvents = events.filter(e => e.side === 'buy');
     const sellEvents = events.filter(e => e.side === 'sell');
     const uniqueById = rows => [...new Map(rows.map(e => [e.id, e])).values()];
@@ -118,14 +113,11 @@ async function pollSignals() {
     runtime.lastSignalCount = uniqueById(events).length;
     runtime.lastPollAt = new Date().toISOString();
     runtime.signalDiagnostics = {
-      smartMoneyBuys: buyEvents.filter(e => e.source === 'smartmoney').length,
-      smartMoneySells: sellEvents.filter(e => e.source === 'smartmoney').length,
-      kolBuys: buyEvents.filter(e => e.source === 'kol').length,
-      kolSells: sellEvents.filter(e => e.source === 'kol').length,
-      approvedBuys: approvedBuys.length,
-      freshApprovedBuys: freshApprovedBuys.length,
+      smartMoneyBuys: 0, smartMoneySells: 0, kolBuys: 0, kolSells: 0,
+      walletActivityWallets: wallets.length, walletActivityEvents: events.length,
+      approvedBuys: approvedBuys.length, freshApprovedBuys: freshApprovedBuys.length,
       unseenFreshApprovedBuys: unseenFreshApprovedBuys.length,
-      feedFailures: results.filter(r => r.error).map(r => `${r.source}/${r.side}: ${r.error}`)
+      feedFailures: results.filter(r => r.error).map(r => `${r.wallet}: ${r.error}`)
     };
 
     if (!signalsPrimed) {
@@ -141,8 +133,8 @@ async function pollSignals() {
       if (seen.has(e.id)) continue;
       seen.add(e.id);
       if (!approved.has(e.wallet)) continue;
-      if (!e.at) { runtime.unknownAgeBuysRejected++; console.log('[STALE BUY REJECTED]', JSON.stringify({ reason:'unknown_age', wallet:e.wallet, token:e.token, id:e.id, source:e.source })); continue; }
-      if (!freshBuy(e)) { runtime.staleBuysRejected++; console.log('[STALE BUY REJECTED]', JSON.stringify({ reason:'too_old', wallet:e.wallet, token:e.token, id:e.id, at:e.at, source:e.source })); continue; }
+      if (!e.at) { runtime.unknownAgeBuysRejected++; console.log('[STALE BUY REJECTED]', JSON.stringify({ reason:'unknown_age', wallet:e.wallet, token:e.token, id:e.id, source:'wallet_activity' })); continue; }
+      if (!freshBuy(e)) { runtime.staleBuysRejected++; console.log('[STALE BUY REJECTED]', JSON.stringify({ reason:'too_old', wallet:e.wallet, token:e.token, id:e.id, at:e.at, source:'wallet_activity' })); continue; }
       if (engine.isWalletSuspended(e.wallet)) { runtime.suspendedBuySignals++; continue; }
       await engine.open(e.wallet, e.token, e.id, e.at);
     }
