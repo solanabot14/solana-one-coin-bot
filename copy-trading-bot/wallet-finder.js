@@ -199,7 +199,7 @@ async function discoverWallets({ excludedWallets = [] } = {}) {
   for (const wallet of candidates) {
     const thirty = thirtyDayStats.get(wallet);
     if (!thirty) {
-      failedCurrentCandidates.add(wallet);
+      // A missing response is transient/inconclusive, not evidence that a qualified wallet failed.
       continue;
     }
     lastDiagnostics.mapped30d++;
@@ -233,7 +233,7 @@ async function discoverWallets({ excludedWallets = [] } = {}) {
   for (const base of thirtyDayQualified) {
     const seven = sevenDayStats.get(base.wallet);
     if (!seven) {
-      failedCurrentCandidates.add(base.wallet);
+      // Keep previously qualified wallets when the provider omits this period's stats.
       continue;
     }
     lastDiagnostics.mapped7d++;
@@ -307,6 +307,14 @@ async function discoverWallets({ excludedWallets = [] } = {}) {
   return approved;
 }
 
+function getPooledWallets({ excludedWallets = [] } = {}) {
+  const excluded = new Set(excludedWallets);
+  return loadPoolState().wallets
+    .filter(w => !excluded.has(w.wallet) && Date.now() - Date.parse(w.lastQualifiedAt || w.addedAt || 0) <= POOL_RETENTION_MS)
+    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
+    .slice(0, config.maxWallets);
+}
+
 function getLastDiagnostics() {
   return { ...lastDiagnostics };
 }
@@ -315,4 +323,4 @@ if (require.main === module) {
   discoverWallets().then(rows => console.log(JSON.stringify({ mode: 'paper', wallets: rows, diagnostics: getLastDiagnostics() }, null, 2))).catch(err => { console.error(err); process.exitCode = 1; });
 }
 
-module.exports = { discoverWallets, extractWallets, scoreWallet, getLastDiagnostics };
+module.exports = { discoverWallets, extractWallets, scoreWallet, getLastDiagnostics, getPooledWallets };
