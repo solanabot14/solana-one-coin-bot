@@ -14,7 +14,8 @@ let riskRunning = false;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const runtime = {
   startedAt: new Date().toISOString(), wallets: [], walletDiagnostics: getLastDiagnostics(), lastWalletRefreshAt: null,
-  lastPollAt: null, lastRiskCheckAt: null, lastError: null, lastSignalCount: 0, source: 'GMGN Smart Money',
+  lastPollAt: null, lastRiskCheckAt: null, lastError: null, lastSignalCount: 0,
+  signalDiagnostics: { smartMoneyBuys: 0, smartMoneySells: 0, kolBuys: 0, kolSells: 0, approvedBuys: 0, freshApprovedBuys: 0, unseenFreshApprovedBuys: 0, feedFailures: [] }, source: 'GMGN Smart Money + KOL',
   signalsPrimedAt: null, staleBuysRejected: 0, unknownAgeBuysRejected: 0, suspendedBuySignals: 0
 };
 
@@ -83,19 +84,51 @@ async function refreshWallets() {
 }
 
 async function pollSignals() {
+  const feedSpecs = [
+    { source: 'smartmoney', side: 'buy' },
+    { source: 'smartmoney', side: 'sell' },
+    { source: 'kol', side: 'buy' },
+    { source: 'kol', side: 'sell' }
+  ];
   try {
-    const buys = await runGmgn(['track','smartmoney','--chain',config.chain,'--side','buy','--limit',String(config.smartMoneyLimit)]);
-    const sells = await runGmgn(['track','smartmoney','--chain',config.chain,'--side','sell','--limit',String(config.smartMoneyLimit)]);
-    const buyEvents = parseEvents(buys, 'buy'), sellEvents = parseEvents(sells, 'sell');
-    runtime.lastSignalCount = buyEvents.length + sellEvents.length;
+    const results = await Promise.all(feedSpecs.map(async spec => {
+      try {
+        const payload = await runGmgn(['track',spec.source,'--chain',config.chain,'--side',spec.side,'--limit',String(config.smartMoneyLimit)]);
+        return { ...spec, payload, error: null };
+      } catch (error) {
+        return { ...spec, payload: null, error: error.message };
+      }
+    }));
+    const successful = results.filter(r => !r.error);
+    if (!successful.length) throw new Error(results.map(r => `${r.source}/${r.side}: ${r.error}`).join('; '));
+
+    const events = successful.flatMap(r => parseEvents(r.payload, r.side).map(e => ({ ...e, source: r.source })));
+    const buyEvents = events.filter(e => e.side === 'buy');
+    const sellEvents = events.filter(e => e.side === 'sell');
+    const uniqueById = rows => [...new Map(rows.map(e => [e.id, e])).values()];
+    const uniqueBuys = uniqueById(buyEvents);
+    const approvedBuys = uniqueBuys.filter(e => approved.has(e.wallet));
+    const freshApprovedBuys = approvedBuys.filter(freshBuy);
+    const unseenFreshApprovedBuys = freshApprovedBuys.filter(e => !seen.has(e.id));
+    runtime.lastSignalCount = uniqueById(events).length;
     runtime.lastPollAt = new Date().toISOString();
+    runtime.signalDiagnostics = {
+      smartMoneyBuys: buyEvents.filter(e => e.source === 'smartmoney').length,
+      smartMoneySells: sellEvents.filter(e => e.source === 'smartmoney').length,
+      kolBuys: buyEvents.filter(e => e.source === 'kol').length,
+      kolSells: sellEvents.filter(e => e.source === 'kol').length,
+      approvedBuys: approvedBuys.length,
+      freshApprovedBuys: freshApprovedBuys.length,
+      unseenFreshApprovedBuys: unseenFreshApprovedBuys.length,
+      feedFailures: results.filter(r => r.error).map(r => `${r.source}/${r.side}: ${r.error}`)
+    };
 
     if (!signalsPrimed) {
-      [...buyEvents, ...sellEvents].forEach(e => seen.add(e.id));
+      events.forEach(e => seen.add(e.id));
       signalsPrimed = true;
       runtime.signalsPrimedAt = new Date().toISOString();
-      console.log('[SIGNALS PRIMED]', JSON.stringify({ buys: buyEvents.length, sells: sellEvents.length }));
-      runtime.lastError = null;
+      console.log('[SIGNALS PRIMED]', JSON.stringify({ buys: uniqueBuys.length, sells: uniqueById(sellEvents).length, diagnostics: runtime.signalDiagnostics }));
+      runtime.lastError = runtime.signalDiagnostics.feedFailures.length ? 'Partial signal feed failure' : null;
       return;
     }
 
@@ -103,8 +136,8 @@ async function pollSignals() {
       if (seen.has(e.id)) continue;
       seen.add(e.id);
       if (!approved.has(e.wallet)) continue;
-      if (!e.at) { runtime.unknownAgeBuysRejected++; console.log('[STALE BUY REJECTED]', JSON.stringify({ reason:'unknown_age', wallet:e.wallet, token:e.token, id:e.id })); continue; }
-      if (!freshBuy(e)) { runtime.staleBuysRejected++; console.log('[STALE BUY REJECTED]', JSON.stringify({ reason:'too_old', wallet:e.wallet, token:e.token, id:e.id, at:e.at })); continue; }
+      if (!e.at) { runtime.unknownAgeBuysRejected++; console.log('[STALE BUY REJECTED]', JSON.stringify({ reason:'unknown_age', wallet:e.wallet, token:e.token, id:e.id, source:e.source })); continue; }
+      if (!freshBuy(e)) { runtime.staleBuysRejected++; console.log('[STALE BUY REJECTED]', JSON.stringify({ reason:'too_old', wallet:e.wallet, token:e.token, id:e.id, at:e.at, source:e.source })); continue; }
       if (engine.isWalletSuspended(e.wallet)) { runtime.suspendedBuySignals++; continue; }
       await engine.open(e.wallet, e.token, e.id, e.at);
     }
@@ -122,7 +155,8 @@ async function pollSignals() {
       seen.clear();
       keep.forEach(x => seen.add(x));
     }
-    runtime.lastError = null;
+    runtime.lastError = runtime.signalDiagnostics.feedFailures.length ? 'Partial signal feed failure' : null;
+    console.log('[SIGNAL POLL]', JSON.stringify(runtime.signalDiagnostics));
   } catch (error) {
     runtime.lastError = `Signal poll: ${error.message}`;
     console.error('[poll]', error.message);
@@ -147,7 +181,7 @@ function statusPayload() {
     name:'Copy Trading Bot', running:true, mode:'paper', source:runtime.source,
     apiMode:process.env.GMGN_API_KEY?'personal_key':'public_demo_key', startedAt:runtime.startedAt,
     lastWalletRefreshAt:runtime.lastWalletRefreshAt, lastPollAt:runtime.lastPollAt, lastRiskCheckAt:runtime.lastRiskCheckAt,
-    lastError:runtime.lastError, lastSignalCount:runtime.lastSignalCount, signalsPrimedAt:runtime.signalsPrimedAt,
+    lastError:runtime.lastError, lastSignalCount:runtime.lastSignalCount, signalDiagnostics:runtime.signalDiagnostics, signalsPrimedAt:runtime.signalsPrimedAt,
     staleBuysRejected:runtime.staleBuysRejected, unknownAgeBuysRejected:runtime.unknownAgeBuysRejected, suspendedBuySignals:runtime.suspendedBuySignals,
     walletDiagnostics:runtime.walletDiagnostics,
     config:{
