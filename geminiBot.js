@@ -3,6 +3,7 @@ const { retry } = require("./geminiHttp");
 const { evaluateCandidate } = require("./geminiFilter");
 const { createExecutionVerifier } = require("./profitSniperExecutionQuote");
 const { createGeminiLiveExecution, USDC } = require("./geminiLiveExecution");
+const geminiLiveControl = require("./geminiLiveControl");
 const traderDefault = require("./geminiTrader");
 const { randomUUID } = require("node:crypto");
 const { getTelegramConfig, sendGeminiBuyAlert, startTelegramBuyPolling } = require("./telegram");
@@ -113,103 +114,16 @@ function slippageFor(pair) {
       if (now >= signal.expiresAt) pendingBuySignals.delete(id);
     }
   }
-  async function handleTelegramBuy(signalId) {
-    if (busyTelegramBuy) return { success: false, message: "Gemini is already processing a Telegram buy." };
-    const signal = pendingBuySignals.get(String(signalId));
-    if (!signal || Date.now() >= signal.expiresAt) {
-      pendingBuySignals.delete(String(signalId));
-      return { success: false, message: "That Gemini signal expired. Wait for a fresh alert." };
-    }
-    pendingBuySignals.delete(String(signalId));
-    const s = session;
-    if (!isActive(s)) return { success: false, message: "Gemini is stopped; no order was placed." };
-    if (trader.getState().position) return { success: false, message: "Gemini already has an open position; no order was placed." };
-    busyTelegramBuy = true;
-    try {
-      const original = signal.candidate;
-      const pair = await pairDetails(original.pairAddress, s.controller.signal);
-      if (!isActive(s) || !pair || pair.baseToken?.address !== original.tokenAddress ||
-          String(pair.pairAddress || "").toLowerCase() !== String(original.pairAddress || "").toLowerCase() ||
-          String(pair.dexId || "").toLowerCase() !== "pumpswap") {
-        return { success: false, message: "The signal's exact PumpSwap pool could not be reverified; no order was placed." };
-      }
-      const canonical = await getCanonicalPumpSwapPools([{
-        tokenAddress: original.tokenAddress, pairAddress: original.pairAddress
-      }], s.controller.signal);
-      const verification = canonical.get(String(original.pairAddress).toLowerCase());
-      if (!verification?.verified) return { success: false, message: "PumpSwap pool verification failed; no order was placed." };
-      const candidate = poolToCandidate({
-        tokenAddress: original.tokenAddress,
-        pairAddress: original.pairAddress,
-        canonicalPoolVerified: true,
-        poolCreatedAt: original.poolCreatedAt
-      }, pair);
-      if (!(candidate.priceUsd > 0)) return { success: false, message: "A fresh price is unavailable; no order was placed." };
-      const check = await filter(candidate, { signal: s.controller.signal });
-      if (!check?.accepted) return { success: false, message: "The coin no longer passes Gemini's entry filters; no order was placed." };
-      const liveSizing = trader.getLiveSizing?.() || { step: 0, amountUsd: 2 };
-      const amountUsd = Number(liveSizing.amountUsd);
-      if (!(amountUsd > 0) || Number(trader.getState().cashUsd) < amountUsd)
-        return { success: false, message: "Gemini's managed account cannot reserve the fixed $2 live size; no order was placed." };
-      const sellability = await verifyFullPositionExit(candidate, amountUsd, s.controller.signal);
-      if (!sellability.allowed) {
-        const reason = String(sellability.reason || "FULL_POSITION_EXIT_UNAVAILABLE");
-        const details = sellability.details || {};
-        const quotedCost = Number(details.quotedCostPercent);
-        const maxCost = Number(details.maximumQuotedCostPercent);
-        const costNote = Number.isFinite(quotedCost) && Number.isFinite(maxCost)
-          ? " Quoted round-trip cost: " + quotedCost.toFixed(2) + "%; allowed maximum: " + maxCost.toFixed(2) + "%."
-          : "";
-        console.warn("[INFO] Gemini Telegram manual buy blocked by exit-route check", {
-          symbol: candidate.symbol, reason, details: sellability.details || null
-        });
-        return { success: false, message: "Safety check blocked this buy: " + reason + "." + costNote + " No order was placed." };
-      }
-      candidate.geminiDetails = { ...check.details, executionQuote: sellability };
-      candidate.slippageBps = slippageFor(pair);
-      const fill = await liveExecution.executeManualEntry({
-        outputMint: candidate.tokenAddress,
-        amountUsd,
-        slippageBps: candidate.slippageBps
-      });
-      candidate.liveExecution = {
-        ...fill,
-        executionMode: "LIVE",
-        outputAmount: fill.actualOutputAmount || fill.quotedOutputAmount
-      };
-      candidate.liveSizing = liveSizing;
-      const buy = trader.buy(candidate, amountUsd);
-      if (!buy.success) {
-        console.error("[CRITICAL] Gemini Telegram buy executed but could not be recorded", candidate.tokenAddress, buy.error);
-        return { success: false, message: "The swap executed, but Gemini could not record it. Check the wallet and Live Execution Audit immediately." };
-      }
-      console.log("[INFO] Gemini Telegram manual live entry", {
-        symbol: candidate.symbol, mint: candidate.tokenAddress, tradeSizeUsd: amountUsd,
-        signature: fill.signature
-      });
-      return {
-        success: true,
-        message: "GEMINI BUY CONFIRMED | " + candidate.symbol + " | $" + amountUsd.toFixed(2) +
-          " | Gemini is monitoring exits at +15%, -8%, and the liquidity guard. Signature: " + fill.signature
-      };
-    } catch (error) {
-      return { success: false, message: "Gemini could not complete that buy: " + String(error.message || error).slice(0, 220) };
-    } finally { busyTelegramBuy = false; }
+  function handleTelegramBuy() {
+    return { success: false, message: "Gemini is paper-only; Telegram live purchases are disabled." };
   }
   function startTelegramBuyAlerts() {
-    if (telegramPollingStop) return { started: true, alreadyRunning: true };
-    const config = getTelegramConfig();
-    if (!config.enabled) return { started: false, reason: "Telegram is not configured." };
-    telegramPollingStop = startTelegramBuyPolling(handleTelegramBuy);
-    return { started: true };
+    return { started: false, reason: "Gemini uses automatic paper entries; Telegram purchases are disabled." };
   }
-  function stopTelegramBuyAlerts() {
-    if (telegramPollingStop) telegramPollingStop();
-    telegramPollingStop = null;
-  }
+  function stopTelegramBuyAlerts() {}
+
   async function scan(s) {
-    pruneBuySignals();
-    if (!isActive(s) || busyScan || trader.getState().position || pendingBuySignals.size > 0) return;
+    if (!isActive(s) || busyScan || trader.getState().position) return;
     busyScan = true;
     try {
       // Discover new pools from GeckoTerminal and use DexScreener profiles as a
@@ -299,39 +213,29 @@ function slippageFor(pair) {
           candidate = refreshed;
           result = { ...result, details: { ...result.details, ...freshResult.details } };
           passed++;
-          const liveSizing = trader.getLiveSizing?.() || { step: 0, amountUsd: 2 };
-          const sellability = await verifyFullPositionExit(candidate, liveSizing.amountUsd, s.controller.signal);
-          if (!sellability.allowed) {
-            trader.recordRejection(candidate, "Full Position Exit Unavailable", {
-              reason: sellability.reason,
-              sellability: sellability.details || sellability
+          const sizing = trader.getSizing();
+          const amountUsd = Number(sizing.amountUsd);
+          const availableUsd = Number(trader.getState().cashUsd) || 0;
+          if (!(amountUsd > 0) || availableUsd < amountUsd) {
+            trader.recordRejection(candidate, "Insufficient Paper Balance", {
+              requiredUsd: amountUsd,
+              availableUsd
             });
             continue;
           }
-          candidate.geminiDetails = { ...result.details, executionQuote: sellability };
-          candidate.slippageBps = slippageFor(candidate);
-          if (!getTelegramConfig().enabled) {
-            trader.recordRejection(candidate, "Telegram Manual Signal Unavailable", {
-              reason: "Gemini manual-live mode requires Telegram configuration."
-            });
+          candidate.geminiDetails = { ...result.details };
+          candidate.entryReason = "Gemini automatic paper entry passed all market and on-chain safety checks";
+          const buy = trader.buy(candidate, amountUsd);
+          if (!buy.success) {
+            trader.recordRejection(candidate, "Paper Entry Failed", { reason: buy.error });
             continue;
           }
-          // Manual-live signal mode never opens paper positions or automatic live entries.
-          // Only an authorized Telegram Buy tap can authorize this individual live order.
-          const signalId = randomUUID();
-          pendingBuySignals.set(signalId, {
-            candidate: structuredClone(candidate),
-            expiresAt: Date.now() + BUY_SIGNAL_TTL_MS
-          });
-          const alert = await sendGeminiBuyAlert(signalId, candidate, liveSizing.amountUsd);
-          if (!alert.sent) {
-            pendingBuySignals.delete(signalId);
-            trader.recordRejection(candidate, "Telegram Buy Alert Delivery Failed", { reason: alert.reason });
-            continue;
-          }
-          console.log("[INFO] Gemini Telegram manual-live buy signal sent", {
-            symbol: candidate.symbol, mint: candidate.tokenAddress,
-            amountUsd: liveSizing.amountUsd, liquidityTrend: candidate.liquidityTrend, expiresInMs: BUY_SIGNAL_TTL_MS
+          console.log("[INFO] Gemini automatic paper entry", {
+            symbol: candidate.symbol,
+            mint: candidate.tokenAddress,
+            tradeSizeUsd: amountUsd,
+            sizingPercent: sizing.percent,
+            cashRemainingUsd: trader.getState().cashUsd
           });
           break;
         } catch (error) {
@@ -475,11 +379,21 @@ function slippageFor(pair) {
   }
   function start() {
     if (session) return;
+    const liveOff = geminiLiveControl.stop();
+    const reset = trader.resetPaperAccount?.({
+      startingBalanceUsd: 17,
+      resetId: "gemini-paper-auto-reset17-2026-11-02"
+    });
+    if (reset && !reset.success) {
+      console.error("[CRITICAL] Gemini paper reset was blocked:", reset.reason);
+    } else if (reset?.reset) {
+      console.log("[INFO] Gemini paper account reset to $17; prior state archived.", reset.archivePath || "");
+    }
     trader.getState();
     lastError = null;
     const s = { controller: new AbortController() };
     session = s;
-    console.log("[INFO] Gemini Bot started in Telegram signal mode; a personal BUY tap is required for live entries; exits remain +15%, -8%, and the liquidity guard.");
+    console.log("[INFO] Gemini Bot started in automatic PAPER mode; live entries disabled; paper exits remain +15%, -8%, and the liquidity guard.", { liveEntriesDisabled: liveOff?.success === true });
     scanInterval = timers.setInterval(() => void scan(s), SCAN_MS);
     monitorInterval = timers.setInterval(() => void monitor(s), MONITOR_MS);
     void scan(s); void monitor(s);
