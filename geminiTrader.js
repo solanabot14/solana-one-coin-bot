@@ -23,6 +23,37 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     } finally { if (io.existsSync(tmp)) io.unlinkSync(tmp); }
     state = next;
   }
+  function resetPaperAccount({ startingBalanceUsd = 17, resetId } = {}) {
+    const balance = Number(startingBalanceUsd);
+    if (!(balance > 0) || !Number.isFinite(balance) || !resetId)
+      return { success: false, reason: "A positive starting balance and reset ID are required." };
+    if (state.paperResetId === resetId)
+      return { success: true, reset: false, alreadyApplied: true, cashUsd: state.cashUsd };
+    const positionIsLive = state.position?.mode === "LIVE" ||
+      state.position?.liveExecution?.executionMode === "LIVE";
+    if (positionIsLive)
+      return { success: false, reason: "An open live position exists; preserving it and its exit monitoring." };
+
+    let archivePath = null;
+    if (io.existsSync(file)) {
+      archivePath = file + ".archive-" + resetId + ".json";
+      if (!io.existsSync(archivePath)) {
+        io.writeFileSync(archivePath, io.readFileSync(file, "utf8"), { flag: "wx", flush: true });
+      }
+    }
+    const next = {
+      startingBalanceUsd: balance,
+      cashUsd: balance,
+      position: null,
+      history: [],
+      rejections: [],
+      lastScanAt: null,
+      nextSizingStep: 0,
+      paperResetId: resetId
+    };
+    commit(next);
+    return { success: true, reset: true, startingBalanceUsd: balance, cashUsd: balance, archivePath };
+  }
   function getSizing() {
     const step = state.nextSizingStep === 1 ? 1 : 0;
     const percent = step === 0 ? 10 : 12.5;
@@ -143,7 +174,7 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     console.log("[REJECTED: " + reason + "] Gemini", candidate.symbol || candidate.tokenAddress || "unknown");
   }
   function setScanTime() { const next = structuredClone(state); next.lastScanAt = new Date().toISOString(); commit(next); }
-  return { getSizing, getLiveSizing, buy, sell, writeOff, removeClosedPosition, recordRejection, setScanTime, updatePosition, getState: () => structuredClone(state), file };
+  return { resetPaperAccount, getSizing, getLiveSizing, buy, sell, writeOff, removeClosedPosition, recordRejection, setScanTime, updatePosition, getState: () => structuredClone(state), file };
 }
 let instance;
 const current = () => {
@@ -178,4 +209,4 @@ const current = () => {
   }
   return instance;
 };
-module.exports = { createGeminiTrader, defaultFile, getSizing: (...a) => current().getSizing(...a), getLiveSizing: (...a) => current().getLiveSizing(...a), getState: (...a) => current().getState(...a), buy: (...a) => current().buy(...a), sell: (...a) => current().sell(...a), writeOff: (...a) => current().writeOff(...a), recordRejection: (...a) => current().recordRejection(...a), setScanTime: (...a) => current().setScanTime(...a), updatePosition: (...a) => current().updatePosition(...a) };
+module.exports = { createGeminiTrader, defaultFile, resetPaperAccount: (...a) => current().resetPaperAccount(...a), getSizing: (...a) => current().getSizing(...a), getLiveSizing: (...a) => current().getLiveSizing(...a), getState: (...a) => current().getState(...a), buy: (...a) => current().buy(...a), sell: (...a) => current().sell(...a), writeOff: (...a) => current().writeOff(...a), recordRejection: (...a) => current().recordRejection(...a), setScanTime: (...a) => current().setScanTime(...a), updatePosition: (...a) => current().updatePosition(...a) };
