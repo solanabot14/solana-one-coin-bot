@@ -315,7 +315,6 @@ function slippageFor(pair) {
             trader.recordRejection(candidate, "Live Trading Not Ready", { reason: liveStatus.reason });
             continue;
           }
-          const liveSizing = trader.getLiveSizing?.() || { step: 0, amountUsd: 2 };
           const amountUsd = Number(liveSizing.amountUsd);
           if (!(amountUsd > 0) || Number(trader.getState().cashUsd) < amountUsd) {
             trader.recordRejection(candidate, "Insufficient Gemini Live Balance", {
