@@ -310,28 +310,42 @@ function slippageFor(pair) {
           }
           candidate.geminiDetails = { ...result.details, executionQuote: sellability };
           candidate.slippageBps = slippageFor(candidate);
-          if (!getTelegramConfig().enabled) {
-            trader.recordRejection(candidate, "Telegram Manual Signal Unavailable", {
-              reason: "Gemini manual-live mode requires Telegram configuration."
+          const liveStatus = liveExecution.status();
+          if (liveStatus.mode !== "LIVE_READY") {
+            trader.recordRejection(candidate, "Live Trading Not Ready", { reason: liveStatus.reason });
+            continue;
+          }
+          const liveSizing = trader.getLiveSizing?.() || { step: 0, amountUsd: 2 };
+          const amountUsd = Number(liveSizing.amountUsd);
+          if (!(amountUsd > 0) || Number(trader.getState().cashUsd) < amountUsd) {
+            trader.recordRejection(candidate, "Insufficient Gemini Live Balance", {
+              requiredUsd: amountUsd,
+              availableUsd: Number(trader.getState().cashUsd) || 0
             });
             continue;
           }
-          // Manual-live signal mode never opens paper positions or automatic live entries.
-          // Only an authorized Telegram Buy tap can authorize this individual live order.
-          const signalId = randomUUID();
-          pendingBuySignals.set(signalId, {
-            candidate: structuredClone(candidate),
-            expiresAt: Date.now() + BUY_SIGNAL_TTL_MS
+          const fill = await liveExecution.executeEntry({
+            outputMint: candidate.tokenAddress,
+            amountUsd,
+            slippageBps: candidate.slippageBps
           });
-          const alert = await sendGeminiBuyAlert(signalId, candidate, liveSizing.amountUsd);
-          if (!alert.sent) {
-            pendingBuySignals.delete(signalId);
-            trader.recordRejection(candidate, "Telegram Buy Alert Delivery Failed", { reason: alert.reason });
-            continue;
+          candidate.liveExecution = {
+            ...fill,
+            executionMode: "LIVE",
+            outputAmount: fill.actualOutputAmount
+          };
+          candidate.liveSizing = liveSizing;
+          const buy = trader.buy(candidate, amountUsd);
+          if (!buy.success) {
+            console.error("[CRITICAL] Gemini automatic live swap executed but could not be recorded", candidate.tokenAddress, buy.error);
+            throw new Error("Gemini live swap executed, but the position could not be recorded.");
           }
-          console.log("[INFO] Gemini Telegram manual-live buy signal sent", {
-            symbol: candidate.symbol, mint: candidate.tokenAddress,
-            amountUsd: liveSizing.amountUsd, liquidityTrend: candidate.liquidityTrend, expiresInMs: BUY_SIGNAL_TTL_MS
+          console.log("[INFO] Gemini automatic live entry", {
+            symbol: candidate.symbol,
+            mint: candidate.tokenAddress,
+            tradeSizeUsd: amountUsd,
+            signature: fill.signature,
+            liquidityTrend: candidate.liquidityTrend
           });
           break;
         } catch (error) {
