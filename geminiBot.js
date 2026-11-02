@@ -418,7 +418,7 @@ function slippageFor(pair) {
     lastError = null;
     const s = { controller: new AbortController() };
     session = s;
-    console.log("[INFO] Gemini Bot started in AUTOMATIC LIVE mode; fixed $2 entries; Telegram buying disabled; exits remain +15%, -8%, and the liquidity guard.");
+    console.log("[INFO] Gemini Bot started in AUTOMATIC LIVE mode; fixed $2 entries; Telegram buying disabled; exits remain +15%, -15%, and the liquidity guard.");
     scanInterval = timers.setInterval(() => void scan(s), SCAN_MS);
     monitorInterval = timers.setInterval(() => void monitor(s), MONITOR_MS);
     void scan(s); void monitor(s);
