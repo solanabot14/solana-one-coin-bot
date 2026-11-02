@@ -10,7 +10,7 @@ const { getTelegramConfig, sendGeminiBuyAlert, startTelegramBuyPolling } = requi
 
 const SCAN_MS = Number(process.env.GEMINI_SCAN_MS) || 30000;
 const MONITOR_MS = Number(process.env.GEMINI_MONITOR_MS) || 3000;
-const HARD_STOP = -8;
+const HARD_STOP = -15;
 const MAX_SLIPPAGE_BPS = Math.min(1000, Math.max(200, Number(process.env.SLIPPAGE_BPS) || 300));
 const MAX_DISCOVERY_CANDIDATES = 40;
 const SELLABILITY_TIMEOUT_MS = 10_000;
