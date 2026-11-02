@@ -210,16 +210,16 @@
     return '<tr class="click-row" data-open-system="'+s.id+'"><td><div class="system-name"><span class="system-mark">'+systemIcon(s.id)+'</span>'+esc(s.label)+' <span class="badge">PAPER</span></div></td><td>'+int(m.trades)+'</td><td>'+int(m.wins)+'</td><td>'+int(m.losses)+'</td><td>'+metric(m.winRate,function(x){return x.toFixed(1)+'%';})+'</td><td>'+money(m.grossProfit)+'</td><td>â'+money(m.grossLoss)+'</td><td class="'+signClass(m.netPnl)+'">'+money(m.netPnl)+'</td><td>'+pct(m.returnPercent)+'</td><td>'+money(m.averageTrade)+'</td><td>'+money(m.averageWin)+'</td><td>'+money(m.averageLoss)+'</td><td>'+metric(m.profitFactor,function(x){return x===Infinity?'â':x.toFixed(2);})+'</td><td>'+money(m.best)+'</td><td>'+money(m.worst)+'</td><td>'+duration(m.averageHoldMs)+'</td><td>'+money(m.capitalDeployed)+'</td><td><span class="status-line '+(s.running?'':'offline')+'"><i></i>'+(s.running?'RUNNING':'STOPPED')+'</span></td></tr>';
   }
   function dexScreenerAddress(position, live) {
-    return position.tokenAddress || live.tokenAddress || position.mint || live.mint || position.tokenMint || live.tokenMint || position.pairAddress || live.pairAddress || '';
+    return position.pairAddress || live.pairAddress || position.tokenAddress || live.tokenAddress || position.mint || live.mint || position.tokenMint || live.tokenMint || '';
   }
   function transactionDexScreenerAddress(trade) {
     var source=trade.sourceRecord||{}, base=trade.baseToken||source.baseToken||{}, token=trade.token&&typeof trade.token==='object'?trade.token:{};
     var position=trade.position||source.position||{};
     var candidates=[
+      trade.pairAddress,source.pairAddress,position.pairAddress,
       trade.tokenAddress,source.tokenAddress,trade.mint,source.mint,trade.mintAddress,source.mintAddress,
       trade.tokenMint,source.tokenMint,trade.baseTokenAddress,source.baseTokenAddress,base.address,token.address,
-      position.tokenAddress,position.mint,position.tokenMint,
-      trade.pairAddress,source.pairAddress,position.pairAddress
+      position.tokenAddress,position.mint,position.tokenMint
     ];
     for(var i=0;i<candidates.length;i++){
       var address=String(candidates[i]||'').trim();
