@@ -230,7 +230,11 @@ function slippageFor(pair) {
             canonicalPoolVerified: candidate.exactPoolVerified
           }, freshPair);
           refreshed.liquidityTrend = candidate.liquidityTrend;
-          refreshed.priceTrend = candidate.priceTrend;
+          refreshed.priceTrend =
+            candidate.priceTrend === "Falling since last scan" ||
+            Number(refreshed.priceUsd) < Number(candidate.priceUsd)
+              ? "Falling since last scan"
+              : candidate.priceTrend;
           const freshResult = await filter(refreshed, { signal: s.controller.signal, marketOnly: true });
           if (!freshResult.accepted) {
             trader.recordRejection(refreshed, "Pre-Alert Recheck: " + freshResult.reason, freshResult.details);
