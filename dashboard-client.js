@@ -243,7 +243,6 @@
     var address=transactionDexScreenerAddress(trade);
     if(address) return {href:'https://dexscreener.com/solana/'+encodeURIComponent(address),label:'OPEN COIN ON DEXSCREENER â',hint:'Opens this coin directly on DexScreener.'};
     if(trade.systemId==='outcome')return {href:'https://www.coinbase.com/price/'+encodeURIComponent(String(trade.symbol||trade.token||'').toLowerCase()),label:'VIEW COINBASE â',hint:'Coinbase asset market'};
-    var source=trade.sourceRecord||{};
     return {href:null,label:'EXACT COIN LINK UNAVAILABLE',hint:'This older transaction has no saved token or pool address, so an exact chart link cannot be generated.'};
   }
   function transactionDexScreenerAnchor(link) {
