@@ -1,4 +1,4 @@
-const { getMintSafety, getHolderConcentration } = require("./geminiSources");
+const { getMintSafety, getHolderConcentration, getLiquidityLock } = require("./geminiSources");
 
 // Restore yesterday's entry thresholds while keeping current on-chain safety gates.
 const MIN_LIQUIDITY_USD = 5000;
@@ -8,8 +8,9 @@ const MIN_TRANSACTIONS_5M = 15;
 const MIN_BUY_RATIO_5M = 0.55;
 const MIN_PRICE_CHANGE_5M = 2;
 const MAX_TOP10_PERCENT = 35;
+const MIN_LP_LOCKED_PERCENT = 95;
 
-async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety, holderConcentration = getHolderConcentration, marketOnly = false } = {}) {
+async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety, holderConcentration = getHolderConcentration, liquidityLock = getLiquidityLock, marketOnly = false } = {}) {
   const reject = (reason, details = {}) => ({ accepted: false, reason, details });
   if (!candidate.exactPoolVerified || String(candidate.dexId || "").toLowerCase() !== "pumpswap")
     return reject("Exact PumpSwap Pool Unverified", { validation: candidate.canonicalPoolFailureReason || null });
@@ -37,10 +38,20 @@ async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety
   if (!Number.isFinite(priceChange5m)) return reject("5m Price Trend Unverified");
   if (priceChange5m < MIN_PRICE_CHANGE_5M)
     return reject("5m Momentum Below +2%", { priceChange5m, minimum: MIN_PRICE_CHANGE_5M });
+  let lock;
+  try { lock = await liquidityLock(candidate.tokenAddress, signal); }
+  catch (error) { return reject("Liquidity Lock Data Unverified", { error: error.message }); }
+  const lockedPercent = Number(lock?.lockedPercent);
+  if (!lock?.verified || !Number.isFinite(lockedPercent) || lockedPercent < 0 || lockedPercent > 100)
+    return reject("Liquidity Lock Data Unverified", { reason: lock?.reason || null });
+  if (lockedPercent < MIN_LP_LOCKED_PERCENT)
+    return reject("Insufficient LP Locked or Burned", { lockedPercent, minimum: MIN_LP_LOCKED_PERCENT });
+
   const marketDetails = {
     dexId: candidate.dexId || null, liquidityUsd: liquidity, poolAgeMs: age,
     transactions5m: tx, volume5mUsd, buyRatio,
-    priceChange5m: Number.isFinite(priceChange5m) ? priceChange5m : null
+    priceChange5m: Number.isFinite(priceChange5m) ? priceChange5m : null,
+    liquidityLockedPercent: lockedPercent
   };
   if (marketOnly) return { accepted: true, reason: "Gemini market checks passed", details: marketDetails };
 
@@ -76,4 +87,5 @@ module.exports = {
   MIN_BUY_RATIO_5M,
   MIN_PRICE_CHANGE_5M,
   MAX_TOP10_PERCENT,
+  MIN_LP_LOCKED_PERCENT,
 };
