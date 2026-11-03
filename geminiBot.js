@@ -376,25 +376,51 @@ function slippageFor(pair) {
         const state = trader.getState();
         state.position.highestPrice = price;
         trader.updatePosition?.(state.position);
+        latest.highestPrice = price;
       }
       // Exit while a quote and meaningful liquidity still exist, rather than
       // allowing this one-position bot to be trapped at near-zero liquidity.
-      const close = async reason => {
-        if (latest.liveExecution?.executionMode !== "LIVE") return trader.sell(price, 100, reason);
+      const close = async (reason, percentOfCurrent = 100) => {
+        const remainingRatio = latest.originalQuantity > 0 ? latest.quantity / latest.originalQuantity : 1;
+        if (latest.liveExecution?.executionMode !== "LIVE")
+          return trader.sell(price, remainingRatio * percentOfCurrent, reason);
         const raw = latest.liveExecution?.outputAmount;
         if (!/^\d+$/.test(String(raw || ""))) throw new Error("Live position has no confirmed token amount.");
-        const fill = await liveExecution.executeSwap({ inputMint: latest.tokenAddress, outputMint: USDC, amount: raw, slippageBps: MAX_SLIPPAGE_BPS, purpose: "exit" });
+        const requestedRaw = (BigInt(raw) * BigInt(Math.round(percentOfCurrent * 100))) / 10000n;
+        if (requestedRaw <= 0n) throw new Error("Live partial exit amount rounds to zero.");
+        const fill = await liveExecution.executeSwap({ inputMint: latest.tokenAddress, outputMint: USDC, amount: requestedRaw.toString(), slippageBps: MAX_SLIPPAGE_BPS, purpose: "exit" });
         const out = Number(fill.actualOutputAmount);
         if (!Number.isFinite(out) || out < 0) throw new Error("Live exit lacks confirmed USDC output.");
-        return trader.sell((out / 1e6) / latest.quantity, 100, reason, { ...fill, actualOutputAmount: String(out) });
+        // Prefer the wallet-reflected token input. If Jupiter omits it, this is
+        // an exact-input order, so conservatively subtract the requested amount.
+        const reportedInput = String(fill.actualInputAmount || "");
+        const actualInput = /^\d+$/.test(reportedInput) ? BigInt(reportedInput) : requestedRaw;
+        if (actualInput > BigInt(raw)) throw new Error("Live exit input exceeds the recorded token balance.");
+        const fractionSold = Number(actualInput) / Number(raw);
+        const percentOriginal = remainingRatio * fractionSold * 100;
+        const soldQuantity = latest.quantity * fractionSold;
+        if (!(soldQuantity > 0)) throw new Error("Live exit has no confirmed sold quantity.");
+        const remainingTokenAmount = (BigInt(raw) - actualInput).toString();
+        return trader.sell((out / 1e6) / soldQuantity, percentOriginal, reason, {
+          ...fill, actualOutputAmount: String(out), remainingTokenAmount
+        });
       };
       if (Number.isFinite(liquidityUsd) && liquidityUsd > 0 && liquidityUsd < exitLiquidityFloorUsd) {
         await close("LIQUIDITY COLLAPSE EXIT");
         return;
       }
-      if (price <= latest.entryPrice * (1 + HARD_STOP / 100)) { await close("HARD STOP -8%"); return; }
-      if (price >= latest.entryPrice * 1.15) {
-        await close("TP +15% FULL EXIT");
+      if (latest.tp1Done) {
+        const runnerStop = Math.max(latest.entryPrice, latest.highestPrice * 0.90);
+        if (price <= runnerStop) {
+          await close("RUNNER TRAILING STOP 10% / BREAKEVEN FLOOR");
+          return;
+        }
+      } else if (price <= latest.entryPrice * (1 + HARD_STOP / 100)) {
+        await close("HARD STOP -15%");
+        return;
+      }
+      if (!latest.tp1Done && price >= latest.entryPrice * 1.20) {
+        await close("TP +20% SELL 80%", 80);
         return;
       }
     } catch (error) {
@@ -418,7 +444,7 @@ function slippageFor(pair) {
     lastError = null;
     const s = { controller: new AbortController() };
     session = s;
-    console.log("[INFO] Gemini Bot started in AUTOMATIC LIVE mode; fixed $2 entries; Telegram buying disabled; exits remain +15%, -15%, and the liquidity guard.");
+    console.log("[INFO] Gemini Bot started in AUTOMATIC LIVE mode; fixed $2 entries; Telegram buying disabled; exits are 80% at +20%, a 20% runner with a 10% trailing stop and breakeven floor, initial hard stop -15%, and the liquidity guard.");
     scanInterval = timers.setInterval(() => void scan(s), SCAN_MS);
     monitorInterval = timers.setInterval(() => void monitor(s), MONITOR_MS);
     void scan(s); void monitor(s);

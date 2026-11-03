@@ -129,5 +129,5 @@ test("Gemini monitor uses GeckoTerminal when DexScreener cannot quote the open p
   bot.stop();
   assert.equal(fallbackCalls, 1);
   assert.equal(position.pairAddress, "live-pair");
-  assert.deepEqual(sold, { price: 1.25, percent: 100, reason: "TP +20% FULL EXIT" });
+  assert.deepEqual(sold, { price: 1.25, percent: 80, reason: "TP +20% SELL 80%" });
 });
