@@ -15,7 +15,7 @@ Module._load = function(request, parent, isMain) {
 const { evaluateCandidate } = require("../geminiFilter");
 const candidate = (priceChange5m, overrides = {}) => ({
   tokenAddress: "mint", exactPoolVerified: true, dexId: "pumpswap", liquidityUsd: 10000,
-  poolCreatedAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+  poolCreatedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
   buys5m: 20, sells5m: 10, volume5m: 6000, priceChange5m, ...overrides
 });
 const safeDeps = {
@@ -47,12 +47,12 @@ test("accepts strong momentum without an arbitrary upper cap", async () => {
   const result = await evaluateCandidate(candidate(30), safeDeps);
   assert.equal(result.accepted, true);
 });
-test("rejects a PumpSwap pool younger than 5 minutes", async () => {
+test("rejects a PumpSwap pool younger than 1 hour", async () => {
   const result = await evaluateCandidate(candidate(3, {
     poolCreatedAt: new Date(Date.now() - 4 * 60 * 1000).toISOString()
   }), safeDeps);
   assert.equal(result.accepted, false);
-  assert.equal(result.reason, "Pool Age Below 5 Minutes");
+  assert.equal(result.reason, "Pool Age Below 1 Hour");
 });
 test("accepts an active PumpSwap pool older than 2 hours and within 48 hours", async () => {
   const result = await evaluateCandidate(candidate(3, {
