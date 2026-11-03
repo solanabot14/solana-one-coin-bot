@@ -10,7 +10,7 @@ const { getTelegramConfig, sendGeminiBuyAlert, startTelegramBuyPolling } = requi
 
 const SCAN_MS = Number(process.env.GEMINI_SCAN_MS) || 30000;
 const MONITOR_MS = Number(process.env.GEMINI_MONITOR_MS) || 3000;
-const HARD_STOP = -15;
+const HARD_STOP = -30;
 const MAX_SLIPPAGE_BPS = Math.min(1000, Math.max(200, Number(process.env.SLIPPAGE_BPS) || 300));
 const MAX_DISCOVERY_CANDIDATES = 40;
 const SELLABILITY_TIMEOUT_MS = 10_000;
@@ -444,7 +444,7 @@ function slippageFor(pair) {
     lastError = null;
     const s = { controller: new AbortController() };
     session = s;
-    console.log("[INFO] Gemini Bot started in AUTOMATIC LIVE mode; fixed $2 entries; Telegram buying disabled; exits are 80% at +20%, a 20% runner with a 10% trailing stop and breakeven floor, initial hard stop -15%, and the liquidity guard.");
+    console.log("[INFO] Gemini Bot started in AUTOMATIC LIVE mode; fixed $2 entries; Telegram buying disabled; exits are 80% at +20%, a 20% runner with a 10% trailing stop and breakeven floor, initial hard stop -30%, and the liquidity guard.");
     scanInterval = timers.setInterval(() => void scan(s), SCAN_MS);
     monitorInterval = timers.setInterval(() => void monitor(s), MONITOR_MS);
     void scan(s); void monitor(s);
