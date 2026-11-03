@@ -54,7 +54,7 @@ See Railway's [networking guidance](https://docs.railway.com/networking/troubles
 
 ## Gemini Bot
 
-Gemini is an independent paper-only Solana meme-coin bot shown in the shared analytics dashboard. It starts and stops with the application and has a separate saved paper account. The dashboard reports Gemini as its own system across home comparisons, per-bot performance, analytics, and transactions.
+Gemini is an independent Solana meme-coin bot shown in the shared analytics dashboard. It has a separate saved account and uses its protected live execution path when live entries are enabled; the current Railway deployment keeps live entries disabled. The dashboard reports Gemini as its own system across home comparisons, per-bot performance, analytics, and transactions.
 
 Gemini scans GeckoTerminal and DexScreener candidates, then requires an exact on-chain verified PumpSwap pool, at least $5,000 liquidity, pool age 2–120 minutes, at least 15 transactions in 5 minutes, buy pressure above 55%, at least +2% 5-minute price movement, at least 95% LP locked or burned as reported by RugCheck, revoked mint authority, disabled freeze authority, and top 10 non-pool holder concentration below 35%. Missing or unverified safety data is rejected.
 
