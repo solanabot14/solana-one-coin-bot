@@ -376,6 +376,7 @@ function slippageFor(pair) {
         const state = trader.getState();
         state.position.highestPrice = price;
         trader.updatePosition?.(state.position);
+        latest.highestPrice = price;
       }
       // Exit while a quote and meaningful liquidity still exist, rather than
       // allowing this one-position bot to be trapped at near-zero liquidity.
@@ -390,8 +391,10 @@ function slippageFor(pair) {
         const fill = await liveExecution.executeSwap({ inputMint: latest.tokenAddress, outputMint: USDC, amount: requestedRaw.toString(), slippageBps: MAX_SLIPPAGE_BPS, purpose: "exit" });
         const out = Number(fill.actualOutputAmount);
         if (!Number.isFinite(out) || out < 0) throw new Error("Live exit lacks confirmed USDC output.");
-        if (!/^\d+$/.test(String(fill.actualInputAmount || ""))) throw new Error("Live exit lacks confirmed token input amount.");
-        const actualInput = BigInt(fill.actualInputAmount);
+        // Prefer the wallet-reflected token input. If Jupiter omits it, this is
+        // an exact-input order, so conservatively subtract the requested amount.
+        const reportedInput = String(fill.actualInputAmount || "");
+        const actualInput = /^\d+$/.test(reportedInput) ? BigInt(reportedInput) : requestedRaw;
         if (actualInput > BigInt(raw)) throw new Error("Live exit input exceeds the recorded token balance.");
         const fractionSold = Number(actualInput) / Number(raw);
         const percentOriginal = remainingRatio * fractionSold * 100;
