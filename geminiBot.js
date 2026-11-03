@@ -392,9 +392,9 @@ function slippageFor(pair) {
         await close("LIQUIDITY COLLAPSE EXIT");
         return;
       }
-      if (price <= latest.entryPrice * (1 + HARD_STOP / 100)) { await close("HARD STOP -8%"); return; }
-      if (price >= latest.entryPrice * 1.15) {
-        await close("TP +15% FULL EXIT");
+      if (price <= latest.entryPrice * (1 + HARD_STOP / 100)) { await close("HARD STOP -15%"); return; }
+      if (price >= latest.entryPrice * 1.20) {
+        await close("TP +20% FULL EXIT");
         return;
       }
     } catch (error) {
@@ -418,7 +418,7 @@ function slippageFor(pair) {
     lastError = null;
     const s = { controller: new AbortController() };
     session = s;
-    console.log("[INFO] Gemini Bot started in AUTOMATIC LIVE mode; fixed $2 entries; Telegram buying disabled; exits remain +15%, -15%, and the liquidity guard.");
+    console.log("[INFO] Gemini Bot started in AUTOMATIC LIVE mode; fixed $2 entries; Telegram buying disabled; exits are +20% full exit, -15% hard stop, and the liquidity guard.");
     scanInterval = timers.setInterval(() => void scan(s), SCAN_MS);
     monitorInterval = timers.setInterval(() => void monitor(s), MONITOR_MS);
     void scan(s); void monitor(s);
