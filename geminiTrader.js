@@ -100,6 +100,8 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
     next.history.unshift(trade);
     if (reason === "TP1 +50%" || reason === "TP +15% SELL 95%" || reason === "TP +20% SELL 80%") next.position.tp1Done = true;
     if (reason === "TP2 +100%") next.position.tp2Done = true;
+    if (next.position && execution?.remainingTokenAmount != null && next.position.liveExecution?.executionMode === "LIVE")
+      next.position.liveExecution = { ...next.position.liveExecution, outputAmount: String(execution.remainingTokenAmount) };
     if (next.position) next.position.remainingPercent = Math.max(0, next.position.quantity / next.position.originalQuantity * 100);
     if (next.position.quantity <= p.originalQuantity * 0.000001) next.position = null;
     commit(next);
