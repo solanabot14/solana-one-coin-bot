@@ -56,9 +56,9 @@ See Railway's [networking guidance](https://docs.railway.com/networking/troubles
 
 Gemini is an independent paper-only Solana meme-coin bot shown in the shared analytics dashboard. It starts and stops with the application and has a separate saved paper account. The dashboard reports Gemini as its own system across home comparisons, per-bot performance, analytics, and transactions.
 
-Gemini scans GeckoTerminal new pools and DexScreener latest profiles, then applies strict filters: at least $5,000 liquidity, pool age 2–120 minutes, mint and freeze authorities disabled, at least 15 transactions in 5 minutes, buy ratio above 55%, and top 10 non-pool holder concentration below 35%. Missing safety evidence is rejected and appears in the rejection log.
+Gemini scans GeckoTerminal and DexScreener candidates, then requires an exact on-chain verified PumpSwap pool, at least $5,000 liquidity, pool age 2–120 minutes, at least 15 transactions in 5 minutes, buy pressure above 55%, at least +2% 5-minute price movement, at least 95% LP locked or burned as reported by RugCheck, revoked mint authority, disabled freeze authority, and top 10 non-pool holder concentration below 35%. Missing or unverified safety data is rejected.
 
-Paper exits sell 50% of original quantity at +50%, 30% at +100%, and trail the final 20% by 15% after TP1; hard stop is -20%. At 15 minutes, it exits the remaining quantity when return is between -5% and +10%. No wallet key or on-chain swap is used.
+Gemini exits the full position at +20%, with a -15% hard stop and an additional liquidity-collapse exit guard. The current Railway deployment keeps automatic live entries disabled; the live execution switch must be enabled separately. Entry sizing is fixed at $2. Live swaps use the configured Jupiter execution path.
 
 State is stored separately in `gemini-paper-state.json` on the Railway volume. Optional variables include `RPC_URL`, `GEMINI_STARTING_BALANCE_USD` (default $200), `GEMINI_TRADE_SIZE_USD` (default $10), `GEMINI_SCAN_MS` (default 30,000), and `GEMINI_MONITOR_MS` (default 3,000).
 
