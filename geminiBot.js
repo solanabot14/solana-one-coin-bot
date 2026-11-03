@@ -409,19 +409,50 @@ function slippageFor(pair) {
         await close("LIQUIDITY COLLAPSE EXIT");
         return;
       }
-      if (latest.tp1Done) {
-        const runnerStop = Math.max(latest.entryPrice, latest.highestPrice * 0.90);
-        if (price <= runnerStop) {
-          await close("RUNNER TRAILING STOP 10% / BREAKEVEN FLOOR");
+      const usesStagedExit = String(latest.strategy || "").includes("staged exits 50% at +20%");
+      if (usesStagedExit) {
+        if (!latest.tp1Done) {
+          if (price <= latest.entryPrice * (1 + HARD_STOP / 100)) {
+            await close("HARD STOP -30%");
+            return;
+          }
+          if (price >= latest.entryPrice * 1.20) {
+            await close("TP1 +20% SELL 50%", 50);
+            return;
+          }
+        } else if (!latest.tp2Done) {
+          if (price <= latest.entryPrice) {
+            await close("BREAKEVEN STOP AFTER TP1");
+            return;
+          }
+          if (price >= latest.entryPrice * 1.30) {
+            // Sell 80% of the remaining half = 40% of the original position.
+            await close("TP2 +30% SELL 40%", 80);
+            return;
+          }
+        } else {
+          const runnerStop = Math.max(latest.entryPrice, latest.highestPrice * 0.90);
+          if (price <= runnerStop) {
+            await close("RUNNER TRAILING STOP 10% / BREAKEVEN FLOOR");
+            return;
+          }
+        }
+      } else {
+        // Existing positions keep the exit rules saved when they were opened.
+        if (latest.tp1Done) {
+          const runnerStop = Math.max(latest.entryPrice, latest.highestPrice * 0.90);
+          if (price <= runnerStop) {
+            await close("RUNNER TRAILING STOP 10% / BREAKEVEN FLOOR");
+            return;
+          }
+        } else if (price <= latest.entryPrice * (1 + HARD_STOP / 100)) {
+          await close("HARD STOP -30%");
           return;
         }
-      } else if (price <= latest.entryPrice * (1 + HARD_STOP / 100)) {
-        await close("HARD STOP -15%");
-        return;
-      }
-      if (!latest.tp1Done && price >= latest.entryPrice * 1.20) {
-        await close("TP +20% SELL 80%", 80);
-        return;
+        if (!latest.tp1Done && price >= latest.entryPrice * 1.20) {
+          await close("TP +20% SELL 80%", 80);
+          return;
+        }
       }
     } catch (error) {
       if (isActive(s)) { lastError = error.message; console.error("[INFO] Gemini monitor failed", error.message); }
@@ -444,7 +475,7 @@ function slippageFor(pair) {
     lastError = null;
     const s = { controller: new AbortController() };
     session = s;
-    console.log("[INFO] Gemini Bot started in AUTOMATIC LIVE mode; fixed $2 entries; Telegram buying disabled; exits are 80% at +20%, a 20% runner with a 10% trailing stop and breakeven floor, initial hard stop -30%, and the liquidity guard.");
+    console.log("[INFO] Gemini Bot started in AUTOMATIC LIVE mode; fixed $2 entries; Telegram buying disabled; exits are 50% at +20%, 40% at +30%, a 10% runner with a 10% trailing stop and breakeven protection, initial hard stop -30%, and the liquidity guard.");
     scanInterval = timers.setInterval(() => void scan(s), SCAN_MS);
     monitorInterval = timers.setInterval(() => void monitor(s), MONITOR_MS);
     void scan(s); void monitor(s);
