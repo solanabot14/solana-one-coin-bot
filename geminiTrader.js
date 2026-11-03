@@ -64,7 +64,7 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
       symbol: candidate.symbol || "Unknown", name: candidate.name || candidate.symbol || "Unknown",
       entryPrice: price, quantity: size / price, originalQuantity: size / price, originalCostUsd: size,
       amountInvestedUsd: size, entryTime: new Date().toISOString(), highestPrice: price,
-      tp1Done: false, tp2Done: false, remainingPercent: 100, strategy: "Gemini: 95% reported LP lock; 80% at +20%; 20% runner with 10% trailing stop and breakeven floor; initial hard stop -15%",
+      tp1Done: false, tp2Done: false, remainingPercent: 100, strategy: "Gemini: staged exits 50% at +20%, 40% at +30%, 10% runner with 10% trailing stop after +30%; breakeven protection after +20%; initial hard stop -30%",
       sizingPercent: sizing.percent,
       entryDetails: candidate.geminiDetails || {}, entryReason: candidate.entryReason || candidate.entrySignal || "Gemini entry checks passed", liveExecution: candidate.liveExecution || null, mode,
       liveSizingStep: candidate.liveExecution ? getLiveSizing().step : null
@@ -98,8 +98,8 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
       reason, time: new Date().toISOString(), mode: execution ? "LIVE" : "PAPER", execution
     };
     next.history.unshift(trade);
-    if (reason === "TP1 +50%" || reason === "TP +15% SELL 95%" || reason === "TP +20% SELL 80%") next.position.tp1Done = true;
-    if (reason === "TP2 +100%") next.position.tp2Done = true;
+    if (reason === "TP1 +20% SELL 50%" || reason === "TP1 +50%" || reason === "TP +15% SELL 95%" || reason === "TP +20% SELL 80%") next.position.tp1Done = true;
+    if (reason === "TP2 +30% SELL 40%" || reason === "TP2 +100%") next.position.tp2Done = true;
     if (next.position && execution?.remainingTokenAmount != null && next.position.liveExecution?.executionMode === "LIVE")
       next.position.liveExecution = { ...next.position.liveExecution, outputAmount: String(execution.remainingTokenAmount) };
     if (next.position) next.position.remainingPercent = Math.max(0, next.position.quantity / next.position.originalQuantity * 100);
