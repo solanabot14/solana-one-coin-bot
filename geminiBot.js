@@ -47,6 +47,7 @@ function slippageFor(pair) {
   let lastMonitorAt = null, lastQuoteAt = null, lastQuoteFailureAt = null;
   const lastPriceByPositionId = new Map();
   const liquiditySnapshots = new Map();
+  const priceSnapshots = new Map();
   let session = null, scanInterval = null, monitorInterval = null, busyScan = false, busyMonitor = false, busyTelegramBuy = false, telegramPollingStop = null, lastError = null;
   const pendingBuySignals = new Map();
   function observeLiquidityTrend(candidate) {
@@ -64,6 +65,20 @@ function slippageFor(pair) {
     if (liquidityUsd > previous.liquidityUsd) return "Rising since last scan";
     if (liquidityUsd < previous.liquidityUsd) return "Falling since last scan";
     return "Stable since last scan";
+  }
+  function observePriceTrend(candidate) {
+    const pairAddress = String(candidate.pairAddress || "").toLowerCase();
+    const priceUsd = Number(candidate.priceUsd);
+    if (!pairAddress || !(priceUsd > 0) || !Number.isFinite(priceUsd)) return "Unavailable";
+    const now = Date.now();
+    for (const [key, snapshot] of priceSnapshots) {
+      if (now - snapshot.at > 5 * 60_000) priceSnapshots.delete(key);
+    }
+    const previous = priceSnapshots.get(pairAddress);
+    priceSnapshots.set(pairAddress, { priceUsd, at: now });
+    while (priceSnapshots.size > 500) priceSnapshots.delete(priceSnapshots.keys().next().value);
+    if (!previous || now - previous.at > 5 * 60_000) return "No prior reading";
+    return priceUsd < previous.priceUsd ? "Falling since last scan" : "Not falling since last scan";
   }
   const isActive = s => session === s && !s.controller.signal.aborted;
 
@@ -182,6 +197,15 @@ function slippageFor(pair) {
         try {
           let candidate = candidateForPool(pool, canonicalPools);
           candidate.liquidityTrend = observeLiquidityTrend(candidate);
+          candidate.priceTrend = observePriceTrend(candidate);
+          const priorLosses = trader.getClosedLossCount?.(candidate.tokenAddress) || 0;
+          if (priorLosses >= 2) {
+            trader.recordRejection(candidate, "Coin Locked After Two Losing Trades", {
+              closedLosingTrades: priorLosses,
+              rule: "Do not re-enter a mint after two completed losing trades."
+            });
+            continue;
+          }
           if (!(candidate.priceUsd > 0)) {
             trader.recordRejection(candidate, "Price Unavailable");
             continue;
@@ -206,6 +230,11 @@ function slippageFor(pair) {
             canonicalPoolVerified: candidate.exactPoolVerified
           }, freshPair);
           refreshed.liquidityTrend = candidate.liquidityTrend;
+          refreshed.priceTrend =
+            candidate.priceTrend === "Falling since last scan" ||
+            Number(refreshed.priceUsd) < Number(candidate.priceUsd)
+              ? "Falling since last scan"
+              : candidate.priceTrend;
           const freshResult = await filter(refreshed, { signal: s.controller.signal, marketOnly: true });
           if (!freshResult.accepted) {
             trader.recordRejection(refreshed, "Pre-Alert Recheck: " + freshResult.reason, freshResult.details);
