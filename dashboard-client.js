@@ -227,17 +227,30 @@
     }
     return '';
   }
+  function transactionPairAddress(trade) {
+    var source=trade.sourceRecord||{}, position=trade.position||source.position||{};
+    var candidates=[trade.pairAddress,source.pairAddress,position.pairAddress];
+    for(var i=0;i<candidates.length;i++){
+      var address=String(candidates[i]||'').trim();
+      if(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return address;
+    }
+    return '';
+  }
   function transactionDexScreenerLink(trade) {
     if(trade.systemId==='stock') return {href:'https://finance.yahoo.com/quote/'+encodeURIComponent(trade.symbol||trade.sourceRecord?.symbol||''),label:'VIEW STOCK â',hint:'View this stock or ETF.'};
+    var pairAddress=transactionPairAddress(trade);
+    if(pairAddress) return {href:'https://dexscreener.com/solana/'+encodeURIComponent(pairAddress),label:'VIEW EXACT PAIR CHART ↗',hint:'Opens the exact saved Solana pool for this closed trade.'};
     var address=transactionDexScreenerAddress(trade);
     if(address) return {href:'https://dexscreener.com/solana/'+encodeURIComponent(address),label:'OPEN COIN ON DEXSCREENER â',hint:'Opens this coin directly on DexScreener.'};
     if(trade.systemId==='outcome')return {href:'https://www.coinbase.com/price/'+encodeURIComponent(String(trade.symbol||trade.token||'').toLowerCase()),label:'VIEW COINBASE â',hint:'Coinbase asset market'};
     var source=trade.sourceRecord||{};
-    var query=trade.symbol||trade.tokenSymbol||trade.token||trade.name||trade.tokenName||source.symbol||source.tokenSymbol||source.token||source.name||source.tokenName||'';
-    query=String(query).trim();
-    return {href:query?'https://dexscreener.com/search?q='+encodeURIComponent(query):'https://dexscreener.com/search',
-      label:query?'SEARCH DEXSCREENER â':'OPEN DEXSCREENER â',
-      hint:query?'Search by token name because this older trade has no saved address. Verify the result.':'Open DexScreener search; this older trade has no saved token name or address.'};
+    return {href:null,label:'EXACT COIN LINK UNAVAILABLE',hint:'This older transaction has no saved token or pool address, so an exact chart link cannot be generated.'};
+  }
+  function transactionDexScreenerAnchor(link) {
+    if(!link)return '';
+    return link.href
+      ? '<a class="dex-link" data-dex-link href="'+esc(link.href)+'" title="'+esc(link.hint)+'" aria-label="'+esc(link.label)+'" target="_blank" rel="noopener noreferrer">'+esc(link.label)+'</a>'
+      : '<span class="dex-unavailable" title="'+esc(link.hint)+'">'+esc(link.label)+'</span>';
   }
   function livePositionRow(source, item, swarmId) {
     var position=item.position||item, live=item.live||item, address=dexScreenerAddress(position,live);
@@ -404,6 +417,7 @@
     var rows=live.map(function(t){
       return '<tr><td>'+dateTime(t.entryTime)+'<div class="muted">Closed '+dateTime(t.exitTime||t.time)+'</div></td>'+
         '<td class="text-left"><strong>'+esc(t.symbol||t.token||'-')+'</strong><div class="live-token-address">'+esc(t.tokenAddress||'Not recorded')+'</div></td>'+
+        '<td>'+transactionDexScreenerAnchor(transactionDexScreenerLink(t))+'</td>'+
         '<td><span class="badge">LIVE</span></td>'+
         '<td>'+money(t.invested??t.amountInvested??t.investedUsd)+'</td>'+
         '<td>'+money(t.saleValue??t.saleValueUsd??t.amountReceived)+'</td>'+
@@ -416,7 +430,7 @@
         '<td class="text-left">'+esc(t.entryReason||'Gemini entry checks passed')+'</td>'+
         '<td class="text-left">'+esc(t.exitReason||'-')+'</td></tr>';
     });
-    return '<div class="table-panel section-gap"><div class="table-head"><div><h2>LIVE EXECUTION AUDIT</h2><span class="sub">Confirmed wallet-executed Gemini closed trades with the same core fields shown in the paper ledger.</span></div><span class="badge">LIVE</span></div><div class="kpi-grid">'+kpi('CLOSED LIVE TRADES',int(live.length),'Completed wallet executions')+kpi('LIVE REALIZED P&L',money(pnl),'Completed live positions',signClass(pnl))+'</div>'+table(['ENTRY / CLOSED','TOKEN','MODE','INVESTED','RECEIVED','ENTRY PRICE','AVG EXIT PRICE','HOLD TIME','MAX GAIN','NET P&L','RETURN','ENTRY SIGNAL','EXIT'],rows,'No closed live Gemini trades yet')+'</div>';
+    return '<div class="table-panel section-gap"><div class="table-head"><div><h2>LIVE EXECUTION AUDIT</h2><span class="sub">Confirmed wallet-executed Gemini closed trades with the same core fields shown in the paper ledger.</span></div><span class="badge">LIVE</span></div><div class="kpi-grid">'+kpi('CLOSED LIVE TRADES',int(live.length),'Completed wallet executions')+kpi('LIVE REALIZED P&L',money(pnl),'Completed live positions',signClass(pnl))+'</div>'+table(['ENTRY / CLOSED','TOKEN','DEXSCREENER','MODE','INVESTED','RECEIVED','ENTRY PRICE','AVG EXIT PRICE','HOLD TIME','MAX GAIN','NET P&L','RETURN','ENTRY SIGNAL','EXIT'],rows,'No closed live Gemini trades yet')+'</div>';
   }
   // Stock-only accounting views use the paper ledger directly, without DEX fee estimates.
   function stockUsd(value){var x=n(value);return x===null?'â':new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:4}).format(x);}
@@ -613,10 +627,10 @@
     var rowId=t.positionId||t.id||index,type=String(t.type||'TRADE').toUpperCase();
     var closed=type==='SELL'||type==='CLOSED TRADE'||type==='CLOSED'||(!!t.exitTime&&type!=='BUY');
     var dex=closed?transactionDexScreenerLink(t):null;
-    var dexLink=closed?'<a class="dex-link" data-dex-link href="'+esc(dex.href)+'" title="'+esc(dex.hint)+'" aria-label="'+esc(dex.label)+'" target="_blank" rel="noopener noreferrer">'+dex.label+'</a>':'';
+    var dexLink=closed?transactionDexScreenerAnchor(dex):'';
     var token=esc(t.token||t.symbol||t.name||'-');
     var buy=type==='BUY',invested=t.invested??t.amountInvested??t.amount,received=t.saleValue??t.amountReceived,pnl=t.pnl,returnPercent=t.pnlPercent??t.returnPercent;
-    return '<tr class="click-row" data-transaction="'+esc(rowId)+'" data-tx-index="'+index+'"><td>'+dateTime(t.time||t.exitTime||t.entryTime)+'</td><td class="text-left">'+esc(t.system||'-')+'</td><td class="text-left">'+esc(t.swarmId||'-')+'</td><td class="text-left"><strong>'+token+'</strong>'+(closed?'<div class="closed-dex-link">'+dexLink+'</div>':'')+'</td><td>'+esc(t.type||'TRADE')+'</td><td><span class="badge">'+esc(t.mode||'PAPER')+'</span></td><td>'+money(invested)+'</td><td>'+(buy?'â':money(received))+'</td><td class="'+signClass(pnl)+'">'+(buy?'â':money(pnl))+'</td><td>'+(buy?'â':pct(returnPercent))+'</td><td class="text-left">'+esc(t.entryReason||'Not recorded')+'</td><td class="text-left">'+esc(t.exitReason||t.reason||'Not recorded')+'</td></tr>';
+    return '<tr class="click-row" data-transaction="'+esc(rowId)+'" data-tx-index="'+index+'"><td>'+dateTime(t.time||t.exitTime||t.entryTime)+'</td><td class="text-left">'+esc(t.system||'-')+'</td><td class="text-left">'+esc(t.swarmId||'-')+'</td><td class="text-left"><strong>'+token+'</strong></td><td class="text-left">'+dexLink+'</td><td>'+esc(t.type||'TRADE')+'</td><td><span class="badge">'+esc(t.mode||'PAPER')+'</span></td><td>'+money(invested)+'</td><td>'+(buy?'â':money(received))+'</td><td class="'+signClass(pnl)+'">'+(buy?'â':money(pnl))+'</td><td>'+(buy?'â':pct(returnPercent))+'</td><td class="text-left">'+esc(t.entryReason||'Not recorded')+'</td><td class="text-left">'+esc(t.exitReason||t.reason||'Not recorded')+'</td></tr>';
   }
   function renderTransactions(source, compact) {
     var list=(source||allTransactions).slice();
@@ -635,7 +649,7 @@
     var qv=function(key){return esc(params.get(key)||'');};
     var valueOptions=function(key){var vals=Array.from(new Set(allTransactions.map(function(t){return String(t[key]??'');}).filter(Boolean))).sort();return '<option value="">All '+key.replace(/([A-Z])/g,' $1').toLowerCase()+'</option>'+vals.map(function(v){return '<option value="'+esc(v)+'" '+(params.get(key)===v?'selected':'')+'>'+esc(v)+'</option>';}).join('');};
     return (compact?'':'<div class="filter-row section-gap"><input id="tokenFilter" class="input" placeholder="Filter token / mint" value="'+esc(params.get('token')||state.tokenFilter)+'"><select id="systemFilter" class="select"><option value="ALL">All systems</option>'+systems.map(function(s){return '<option value="'+s.id+'" '+(state.systemFilter===s.id?'selected':'')+'>'+esc(s.label)+'</option>';}).join('')+'<option value="swarm" '+(state.systemFilter==='swarm'?'selected':'')+'>Swarm</option></select><select class="select" data-filter="strategy">'+valueOptions('strategy')+'</select><select class="select" data-filter="mode">'+valueOptions('mode')+'</select><select id="outcomeFilter" class="select"><option value="ALL">All outcomes</option><option value="WIN" '+(state.outcomeFilter==='WIN'?'selected':'')+'>Win</option><option value="LOSS" '+(state.outcomeFilter==='LOSS'?'selected':'')+'>Loss</option><option value="BREAKEVEN" '+(state.outcomeFilter==='BREAKEVEN'?'selected':'')+'>Breakeven</option></select><input type="date" class="input" data-filter="dateFrom" value="'+qv('dateFrom')+'" aria-label="From date"><input type="date" class="input" data-filter="dateTo" value="'+qv('dateTo')+'" aria-label="To date"><select class="select" data-filter="swarmId">'+valueOptions('swarmId')+'</select><select class="select" data-filter="genesisId">'+valueOptions('genesisId')+'</select><select class="select" data-filter="generation">'+valueOptions('generation')+'</select><select class="select" data-filter="entryReason">'+valueOptions('entryReason')+'</select><select class="select" data-filter="exitReason">'+valueOptions('exitReason')+'</select><input type="number" step="0.01" class="input" data-filter="returnMin" placeholder="Min return %" value="'+qv('returnMin')+'"><input type="number" step="0.01" class="input" data-filter="returnMax" placeholder="Max return %" value="'+qv('returnMax')+'"><input type="number" step="0.01" class="input" data-filter="pnlMin" placeholder="Min P&L" value="'+qv('pnlMin')+'"><input type="number" step="0.01" class="input" data-filter="pnlMax" placeholder="Max P&L" value="'+qv('pnlMax')+'"><input id="searchFilter" class="input" placeholder="Search existing transaction fields"></div>')+
-      '<div class="table-panel section-gap"><div class="table-head"><h2>TRANSACTION LEDGER</h2><span class="sub">'+int(list.length)+' rows Â· page '+state.page+' of '+pages+'</span><div class="table-tools"><button class="button small" data-export="csv">EXPORT CSV</button></div></div>'+table(['TIME','BOT / STRATEGY','SWARM','TOKEN','TYPE','MODE','INVESTED','RECEIVED','P&L','RETURN','ENTRY','EXIT'],rows,'No transactions found')+'<div class="pagination"><span>Showing '+(list.length?start+1:0)+'â'+Math.min(start+PAGE_SIZE,list.length)+' of '+list.length+'</span><button data-page="prev" '+(state.page<=1?'disabled':'')+'>PREVIOUS</button><button data-page="next" '+(state.page>=pages?'disabled':'')+'>NEXT</button></div></div>'+(list.some(function(t){return t.limitedHistory;})?'<div class="notice">At least one source only exposes recent trades. Earlier records are unavailable in its current read-only feed.</div>':'');
+      '<div class="table-panel section-gap"><div class="table-head"><h2>TRANSACTION LEDGER</h2><span class="sub">'+int(list.length)+' rows Â· page '+state.page+' of '+pages+'</span><div class="table-tools"><button class="button small" data-export="csv">EXPORT CSV</button></div></div>'+table(['TIME','BOT / STRATEGY','SWARM','TOKEN','COIN CHART','TYPE','MODE','INVESTED','RECEIVED','P&L','RETURN','ENTRY','EXIT'],rows,'No transactions found')+'<div class="pagination"><span>Showing '+(list.length?start+1:0)+'â'+Math.min(start+PAGE_SIZE,list.length)+' of '+list.length+'</span><button data-page="prev" '+(state.page<=1?'disabled':'')+'>PREVIOUS</button><button data-page="next" '+(state.page>=pages?'disabled':'')+'>NEXT</button></div></div>'+(list.some(function(t){return t.limitedHistory;})?'<div class="notice">At least one source only exposes recent trades. Earlier records are unavailable in its current read-only feed.</div>':'');
   }
   function streakMetrics(trades) { var rows=trades.filter(function(t){return n(t.pnl)!==null&&t.exitTime;}).slice().sort(function(a,b){return Date.parse(a.exitTime)-Date.parse(b.exitTime);}),wins=0,losses=0,maxWins=0,maxLosses=0;rows.forEach(function(t){if(t.pnl>0){wins++;losses=0;maxWins=Math.max(maxWins,wins);}else if(t.pnl<0){losses++;wins=0;maxLosses=Math.max(maxLosses,losses);}else{wins=0;losses=0;}});return {currentWins:rows.length&&rows[rows.length-1].pnl>0?wins:0,currentLosses:rows.length&&rows[rows.length-1].pnl<0?losses:0,maxWins:maxWins,maxLosses:maxLosses}; }
   function calendarMarkup(trades) { var month=state.calendarMonth;if(!month){var now=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Puerto_Rico',year:'numeric',month:'2-digit'}).format(new Date());month=now;state.calendarMonth=month;}var bits=month.split('-'),year=Number(bits[0]),mon=Number(bits[1]),first=new Date(Date.UTC(year,mon-1,1)),offset=(first.getUTCDay()+6)%7,count=new Date(Date.UTC(year,mon,0)).getUTCDate(),pnl={};daily(trades).forEach(function(x){pnl[x.date]=x.pnl;});var cells=Array.from({length:offset},function(){return '<div class="calendar-blank"></div>';});for(var day=1;day<=count;day++){var key=year+'-'+String(mon).padStart(2,'0')+'-'+String(day).padStart(2,'0'),v=pnl[key],klass=v===undefined?'':signClass(v);cells.push('<div class="calendar-day '+klass+'" '+(v===undefined?'':'data-day="'+key+'" title="Open transactions for '+key+'"')+'><span>'+day+'</span><strong>'+(v===undefined?'â':money(v))+'</strong></div>');}var prev=new Date(Date.UTC(year,mon-2,1)).toISOString().slice(0,7),next=new Date(Date.UTC(year,mon,1)).toISOString().slice(0,7);return '<div class="panel section-gap"><div class="panel-head"><div><div class="panel-title">REALIZED P&L CALENDAR</div><div class="panel-subtitle">Recorded sale P&L Â· select a day to open its transactions</div></div><div class="calendar-nav"><button class="button small" data-calendar-month="'+prev+'">â</button><input type="month" class="input" data-calendar-month-select value="'+month+'"><button class="button small" data-calendar-month="'+next+'">â</button></div></div><div class="calendar-weekdays">'+['MON','TUE','WED','THU','FRI','SAT','SUN'].map(function(x){return '<span>'+x+'</span>';}).join('')+'</div><div class="calendar-grid">'+cells.join('')+'</div></div>'; }
