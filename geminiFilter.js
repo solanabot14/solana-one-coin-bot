@@ -34,6 +34,8 @@ async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety
   const buyRatio = tx ? buys / tx : 0;
   if (buys <= sells || buyRatio <= MIN_BUY_RATIO_5M)
     return reject("Buy Pressure Not Above 55%", { buys, sells, buyRatio, minimumExclusive: MIN_BUY_RATIO_5M });
+  if (candidate.priceTrend === "Falling since last scan")
+    return reject("Price Falling Since Last Scan", { priceTrend: candidate.priceTrend });
   const priceChange5m = Number(candidate.priceChange5m);
   if (!Number.isFinite(priceChange5m)) return reject("5m Price Trend Unverified");
   if (priceChange5m < MIN_PRICE_CHANGE_5M)
