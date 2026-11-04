@@ -439,7 +439,7 @@ function slippageFor(pair) {
         return;
       }
       const positionStrategy = String(latest.strategy || "");
-      const uses90PercentExit = positionStrategy.includes("sell 90% at +40%");
+      const uses90PercentExit = positionStrategy.includes("sell 90% at +30%");
       const usesStagedExit = positionStrategy.includes("staged exits 50% at +20%");
       if (uses90PercentExit) {
         if (!latest.tp1Done) {
@@ -447,8 +447,8 @@ function slippageFor(pair) {
             await close("HARD STOP -30%");
             return;
           }
-          if (price >= latest.entryPrice * 1.40) {
-            await close("TP1 +40% SELL 90%", 90);
+          if (price >= latest.entryPrice * 1.30) {
+            await close("TP1 +30% SELL 90%", 90);
             return;
           }
         } else {
@@ -523,7 +523,7 @@ function slippageFor(pair) {
     lastError = null;
     const s = { controller: new AbortController() };
     session = s;
-    console.log("[INFO] Gemini Bot started in AUTOMATIC LIVE mode; fixed $2 entries; Telegram buying disabled; exits are 90% at +40%, a 10% runner with a 10% trailing stop and breakeven floor, initial hard stop -30%, and the liquidity guard.");
+    console.log("[INFO] Gemini Bot started in AUTOMATIC LIVE mode; fixed $2 entries; Telegram buying disabled; exits are 90% at +30%, a 10% runner with a 10% trailing stop and breakeven floor, initial hard stop -30%, and the liquidity guard.");
     scanInterval = timers.setInterval(() => void scan(s), SCAN_MS);
     monitorInterval = timers.setInterval(() => void monitor(s), MONITOR_MS);
     void scan(s); void monitor(s);
