@@ -1,9 +1,9 @@
 const { getMintSafety, getHolderConcentration, getLiquidityLock } = require("./geminiSources");
 
-// Allow verified PumpSwap pools from 1 to 4 minutes old; preserve all current activity and safety gates.
+// Allow verified PumpSwap pools from 5 minutes to 1 hour old; preserve all current activity and safety gates.
 const MIN_LIQUIDITY_USD = 5000;
-const MIN_POOL_AGE_MS = 1 * 60 * 1000;
-const MAX_POOL_AGE_MS = 4 * 60 * 1000;
+const MIN_POOL_AGE_MS = 5 * 60 * 1000;
+const MAX_POOL_AGE_MS = 60 * 60 * 1000;
 const MIN_TRANSACTIONS_5M = 15;
 const MIN_BUY_RATIO_5M = 0.55;
 const MIN_PRICE_CHANGE_5M = 2;
@@ -22,9 +22,9 @@ async function evaluateCandidate(candidate, { signal, mintSafety = getMintSafety
   if (!Number.isFinite(created)) return reject("Pool Age Unverified");
   const age = Date.now() - created;
   if (age < MIN_POOL_AGE_MS)
-    return reject("Pool Age Below 1 Minute", { ageMs: age, minimum: MIN_POOL_AGE_MS });
+    return reject("Pool Age Below 5 Minutes", { ageMs: age, minimum: MIN_POOL_AGE_MS });
   if (age > MAX_POOL_AGE_MS)
-    return reject("Pool Age Above 4 Minutes", { ageMs: age, maximum: MAX_POOL_AGE_MS });
+    return reject("Pool Age Above 1 Hour", { ageMs: age, maximum: MAX_POOL_AGE_MS });
 
   const buys = Number(candidate.buys5m) || 0;
   const sells = Number(candidate.sells5m) || 0;
