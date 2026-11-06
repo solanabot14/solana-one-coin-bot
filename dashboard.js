@@ -416,6 +416,7 @@ if (require.main === module) {
     profitSniper.startBot();
   }
   server.listen(config.port, config.host, () => {
+    geminiLiveControl.stop();
     geminiBot.start();
     const telegramBuyAlerts = geminiBot.startTelegramBuyAlerts();
     if (!telegramBuyAlerts.started) console.warn("[INFO] Gemini Telegram Buy buttons unavailable:", telegramBuyAlerts.reason);
