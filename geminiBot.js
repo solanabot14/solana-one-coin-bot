@@ -252,13 +252,7 @@ function slippageFor(pair) {
             });
             continue;
           }
-          if (!geminiLiveControl.isEnabled()) {
-            trader.recordRejection(candidate, "Gemini Live Entries Disabled", {
-              reason: "Automatic live entry switch is off."
-            });
-            continue;
-          }
-          const sellability = await verifyFullPositionExit(candidate, amountUsd, s.controller.signal);
+           const sellability = await verifyFullPositionExit(candidate, amountUsd, s.controller.signal);
           if (!sellability.allowed) {
             trader.recordRejection(candidate, "Full Position Exit Unavailable", {
               reason: sellability.reason,
@@ -268,27 +262,16 @@ function slippageFor(pair) {
           }
           candidate.geminiDetails = { ...result.details, executionQuote: sellability };
           candidate.slippageBps = slippageFor(candidate);
-          candidate.entryReason = "Gemini automatic live entry passed market, on-chain, and exit-route checks";
-          const fill = await liveExecution.executeEntry({
-            outputMint: candidate.tokenAddress,
-            amountUsd,
-            slippageBps: candidate.slippageBps
-          });
-          candidate.liveExecution = {
-            ...fill,
-            executionMode: "LIVE",
-            outputAmount: fill.actualOutputAmount
-          };
-          candidate.liveSizing = liveSizing;
+          candidate.entryReason = "Gemini automatic paper entry passed market, on-chain, and exit-route checks";
           const buy = trader.buy(candidate, amountUsd);
           if (!buy.success) {
-            console.error("[CRITICAL] Gemini live buy executed but could not be recorded", candidate.tokenAddress, buy.error, fill.signature);
-            lastError = "Live swap confirmed but position could not be recorded; check Live Execution Audit immediately.";
+            console.error("[INFO] Gemini paper buy could not be recorded", candidate.tokenAddress, buy.error);
+            lastError = "Gemini paper entry could not be recorded.";
             break;
           }
-          console.log("[INFO] Gemini automatic live entry confirmed", {
+          console.log("[INFO] Gemini automatic paper entry recorded", {
             symbol: candidate.symbol, mint: candidate.tokenAddress,
-            tradeSizeUsd: amountUsd, signature: fill.signature
+            tradeSizeUsd: amountUsd
           });
           break;
         } catch (error) {
@@ -513,17 +496,12 @@ function slippageFor(pair) {
       resetId: "gemini-live-auto-reset17-2026-11-02"
     });
     if (reset && !reset.success) console.warn("[INFO] Gemini account reset skipped:", reset.reason || "active live position protected");
-    const live = geminiLiveControl.start();
-    if (!live.success) {
-      lastError = live.message || "Gemini live setup is incomplete.";
-      console.error("[CRITICAL] Gemini automatic live entries were not started:", lastError);
-      return;
-    }
+    geminiLiveControl.stop();
     trader.getState();
     lastError = null;
     const s = { controller: new AbortController() };
     session = s;
-    console.log("[INFO] Gemini Bot started in AUTOMATIC LIVE mode; fixed $2 entries; Telegram buying disabled; exits are 90% at +30%, a 10% runner with a 10% trailing stop and breakeven floor, initial hard stop -30%, and the liquidity guard.");
+    console.log("[INFO] Gemini Bot started in PAPER mode; fixed $2 entries; live entries are off; exits are 90% at +30%, a 10% runner with a 10% trailing stop and breakeven floor, initial hard stop -30%, and the liquidity guard.");
     scanInterval = timers.setInterval(() => void scan(s), SCAN_MS);
     monitorInterval = timers.setInterval(() => void monitor(s), MONITOR_MS);
     void scan(s); void monitor(s);
