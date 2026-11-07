@@ -12,7 +12,7 @@ const SCAN_MS = Number(process.env.GEMINI_SCAN_MS) || 30000;
 const MONITOR_MS = Number(process.env.GEMINI_MONITOR_MS) || 3000;
 const HARD_STOP = -30;
 const MAX_SLIPPAGE_BPS = Math.min(1000, Math.max(200, Number(process.env.SLIPPAGE_BPS) || 300));
-const MAX_DISCOVERY_CANDIDATES = 40;
+const MAX_DISCOVERY_CANDIDATES = 80;
 const SELLABILITY_TIMEOUT_MS = 10_000;
 // Exit-only guard: do not wait for an open pool to approach zero liquidity.
 const MIN_EXIT_LIQUIDITY_USD = 3000;
