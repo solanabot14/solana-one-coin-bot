@@ -241,17 +241,30 @@ async function getGeckoTokenQuote(tokenAddress, signal) {
 }
 
 async function getGeckoPools(signal) {
-  const { data } = await retry(() => axios.get(
-    GT_BASE + "/networks/solana/new_pools",
-    { timeout: 12000, signal, headers: { accept: "application/json;version=20230302" }, params: { page: 1 } }
-  ));
-  const rows = Array.isArray(data?.data) ? data.data : [];
-  return rows.map(row => {
+  // New-pool feeds skew younger than Gemini's 4–12 hour entry window.
+  // Add the active PumpSwap pool feed so eligible pools remain discoverable.
+  const requests = [
+    axios.get(GT_BASE + "/networks/solana/dexes/pumpswap/pools", {
+      timeout: 12000, signal,
+      headers: { accept: "application/json;version=20230203" },
+      params: { page: 1, include: "base_token,quote_token" }
+    }),
+    axios.get(GT_BASE + "/networks/solana/new_pools", {
+      timeout: 12000, signal,
+      headers: { accept: "application/json;version=20230203" },
+      params: { page: 1 }
+    })
+  ];
+  const results = await Promise.allSettled(requests.map(request => retry(() => request)));
+  const fulfilled = results.filter(result => result.status === "fulfilled");
+  if (!fulfilled.length) throw new Error("GeckoTerminal pool discovery unavailable.");
+  const rows = fulfilled.flatMap(result => Array.isArray(result.value.data?.data) ? result.value.data.data : []);
+  const poolsByAddress = new Map();
+  for (const row of rows) {
     const a = row.attributes || {};
     const rel = row.relationships || {};
-    const tokenAddress = rel.base_token?.data?.id?.split("_").at(-1);
-    return {
-      tokenAddress,
+    const pool = {
+      tokenAddress: rel.base_token?.data?.id?.split("_").at(-1),
       pairAddress: a.address || row.id?.split("_").at(-1),
       symbol: a.name || "Unknown",
       poolCreatedAt: a.pool_created_at || a.created_at || null,
@@ -263,7 +276,10 @@ async function getGeckoPools(signal) {
       sells5m: Number(a.transactions?.m5?.sells) || 0,
       source: "GeckoTerminal"
     };
-  }).filter(pool => pool.tokenAddress && pool.pairAddress);
+    if (pool.tokenAddress && pool.pairAddress && !poolsByAddress.has(pool.pairAddress))
+      poolsByAddress.set(pool.pairAddress, pool);
+  }
+  return [...poolsByAddress.values()];
 }
 
 async function getDexProfiles(signal) {
