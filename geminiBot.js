@@ -1,6 +1,6 @@
 const { getGeckoPools, getDexProfiles, getCanonicalPumpSwapPools, getDexPairs, getDexPairsBatch, getPairDetails, getGeckoTokenQuote } = require("./geminiSources");
 const { retry } = require("./geminiHttp");
-const { evaluateCandidate } = require("./geminiFilter");
+const { evaluateCandidate, MIN_POOL_AGE_MS, MAX_POOL_AGE_MS } = require("./geminiFilter");
 const { createExecutionVerifier } = require("./profitSniperExecutionQuote");
 const { createGeminiLiveExecution, USDC } = require("./geminiLiveExecution");
 const geminiLiveControl = require("./geminiLiveControl");
@@ -180,17 +180,32 @@ function slippageFor(pair) {
         try { canonicalPools = await getCanonicalPumpSwapPools(pools, s.controller.signal); }
         catch (error) { console.warn("[INFO] Gemini canonical pool check failed", error.message); }
       }
-      // Prefer a verified pool for a mint when both feeds report multiple pools.
-      const prioritizedPools = [...pools].sort((left, right) => {
-        const leftVerified = canonicalPools.get(String(left.pairAddress || "").toLowerCase())?.verified === true;
-        const rightVerified = canonicalPools.get(String(right.pairAddress || "").toLowerCase())?.verified === true;
-        return Number(rightVerified) - Number(leftVerified);
-      });
+      // Prefer verified pools inside the requested age window so a different,
+      // newer pool for the same mint cannot hide its eligible PumpSwap pool.
+      const poolRank = pool => {
+        const createdAt = Date.parse(pool.poolCreatedAt || "");
+        const age = Date.now() - createdAt;
+        const inWindow = Number.isFinite(createdAt) && age >= MIN_POOL_AGE_MS && age <= MAX_POOL_AGE_MS;
+        const verified = canonicalPools.get(String(pool.pairAddress || "").toLowerCase())?.verified === true;
+        return Number(inWindow) * 2 + Number(verified);
+      };
+      const prioritizedPools = [...pools].sort((left, right) =>
+        poolRank(right) - poolRank(left) ||
+        (Number(right.liquidityUsd) || 0) - (Number(left.liquidityUsd) || 0)
+      );
       const unique = new Map();
       for (const pool of prioritizedPools) {
         if (pool.tokenAddress && !unique.has(pool.tokenAddress) && unique.size < MAX_DISCOVERY_CANDIDATES)
           unique.set(pool.tokenAddress, pool);
       }
+      const ageWindowCandidates = [...unique.values()].filter(pool => {
+        const createdAt = Date.parse(pool.poolCreatedAt || "");
+        const age = Date.now() - createdAt;
+        return Number.isFinite(createdAt) && age >= MIN_POOL_AGE_MS && age <= MAX_POOL_AGE_MS;
+      });
+      const verifiedAgeWindowCandidates = ageWindowCandidates.filter(pool =>
+        canonicalPools.get(String(pool.pairAddress || "").toLowerCase())?.verified === true
+      ).length;
       let passed = 0;
       for (const pool of unique.values()) {
         if (!isActive(s) || trader.getState().position) break;
@@ -288,6 +303,8 @@ function slippageFor(pair) {
         dexProfileCandidates: profiles.length,
         dexPairCandidates: dexPools.length,
         uniqueTokens: unique.size,
+        ageWindowCandidates: ageWindowCandidates.length,
+        verifiedAgeWindowCandidates,
         passed
       });
     } catch (error) {
