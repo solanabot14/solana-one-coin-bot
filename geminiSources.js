@@ -241,29 +241,14 @@ async function getGeckoTokenQuote(tokenAddress, signal) {
 }
 
 async function getGeckoPools(signal) {
-  // New-pool feeds skew younger than Gemini's 4–12 hour entry window.
-  // Add the active PumpSwap pool feed so eligible pools remain discoverable.
-  const requests = [
-    () => axios.get(GT_BASE + "/networks/solana/dexes/pumpswap/pools", {
-      timeout: 12000, signal,
-      headers: { accept: "application/json;version=20230203" },
-      params: { page: 1, include: "base_token,quote_token" }
-    }),
-    () => axios.get(GT_BASE + "/networks/solana/trending_pools", {
-      timeout: 12000, signal,
-      headers: { accept: "application/json;version=20230203" },
-      params: { page: 1, include: "base_token,quote_token" }
-    }),
-    () => axios.get(GT_BASE + "/networks/solana/new_pools", {
-      timeout: 12000, signal,
-      headers: { accept: "application/json;version=20230203" },
-      params: { page: 1 }
-    })
-  ];
-  const results = await Promise.allSettled(requests.map(request => retry(request, { signal })));
-  const fulfilled = results.filter(result => result.status === "fulfilled");
-  if (!fulfilled.length) throw new Error("GeckoTerminal pool discovery unavailable.");
-  const rows = fulfilled.flatMap(result => Array.isArray(result.value.data?.data) ? result.value.data.data : []);
+  // Keep discovery to one GeckoTerminal request per scan to avoid rate-limit
+  // bursts. DexScreener profiles are fetched separately and provide the fallback.
+  const { data } = await retry(() => axios.get(GT_BASE + "/networks/solana/dexes/pumpswap/pools", {
+    timeout: 12000, signal,
+    headers: { accept: "application/json;version=20230203" },
+    params: { page: 1, include: "base_token,quote_token" }
+  }), { attempts: 2, baseDelayMs: 1500, signal });
+  const rows = Array.isArray(data?.data) ? data.data : [];
   const poolsByAddress = new Map();
   for (const row of rows) {
     const a = row.attributes || {};
