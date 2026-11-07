@@ -11,6 +11,8 @@ const PUMP_POOL_DISCRIMINATOR = createHash("sha256").update("account:Pool").dige
 const canonicalPoolCache = new Map();
 const RUGCHECK_BASE = "https://api.rugcheck.xyz/v1/tokens/";
 const GT_BASE = "https://api.geckoterminal.com/api/v2";
+const GECKO_DISCOVERY_FEEDS = ["dexes/pumpswap/pools", "trending_pools", "new_pools"];
+let geckoDiscoveryCursor = 0;
 
 async function rpc(method, params, signal, { timeoutMs = 12000, attempts = 5, baseDelayMs = 350, endpoint = SOLANA_RPC_URL } = {}) {
   const { data } = await retry(() => axios.post(endpoint, {
@@ -241,9 +243,11 @@ async function getGeckoTokenQuote(tokenAddress, signal) {
 }
 
 async function getGeckoPools(signal) {
-  // Keep discovery to one GeckoTerminal request per scan to avoid rate-limit
-  // bursts. DexScreener profiles are fetched separately and provide the fallback.
-  const { data } = await retry(() => axios.get(GT_BASE + "/networks/solana/dexes/pumpswap/pools", {
+  // Rotate one discovery feed per scan. This broadens pool coverage while
+  // avoiding the 429 bursts caused by querying all Gecko feeds concurrently.
+  const feed = GECKO_DISCOVERY_FEEDS[geckoDiscoveryCursor % GECKO_DISCOVERY_FEEDS.length];
+  geckoDiscoveryCursor += 1;
+  const { data } = await retry(() => axios.get(GT_BASE + "/networks/solana/" + feed, {
     timeout: 12000, signal,
     headers: { accept: "application/json;version=20230203" },
     params: { page: 1, include: "base_token,quote_token" }
@@ -269,6 +273,7 @@ async function getGeckoPools(signal) {
     if (pool.tokenAddress && pool.pairAddress && !poolsByAddress.has(pool.pairAddress))
       poolsByAddress.set(pool.pairAddress, pool);
   }
+  console.log("[INFO] Gemini GeckoTerminal discovery feed", { feed, candidates: poolsByAddress.size });
   return [...poolsByAddress.values()];
 }
 
