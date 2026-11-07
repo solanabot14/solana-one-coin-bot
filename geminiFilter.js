@@ -1,7 +1,7 @@
 const { getMintSafety, getHolderConcentration, getLiquidityLock } = require("./geminiSources");
 
 // Allow verified PumpSwap pools from 4 to 12 hours old; preserve all other entry gates.
-const MIN_LIQUIDITY_USD = 5000;
+const MIN_LIQUIDITY_USD = 4000;
 const MIN_POOL_AGE_MS = 4 * 60 * 60 * 1000;
 const MAX_POOL_AGE_MS = 12 * 60 * 60 * 1000;
 const MIN_TRANSACTIONS_5M = 15;
