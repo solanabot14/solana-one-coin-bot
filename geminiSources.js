@@ -249,6 +249,11 @@ async function getGeckoPools(signal) {
       headers: { accept: "application/json;version=20230203" },
       params: { page: 1, include: "base_token,quote_token" }
     }),
+    () => axios.get(GT_BASE + "/networks/solana/dexes/pumpswap/pools", {
+      timeout: 12000, signal,
+      headers: { accept: "application/json;version=20230203" },
+      params: { page: 2, include: "base_token,quote_token" }
+    }),
     () => axios.get(GT_BASE + "/networks/solana/trending_pools", {
       timeout: 12000, signal,
       headers: { accept: "application/json;version=20230203" },
