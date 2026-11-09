@@ -5,6 +5,18 @@ const { createExecutionVerifier } = require("./profitSniperExecutionQuote");
 const { createGeminiLiveExecution, USDC } = require("./geminiLiveExecution");
 const geminiLiveControl = require("./geminiLiveControl");
 const traderDefault = require("./geminiTrader");
+// One-time user-requested paper-only reset; resetId makes subsequent restarts idempotent.
+geminiLiveControl.stop();
+const paperReset = traderDefault.resetPaperAccount({
+  startingBalanceUsd: 20,
+  resetId: "gemini-paper-reset-20-2026-11-09"
+});
+console.info("[INFO] Gemini paper reset", {
+  success: paperReset.success,
+  reset: paperReset.reset,
+  cashUsd: paperReset.cashUsd ?? null,
+  reason: paperReset.reason ?? null
+});
 const { randomUUID } = require("node:crypto");
 const { getTelegramConfig, sendGeminiBuyAlert, startTelegramBuyPolling } = require("./telegram");
 
