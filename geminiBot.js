@@ -10,13 +10,13 @@ const { getTelegramConfig, sendGeminiBuyAlert, startTelegramBuyPolling } = requi
 
 const SCAN_MS = Number(process.env.GEMINI_SCAN_MS) || 30000;
 const MONITOR_MS = Number(process.env.GEMINI_MONITOR_MS) || 3000;
-const HARD_STOP = -30;
+const HARD_STOP = -15;
 const MAX_SLIPPAGE_BPS = Math.min(1000, Math.max(200, Number(process.env.SLIPPAGE_BPS) || 300));
 const MAX_DISCOVERY_CANDIDATES = 80;
 const SELLABILITY_TIMEOUT_MS = 10_000;
 // Exit-only guard: do not wait for an open pool to approach zero liquidity.
 const MIN_EXIT_LIQUIDITY_USD = 3000;
-const MAX_LIQUIDITY_DROP_FROM_ENTRY = 0.50;
+const MAX_LIQUIDITY_DROP_FROM_ENTRY = 0.25;
 const BUY_SIGNAL_TTL_MS = 300_000;
 
 function poolToCandidate(pool, pair) {
@@ -49,6 +49,8 @@ function slippageFor(pair) {
   const liquiditySnapshots = new Map();
   const priceSnapshots = new Map();
   let session = null, scanInterval = null, monitorInterval = null, busyScan = false, busyMonitor = false, busyTelegramBuy = false, telegramPollingStop = null, lastError = null;
+  let scanSequence = 0;
+  const candidateConfirmations = new Map();
   const pendingBuySignals = new Map();
   function observeLiquidityTrend(candidate) {
     const pairAddress = String(candidate.pairAddress || "").toLowerCase();
@@ -141,6 +143,10 @@ function slippageFor(pair) {
     pruneBuySignals();
     if (!isActive(s) || busyScan || trader.getState().position) return;
     busyScan = true;
+    const currentScan = ++scanSequence;
+    for (const [key, confirmation] of candidateConfirmations) {
+      if (currentScan - confirmation.scan > 1) candidateConfirmations.delete(key);
+    }
     try {
       // Discover new pools from GeckoTerminal and use DexScreener profiles as a
       // batched fallback. Only exact, on-chain verified PumpSwap pools can proceed.
@@ -257,6 +263,23 @@ function slippageFor(pair) {
           }
           candidate = refreshed;
           result = { ...result, details: { ...result.details, ...freshResult.details } };
+          const confirmationKey = [
+            String(candidate.tokenAddress || "").toLowerCase(),
+            String(candidate.pairAddress || "").toLowerCase()
+          ].join(":");
+          const previousConfirmation = candidateConfirmations.get(confirmationKey);
+          const consecutiveEligibleScans = previousConfirmation?.scan === currentScan - 1
+            ? previousConfirmation.count + 1
+            : 1;
+          candidateConfirmations.set(confirmationKey, { count: consecutiveEligibleScans, scan: currentScan });
+          if (consecutiveEligibleScans < 2) {
+            trader.recordRejection(candidate, "Awaiting Second Consecutive Scan", {
+              consecutiveEligibleScans,
+              required: 2
+            });
+            continue;
+          }
+          candidateConfirmations.delete(confirmationKey);
           passed++;
           const liveSizing = trader.getLiveSizing?.() || { step: 0, amountUsd: 2 };
           const amountUsd = Number(liveSizing.amountUsd);
@@ -330,7 +353,7 @@ function slippageFor(pair) {
       const primaryLiquidityUsd = Number(pair?.liquidity?.usd);
 
       // Act on the exact held pair's liquidity before waiting on alternate price sources.
-      // The collapse threshold remains the existing max($3,000, 50% of entry liquidity).
+      // The collapse threshold remains the existing max($3,000, 75% of entry liquidity).
       const entryLiquidityAtStart = Number(p.entryDetails?.liquidityUsd);
       const exitLiquidityFloorAtStart = Number.isFinite(entryLiquidityAtStart) && entryLiquidityAtStart > 0
         ? Math.max(MIN_EXIT_LIQUIDITY_USD, entryLiquidityAtStart * (1 - MAX_LIQUIDITY_DROP_FROM_ENTRY))
@@ -444,7 +467,7 @@ function slippageFor(pair) {
       if (uses90PercentExit) {
         if (!latest.tp1Done) {
           if (price <= latest.entryPrice * (1 + HARD_STOP / 100)) {
-            await close("HARD STOP -30%");
+            await close("HARD STOP -15%");
             return;
           }
           if (price >= latest.entryPrice * 1.30) {
@@ -461,7 +484,7 @@ function slippageFor(pair) {
       } else if (usesStagedExit) {
         if (!latest.tp1Done) {
           if (price <= latest.entryPrice * (1 + HARD_STOP / 100)) {
-            await close("HARD STOP -30%");
+            await close("HARD STOP -15%");
             return;
           }
           if (price >= latest.entryPrice * 1.20) {
@@ -494,7 +517,7 @@ function slippageFor(pair) {
             return;
           }
         } else if (price <= latest.entryPrice * (1 + HARD_STOP / 100)) {
-          await close("HARD STOP -30%");
+          await close("HARD STOP -15%");
           return;
         }
         if (!latest.tp1Done && price >= latest.entryPrice * 1.20) {
@@ -518,7 +541,7 @@ function slippageFor(pair) {
     lastError = null;
     const s = { controller: new AbortController() };
     session = s;
-    console.log("[INFO] Gemini Bot started in PAPER mode; fixed $2 entries; live entries are off; exits are 90% at +30%, a 10% runner with a 10% trailing stop and breakeven floor, initial hard stop -30%, and the liquidity guard.");
+    console.log("[INFO] Gemini Bot started in PAPER mode; fixed $2 entries; live entries are off; exits are 90% at +30%, a 10% runner with a 10% trailing stop and breakeven floor, initial hard stop -15%, liquidity exit at a 25% pool-liquidity drop (minimum $3,000 floor), and two consecutive qualifying scans before entry.");
     scanInterval = timers.setInterval(() => void scan(s), SCAN_MS);
     monitorInterval = timers.setInterval(() => void monitor(s), MONITOR_MS);
     void scan(s); void monitor(s);
