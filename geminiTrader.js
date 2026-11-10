@@ -64,7 +64,7 @@ function createGeminiTrader(file = defaultFile(), io = fs) {
       symbol: candidate.symbol || "Unknown", name: candidate.name || candidate.symbol || "Unknown",
       entryPrice: price, quantity: size / price, originalQuantity: size / price, originalCostUsd: size,
       amountInvestedUsd: size, entryTime: new Date().toISOString(), highestPrice: price,
-      tp1Done: false, tp2Done: false, remainingPercent: 100, strategy: "Gemini: sell 90% at +30%, keep 10% runner with 10% trailing stop from high and breakeven floor; initial hard stop -30%; liquidity collapse guard",
+      tp1Done: false, tp2Done: false, remainingPercent: 100, strategy: "Gemini: sell 90% at +30%, keep 10% runner with 10% trailing stop from high and breakeven floor; initial hard stop -15%; liquidity exit after 25% pool-liquidity drop",
       sizingPercent: sizing.percent,
       entryDetails: candidate.geminiDetails || {}, entryReason: candidate.entryReason || candidate.entrySignal || "Gemini entry checks passed", liveExecution: candidate.liveExecution || null, mode,
       liveSizingStep: candidate.liveExecution ? getLiveSizing().step : null
