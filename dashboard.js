@@ -346,9 +346,9 @@ function createDashboardServer({ config = getConfig(), controls = bot,
             exitTime: row.type === "SELL" ? row.time : null
           }));
           return {
-            strategy: "TP +15%: sell 100%; stop -8%; sizing 10% / 12.5% of available cash",
-            takeProfitPercent: 15, stopLossPercent: -8, nextSizingPercent: geminiTrader.getSizing().percent,
-            nextTradeSizeUsd: geminiTrader.getSizing().amountUsd,
+            strategy: "PAPER only: fixed $2 entries; verified PumpSwap pools aged 30m–5h; two consecutive qualifying scans; sell 90% at +30%; trail remaining 10% by 10% with breakeven floor; hard stop -15% before target; liquidity exit at 25% pool-liquidity drop (minimum $3,000 floor).",
+            takeProfitPercent: 30, stopLossPercent: -15, nextSizingPercent: null,
+            nextTradeSizeUsd: geminiTrader.getLiveSizing().amountUsd,
             startingBalance: geminiState.startingBalanceUsd, cashBalance: geminiState.cashUsd,
             equity: position && !live ? null : geminiAnalytics.equityUsd, totalPnl: position && !live ? null : geminiAnalytics.totalPnlUsd,
             priceUnavailable: !!position && !live,
