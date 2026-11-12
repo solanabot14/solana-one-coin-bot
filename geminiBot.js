@@ -656,7 +656,7 @@ function slippageFor(pair) {
     lastError = null;
     const s = { controller: new AbortController() };
     session = s;
-    console.log("[INFO] Gemini Bot started in PAPER mode; fixed $2 entries; live entries are off; exits are 90% at +30%, a 10% runner with a 10% trailing stop and breakeven floor, initial hard stop -15%, liquidity exit at a 25% pool-liquidity drop (minimum $3,000 floor), and two consecutive qualifying scans before entry.");
+    console.log("[INFO] Gemini Bot started in PAPER mode; fixed $2 entries; live entries are off; exits are 90% at +30%, a 10% runner with a 10% trailing stop and breakeven floor, initial hard stop -15%, liquidity exit at a 25% pool-liquidity drop (minimum $3,000 floor), and entries after a +10% first 5m impulse, a 6–25% pullback, and second-pump confirmation.");
     scanInterval = timers.setInterval(() => void scan(s), SCAN_MS);
     monitorInterval = timers.setInterval(() => void monitor(s), MONITOR_MS);
     void scan(s); void monitor(s);
