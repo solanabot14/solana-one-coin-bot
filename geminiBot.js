@@ -18,6 +18,12 @@ const SELLABILITY_TIMEOUT_MS = 10_000;
 const MIN_EXIT_LIQUIDITY_USD = 3000;
 const MAX_LIQUIDITY_DROP_FROM_ENTRY = 0.25;
 const BUY_SIGNAL_TTL_MS = 300_000;
+const SECOND_PUMP_SETUP_TTL_MS = 20 * 60_000;
+const SECOND_PUMP_READY_TTL_MS = 90_000;
+const SECOND_PUMP_MIN_PULLBACK = 0.06;
+const SECOND_PUMP_MAX_PULLBACK = 0.25;
+const SECOND_PUMP_REBOUND = 0.04;
+const SECOND_PUMP_RECLAIM = 0.90;
 
 function poolToCandidate(pool, pair) {
   const createdAt = pool.poolCreatedAt || pair?.pairCreatedAt || null;
@@ -50,7 +56,7 @@ function slippageFor(pair) {
   const priceSnapshots = new Map();
   let session = null, scanInterval = null, monitorInterval = null, busyScan = false, busyMonitor = false, busyTelegramBuy = false, telegramPollingStop = null, lastError = null;
   let scanSequence = 0;
-  const candidateConfirmations = new Map();
+  const secondPumpSetups = new Map();
   const pendingBuySignals = new Map();
   function observeLiquidityTrend(candidate) {
     const pairAddress = String(candidate.pairAddress || "").toLowerCase();
@@ -82,6 +88,120 @@ function slippageFor(pair) {
     if (!previous || now - previous.at > 5 * 60_000) return "No prior reading";
     return priceUsd < previous.priceUsd ? "Falling since last scan" : "Not falling since last scan";
   }
+  function secondPumpKey(candidate) {
+    return [
+      String(candidate.tokenAddress || "").toLowerCase(),
+      String(candidate.pairAddress || "").toLowerCase()
+    ].join(":");
+  }
+  function updateSecondPumpSetup(candidate, currentScan) {
+    const key = secondPumpKey(candidate);
+    const now = Date.now();
+    const price = Number(candidate.priceUsd);
+    const priceChange5m = Number(candidate.priceChange5m);
+    const buys = Number(candidate.buys5m) || 0;
+    const sells = Number(candidate.sells5m) || 0;
+    const transactions = buys + sells;
+    const buyRatio = transactions ? buys / transactions : 0;
+    const liquidity = Number(candidate.liquidityUsd);
+    const volume5m = Number(candidate.volume5m) || 0;
+    const validPressure = transactions >= 15 && buys > sells && buyRatio > 0.55;
+    const validMarket = validPressure && Number.isFinite(liquidity) && liquidity >= 4000 && volume5m > 0;
+    let setup = secondPumpSetups.get(key);
+
+    if (!(price > 0) || !Number.isFinite(price)) return false;
+    if (!setup) {
+      if (candidate.exactPoolVerified && validMarket &&
+          Number.isFinite(priceChange5m) && priceChange5m >= 10 &&
+          candidate.priceTrend !== "Falling since last scan") {
+        if (secondPumpSetups.size >= 500)
+          secondPumpSetups.delete(secondPumpSetups.keys().next().value);
+        secondPumpSetups.set(key, {
+          phase: "WAIT_PULLBACK",
+          startedAt: now,
+          firstPumpPeakPrice: price,
+          firstPumpLiquidityUsd: liquidity,
+          pullbackLowPrice: null,
+          pullbackBuys5m: buys,
+          pullbackVolume5m: volume5m,
+          lastObservedPrice: price,
+          lastScan: currentScan,
+          readyAt: null,
+          readyPrice: null
+        });
+      }
+      return false;
+    }
+    if (now - setup.startedAt > SECOND_PUMP_SETUP_TTL_MS) {
+      secondPumpSetups.delete(key);
+      return false;
+    }
+    if (setup.lastScan === currentScan) return setup.phase === "READY";
+
+    if (setup.phase === "WAIT_PULLBACK") {
+      if (price > setup.firstPumpPeakPrice) {
+        setup.firstPumpPeakPrice = price;
+        setup.firstPumpLiquidityUsd = liquidity;
+      }
+      const pullback = 1 - price / setup.firstPumpPeakPrice;
+      if (pullback > SECOND_PUMP_MAX_PULLBACK) {
+        secondPumpSetups.delete(key);
+        return false;
+      }
+      if (pullback >= SECOND_PUMP_MIN_PULLBACK) {
+        setup.phase = "WAIT_SECOND_PUMP";
+        setup.pullbackLowPrice = price;
+        setup.pullbackBuys5m = buys;
+        setup.pullbackVolume5m = volume5m;
+      }
+    } else {
+      if (setup.phase === "READY" && price < setup.lastObservedPrice) {
+        setup.phase = "WAIT_SECOND_PUMP";
+        setup.pullbackLowPrice = price;
+        setup.pullbackBuys5m = buys;
+        setup.pullbackVolume5m = volume5m;
+        setup.readyAt = null;
+        setup.readyPrice = null;
+      }
+      if (setup.phase === "READY" && now - setup.readyAt > SECOND_PUMP_READY_TTL_MS) {
+        setup.phase = "WAIT_SECOND_PUMP";
+        setup.pullbackLowPrice = Math.min(setup.pullbackLowPrice || price, price);
+        setup.pullbackBuys5m = buys;
+        setup.pullbackVolume5m = volume5m;
+        setup.readyAt = null;
+        setup.readyPrice = null;
+      }
+      if (setup.phase === "WAIT_SECOND_PUMP") {
+        if (price < setup.firstPumpPeakPrice * (1 - SECOND_PUMP_MAX_PULLBACK)) {
+          secondPumpSetups.delete(key);
+          return false;
+        }
+        if (price < setup.pullbackLowPrice) {
+          setup.pullbackLowPrice = price;
+          setup.pullbackBuys5m = buys;
+          setup.pullbackVolume5m = volume5m;
+        }
+        const reboundLevel = Math.max(
+          setup.pullbackLowPrice * (1 + SECOND_PUMP_REBOUND),
+          setup.firstPumpPeakPrice * SECOND_PUMP_RECLAIM
+        );
+        const volumeRecovering = volume5m >= setup.pullbackVolume5m * 0.80;
+        const liquidityStable = liquidity >= Math.max(4000, setup.firstPumpLiquidityUsd * 0.75);
+        const priceRecovering = price > setup.lastObservedPrice &&
+          candidate.priceTrend !== "Falling since last scan";
+        if (price >= reboundLevel && priceChange5m >= 2 && validMarket &&
+            buys > setup.pullbackBuys5m && volumeRecovering && liquidityStable && priceRecovering) {
+          setup.phase = "READY";
+          setup.readyAt = now;
+          setup.readyPrice = price;
+        }
+      }
+    }
+    setup.lastObservedPrice = price;
+    setup.lastScan = currentScan;
+    return setup.phase === "READY";
+  }
+
   const isActive = s => session === s && !s.controller.signal.aborted;
 
   async function closeForLiquidity(position, price, reason) {
@@ -144,8 +264,9 @@ function slippageFor(pair) {
     if (!isActive(s) || busyScan || trader.getState().position) return;
     busyScan = true;
     const currentScan = ++scanSequence;
-    for (const [key, confirmation] of candidateConfirmations) {
-      if (currentScan - confirmation.scan > 1) candidateConfirmations.delete(key);
+    const setupNow = Date.now();
+    for (const [key, setup] of secondPumpSetups) {
+      if (setupNow - setup.startedAt > SECOND_PUMP_SETUP_TTL_MS) secondPumpSetups.delete(key);
     }
     try {
       // Discover new pools from GeckoTerminal and use DexScreener profiles as a
@@ -219,6 +340,7 @@ function slippageFor(pair) {
           let candidate = candidateForPool(pool, canonicalPools);
           candidate.liquidityTrend = observeLiquidityTrend(candidate);
           candidate.priceTrend = observePriceTrend(candidate);
+          updateSecondPumpSetup(candidate, currentScan);
           const priorLosses = trader.getClosedLossCount?.(candidate.tokenAddress) || 0;
           if (priorLosses >= 2) {
             trader.recordRejection(candidate, "Coin Locked After Two Losing Trades", {
@@ -263,23 +385,15 @@ function slippageFor(pair) {
           }
           candidate = refreshed;
           result = { ...result, details: { ...result.details, ...freshResult.details } };
-          const confirmationKey = [
-            String(candidate.tokenAddress || "").toLowerCase(),
-            String(candidate.pairAddress || "").toLowerCase()
-          ].join(":");
-          const previousConfirmation = candidateConfirmations.get(confirmationKey);
-          const consecutiveEligibleScans = previousConfirmation?.scan === currentScan - 1
-            ? previousConfirmation.count + 1
-            : 1;
-          candidateConfirmations.set(confirmationKey, { count: consecutiveEligibleScans, scan: currentScan });
-          if (consecutiveEligibleScans < 2) {
-            trader.recordRejection(candidate, "Awaiting Second Consecutive Scan", {
-              consecutiveEligibleScans,
-              required: 2
-            });
+          const confirmationKey = secondPumpKey(candidate);
+          const setup = secondPumpSetups.get(confirmationKey);
+          const secondPumpReady = setup?.phase === "READY" &&
+            Date.now() - setup.readyAt <= SECOND_PUMP_READY_TTL_MS &&
+            Number(candidate.priceUsd) >= setup.readyPrice * 0.99;
+          if (!secondPumpReady) {
+            trader.recordRejection(candidate, setup ? "Waiting for Second Pump Confirmation" : "Waiting for First Pump");
             continue;
           }
-          candidateConfirmations.delete(confirmationKey);
           passed++;
           const liveSizing = trader.getLiveSizing?.() || { step: 0, amountUsd: 2 };
           const amountUsd = Number(liveSizing.amountUsd);
@@ -307,6 +421,7 @@ function slippageFor(pair) {
             lastError = "Gemini paper entry could not be recorded.";
             break;
           }
+          secondPumpSetups.delete(confirmationKey);
           console.log("[INFO] Gemini automatic paper entry recorded", {
             symbol: candidate.symbol, mint: candidate.tokenAddress,
             tradeSizeUsd: amountUsd
