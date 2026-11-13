@@ -11,6 +11,7 @@ const { getTelegramConfig, sendGeminiBuyAlert, startTelegramBuyPolling } = requi
 const SCAN_MS = Number(process.env.GEMINI_SCAN_MS) || 30000;
 const MONITOR_MS = Number(process.env.GEMINI_MONITOR_MS) || 3000;
 const HARD_STOP = -15;
+const HARD_STOP_REENTRY_COOLDOWN_MS = 6 * 60 * 60_000;
 const MAX_SLIPPAGE_BPS = Math.min(1000, Math.max(200, Number(process.env.SLIPPAGE_BPS) || 300));
 const MAX_DISCOVERY_CANDIDATES = 80;
 const SELLABILITY_TIMEOUT_MS = 10_000;
@@ -341,6 +342,27 @@ function slippageFor(pair) {
           candidate.liquidityTrend = observeLiquidityTrend(candidate);
           candidate.priceTrend = observePriceTrend(candidate);
           updateSecondPumpSetup(candidate, currentScan);
+          const tokenMint = String(candidate.tokenAddress || "").toLowerCase();
+          const recentHardStops = (trader.getState().history || []).filter(row =>
+            row.type === "SELL" &&
+            String(row.tokenAddress || "").toLowerCase() === tokenMint &&
+            /HARD STOP/i.test(String(row.reason || "")) &&
+            Number(row.percentOfOriginalSold) >= 99.999
+          );
+          const latestHardStopAt = recentHardStops.reduce((latest, row) => {
+            const time = Date.parse(row.time || "");
+            return Number.isFinite(time) ? Math.max(latest, time) : latest;
+          }, 0);
+          const cooldownRemainingMs = latestHardStopAt
+            ? HARD_STOP_REENTRY_COOLDOWN_MS - (Date.now() - latestHardStopAt)
+            : 0;
+          if (cooldownRemainingMs > 0) {
+            trader.recordRejection(candidate, "Hard Stop Re-entry Cooldown", {
+              cooldownMinutes: Math.ceil(cooldownRemainingMs / 60_000),
+              rule: "Wait six hours after a fully closed hard-stop loss before considering this mint again."
+            });
+            continue;
+          }
           const priorLosses = trader.getClosedLossCount?.(candidate.tokenAddress) || 0;
           if (priorLosses >= 2) {
             trader.recordRejection(candidate, "Coin Locked After Two Losing Trades", {
